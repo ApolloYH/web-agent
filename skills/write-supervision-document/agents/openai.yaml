@@ -1,0 +1,4 @@
+interface:
+  display_name: "监理文书"
+  short_description: "生成监理规划、实施细则、阶段总结和竣工总结等文书"
+  default_prompt: "使用 $write-supervision-document 生成监理文书。"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "监理日志"
+  short_description: "整理每日施工信息、监理活动和问题处理并生成监理日志"
+  default_prompt: "使用 $write-supervision-log 生成今天的监理日志。"

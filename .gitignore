@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.vite/
+coverage/
+tsconfig.tsbuildinfo
+.apollo/
+
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example

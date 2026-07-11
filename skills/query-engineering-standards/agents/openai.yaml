@@ -1,0 +1,4 @@
+interface:
+  display_name: "工标库问答"
+  short_description: "面向南网企标、电力行标和档案标准的专业知识检索问答"
+  default_prompt: "使用 $query-engineering-standards 回答这个工标问题。"

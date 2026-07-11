@@ -1,0 +1,4 @@
+interface:
+  display_name: "隐患识别"
+  short_description: "识别主网或配网施工现场图片中的安全隐患并给出整改建议"
+  default_prompt: "使用 $recognize-site-hazards 识别这些现场隐患。"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "管控一张卡"
+  short_description: "根据现场图片和作业资料生成结构化现场风险管控一张卡"
+  default_prompt: "使用 $create-risk-control-card 生成管控一张卡。"

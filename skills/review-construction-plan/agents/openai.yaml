@@ -1,0 +1,4 @@
+interface:
+  display_name: "施工方案审查"
+  short_description: "审查电力工程施工方案完整性、安全措施和规范符合性"
+  default_prompt: "使用 $review-construction-plan 审查这份施工方案。"

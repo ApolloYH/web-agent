@@ -1,0 +1,4 @@
+interface:
+  display_name: "单线图对比"
+  short_description: "识别电力单线图改造前后差异并校验票据与方案一致性"
+  default_prompt: "使用 $compare-power-diagrams 对比这两份单线图。"

@@ -1,0 +1,4 @@
+interface:
+  display_name: "监理通知单"
+  short_description: "根据已确认的现场隐患和整改要求生成正式监理通知单"
+  default_prompt: "使用 $write-supervision-notice 生成监理通知单。"
