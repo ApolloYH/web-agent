@@ -7,6 +7,7 @@ export default function AppSidebar({
   open,
   onToggle,
   onNewChat,
+  onOpenAssistant,
   conversations,
   activeConversationId,
   activeView,
@@ -19,9 +20,10 @@ export default function AppSidebar({
   open: boolean;
   onToggle: () => void;
   onNewChat: () => void;
+  onOpenAssistant: () => void;
   conversations: ConversationSummary[];
   activeConversationId: string;
-  activeView: 'chat' | 'library';
+  activeView: 'assistant' | 'chat' | 'library';
   onOpenChat: (id: string) => void;
   onOpenLibrary: () => void;
   onRenameChat: (id: string, title: string) => void;
@@ -43,6 +45,16 @@ export default function AppSidebar({
         <button onClick={onNewChat} className="sidebar-item mt-1" title="新对话">
           <PlusIcon />
           <span className={open ? '' : 'lg:hidden'}>新对话</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenAssistant}
+          className={`sidebar-item mt-0.5 ${activeView === 'assistant' ? 'bg-[#ececec]' : ''}`}
+          title="助理"
+        >
+          <AssistantIcon />
+          <span className={open ? '' : 'lg:hidden'}>助理</span>
         </button>
 
         <button
@@ -155,6 +167,15 @@ function LibraryIcon() {
       <rect x="3" y="4" width="5" height="16" rx="1.5" stroke="currentColor" strokeWidth="1.7" />
       <rect x="9.5" y="4" width="5" height="16" rx="1.5" stroke="currentColor" strokeWidth="1.7" />
       <path d="m16 5.5 3.4-1 3.1 14.2-3.4.8L16 5.5Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function AssistantIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+      <path d="M12 3.5c.7 3.7 2.8 5.8 6.5 6.5-3.7.7-5.8 2.8-6.5 6.5-.7-3.7-2.8-5.8-6.5-6.5 3.7-.7 5.8-2.8 6.5-6.5Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+      <path d="M18.5 15.5c.25 1.4 1.1 2.25 2.5 2.5-1.4.25-2.25 1.1-2.5 2.5-.25-1.4-1.1-2.25-2.5-2.5 1.4-.25 2.25-1.1 2.5-2.5Z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round" />
     </svg>
   );
 }

@@ -26,10 +26,13 @@ import {
 import {
   deleteConversation,
   getConversation,
+  getConversationIfExists,
   listConversations,
   newConversationId,
   saveConversation,
   updateConversation,
+  ASSISTANT_CONVERSATION_ID,
+  ASSISTANT_CONVERSATION_TITLE,
   type ConversationSummary,
 } from '@/lib/chatHistory';
 import ChatPanel from '@/components/ChatPanel';
@@ -49,12 +52,12 @@ export default function App() {
   const [noumi, setNoumi] = useState<NoumiSettings>(() => loadNoumi());
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
   const [permissionMode, setPermissionMode] = useState<ApolloPermissionMode>('ask');
-  const [conversationId, setConversationId] = useState(newConversationId);
-  const [conversationTitle, setConversationTitle] = useState('');
+  const [conversationId, setConversationId] = useState(ASSISTANT_CONVERSATION_ID);
+  const [conversationTitle, setConversationTitle] = useState(ASSISTANT_CONVERSATION_TITLE);
   const [conversationGroup, setConversationGroup] = useState<'最近' | '已归档'>('最近');
   const [conversationList, setConversationList] = useState<ConversationSummary[]>([]);
   const [historyReady, setHistoryReady] = useState(false);
-  const [activeView, setActiveView] = useState<'chat' | 'library'>('chat');
+  const [activeView, setActiveView] = useState<'assistant' | 'chat' | 'library'>('assistant');
   const [storedArtifacts, setStoredArtifacts] = useState<StoredArtifact[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1024);
@@ -77,12 +80,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (backend !== 'apollo') return;
+    if (activeView !== 'assistant' && backend !== 'apollo') return;
     getApolloStatus().then(setRuntimeStatus).catch(() => setRuntimeStatus(null));
     getApolloPermission().then(setPermissionMode).catch(() => setPermissionMode('ask'));
-  }, [backend]);
+  }, [activeView, backend]);
 
   const rememberConversation = useCallback((conversation: ConversationSummary) => {
+    if (conversation.id === ASSISTANT_CONVERSATION_ID) return;
     setConversationList((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)]);
   }, []);
 
@@ -91,16 +95,14 @@ export default function App() {
     void listConversations()
       .then(async (items) => {
         if (cancelled) return;
-        setConversationList(items);
-        if (items[0]) {
-          const conversation = await getConversation(items[0].id);
-          if (cancelled) return;
-          setConversationId(conversation.id);
-          setConversationTitle(conversation.title);
-          setConversationGroup(conversation.group);
-          setMessages(conversation.messages);
-          titleGeneratedRef.current = Boolean(conversation.title || conversation.messages.length);
-        }
+        setConversationList(items.filter((item) => item.id !== ASSISTANT_CONVERSATION_ID));
+        const conversation = await getConversationIfExists(ASSISTANT_CONVERSATION_ID);
+        if (cancelled) return;
+        setConversationId(ASSISTANT_CONVERSATION_ID);
+        setConversationTitle(ASSISTANT_CONVERSATION_TITLE);
+        setConversationGroup('最近');
+        setMessages(conversation?.messages ?? []);
+        titleGeneratedRef.current = true;
       })
       .catch((error) => window.alert(error instanceof Error ? error.message : String(error)))
       .finally(() => !cancelled && setHistoryReady(true));
@@ -141,7 +143,9 @@ export default function App() {
 
   const handleSend = useCallback(
     async (text: string) => {
-      if (!titleGeneratedRef.current) {
+      const assistantSurface = activeView === 'assistant';
+      const selectedBackend: BackendMode = assistantSurface ? 'apollo' : backend;
+      if (!assistantSurface && !titleGeneratedRef.current) {
         titleGeneratedRef.current = true;
         void summarizeConversationTitle(text)
           .then(setConversationTitle)
@@ -212,7 +216,7 @@ export default function App() {
       };
 
       try {
-        if (backend === 'apollo') {
+        if (selectedBackend === 'apollo') {
           const artifacts = await streamApollo(
             text,
             (event) => {
@@ -229,6 +233,7 @@ export default function App() {
               }
             },
             controller.signal,
+            assistantSurface ? 'assistant' : 'entry',
           );
           finishThought();
           const { cleanText } = extractArtifacts(raw);
@@ -254,7 +259,7 @@ export default function App() {
           return;
         }
 
-        if (backend === 'noumi') {
+        if (selectedBackend === 'noumi') {
           const result = await runNoumiTask(
             {
               baseUrl: noumi.baseUrl,
@@ -298,7 +303,7 @@ export default function App() {
           return;
         }
 
-        if (backend === 'mock') {
+        if (selectedBackend === 'mock') {
           await mockStream(
             text,
             {
@@ -343,7 +348,7 @@ export default function App() {
         abortRef.current = null;
       }
     },
-    [messages, backend, noumi, patchAssistant],
+    [activeView, backend, noumi, patchAssistant],
   );
 
   const handleStop = useCallback(() => {
@@ -369,9 +374,29 @@ export default function App() {
     if (backend === 'apollo') {
       void streamApollo('/clear', (event) => {
         if (event.type === 'status' || event.type === 'done') setRuntimeStatus(event.status);
-      }).catch(() => undefined);
+      }, undefined, 'entry').catch(() => undefined);
     }
   }, [backend, conversationGroup, conversationId, conversationTitle, messages, rememberConversation]);
+
+  const openAssistant = useCallback(async () => {
+    if (activeView === 'assistant') return;
+    abortRef.current?.abort();
+    setHistoryReady(false);
+    try {
+      const conversation = await getConversationIfExists(ASSISTANT_CONVERSATION_ID);
+      setConversationId(ASSISTANT_CONVERSATION_ID);
+      setConversationTitle(ASSISTANT_CONVERSATION_TITLE);
+      setConversationGroup('最近');
+      setMessages(conversation?.messages ?? []);
+      setStreaming(false);
+      setActiveView('assistant');
+      titleGeneratedRef.current = true;
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error));
+    } finally {
+      setHistoryReady(true);
+    }
+  }, [activeView]);
 
   const openConversation = useCallback(async (id: string) => {
     if (id === conversationId) {
@@ -441,18 +466,19 @@ export default function App() {
   }, []);
 
   const handleCommand = useCallback(async (command: string) => {
-    if (backend !== 'apollo' || streaming) return;
+    const assistantSurface = activeView === 'assistant';
+    if ((!assistantSurface && backend !== 'apollo') || streaming) return;
     setStreaming(true);
     try {
       await streamApollo(command, (event) => {
         if (event.type === 'status' || event.type === 'done') setRuntimeStatus(event.status);
-      });
+      }, undefined, assistantSurface ? 'assistant' : 'entry');
       if (command === '/clear') {
         void deleteConversation(conversationId).catch(() => undefined);
         setConversationList((items) => items.filter((item) => item.id !== conversationId));
-        setConversationId(newConversationId());
+        setConversationId(assistantSurface ? ASSISTANT_CONVERSATION_ID : newConversationId());
         setMessages([]);
-        setConversationTitle('');
+        setConversationTitle(assistantSurface ? ASSISTANT_CONVERSATION_TITLE : '');
         setConversationGroup('最近');
         titleGeneratedRef.current = false;
       }
@@ -461,7 +487,7 @@ export default function App() {
     } finally {
       setStreaming(false);
     }
-  }, [backend, conversationId, streaming]);
+  }, [activeView, backend, conversationId, streaming]);
 
   const changePermissionMode = useCallback(async (mode: ApolloPermissionMode) => {
     setPermissionMode(mode);
@@ -481,6 +507,10 @@ export default function App() {
         onToggle={() => setSidebarOpen((open) => !open)}
         onNewChat={() => {
           handleNewChat();
+          if (window.innerWidth < 1024) setSidebarOpen(false);
+        }}
+        onOpenAssistant={() => {
+          void openAssistant();
           if (window.innerWidth < 1024) setSidebarOpen(false);
         }}
         conversations={conversationList}
@@ -513,14 +543,15 @@ export default function App() {
           >
             <MenuIcon />
           </button>
-          <SettingsBar
-            backend={backend}
-            noumi={noumi}
-            onChangeBackend={toggleMock}
-            onChangeNoumi={updateNoumi}
-            apolloPermissionMode={permissionMode}
-          />
-          {backend === 'apollo' && <RuntimeStatusBar status={runtimeStatus} />}
+          {activeView === 'assistant' && <SettingsBar
+              backend="apollo"
+              noumi={noumi}
+              onChangeBackend={toggleMock}
+              onChangeNoumi={updateNoumi}
+              apolloPermissionMode={permissionMode}
+              allowBackendSelection={false}
+            />}
+          {activeView === 'assistant' && <RuntimeStatusBar status={runtimeStatus} />}
           {activeView === 'library' ? (
             <FileLibrary files={storedArtifacts} loading={libraryLoading} />
           ) : (
@@ -534,6 +565,7 @@ export default function App() {
               runtimeMode={runtimeStatus?.mode ?? 'normal'}
               permissionMode={permissionMode}
               onPermissionChange={changePermissionMode}
+              surface={activeView === 'assistant' ? 'assistant' : 'entry'}
             />
           )}
         </section>

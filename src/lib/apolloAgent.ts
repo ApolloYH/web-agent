@@ -16,15 +16,18 @@ export type ApolloEvent =
   | { type: 'done'; artifacts: Artifact[]; status: RuntimeStatus }
   | { type: 'error'; message: string };
 
+export type ApolloChannel = 'assistant' | 'entry';
+
 export async function streamApollo(
   message: string,
   onEvent: (event: ApolloEvent) => void,
   signal?: AbortSignal,
+  channel: ApolloChannel = 'entry',
 ): Promise<Artifact[]> {
   const response = await fetch('/apollo-api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, channel }),
     signal,
   });
   if (!response.ok || !response.body) {

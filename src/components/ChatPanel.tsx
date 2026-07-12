@@ -16,6 +16,11 @@ const suggestions = [
   { title: '对比改造前后单线图', prompt: '对比改造前后单线图' },
 ];
 const suggestionRows = [suggestions.slice(0, 3), suggestions.slice(3, 6), suggestions.slice(6)];
+const assistantSuggestions = [
+  { title: '你能做什么', prompt: '你能做什么？请简洁介绍。' },
+  { title: '整理工作思路', prompt: '帮我整理一下接下来的工作思路' },
+  { title: '记住工作偏好', prompt: '我想告诉你一些工作偏好，请帮我记住' },
+];
 
 const slashCommands = [
   { command: '/工标库', description: '检索工标库并回答', argument: '输入问题' },
@@ -47,6 +52,7 @@ export default function ChatPanel({
   runtimeMode,
   permissionMode,
   onPermissionChange,
+  surface,
 }: {
   messages: ChatMessage[];
   streaming: boolean;
@@ -57,6 +63,7 @@ export default function ChatPanel({
   runtimeMode: string;
   permissionMode: ApolloPermissionMode;
   onPermissionChange: (mode: ApolloPermissionMode) => void;
+  surface: 'assistant' | 'entry';
 }) {
   const [input, setInput] = useState('');
   const [selectedCommand, setSelectedCommand] = useState(0);
@@ -75,10 +82,11 @@ export default function ChatPanel({
     textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
   }, [input]);
 
+  const availableCommands = surface === 'assistant' ? slashCommands : slashCommands.filter((item) => !('control' in item && item.control));
   const commandToken = input.trimStart().split(/\s/, 1)[0];
   const commandMenuOpen = input.startsWith('/') && !input.includes(' ');
   const matchingCommands = commandMenuOpen
-    ? slashCommands.filter((item) => item.command.toLowerCase().includes(commandToken.toLowerCase()))
+    ? availableCommands.filter((item) => item.command.toLowerCase().includes(commandToken.toLowerCase()))
     : [];
 
   useEffect(() => setSelectedCommand(0), [commandToken]);
@@ -86,7 +94,7 @@ export default function ChatPanel({
   const send = (text: string) => {
     const trimmed = text.trim();
     if (!trimmed || streaming) return;
-    const definition = slashCommands.find((item) => item.command === trimmed.split(/\s+/, 1)[0]);
+    const definition = availableCommands.find((item) => item.command === trimmed.split(/\s+/, 1)[0]);
     if (definition && 'control' in definition && definition.control) onCommand(trimmed);
     else onSend(trimmed);
     setInput('');
@@ -110,10 +118,13 @@ export default function ChatPanel({
         {messages.length === 0 ? (
           <div className="mx-auto flex min-h-full max-w-3xl flex-col items-center justify-center pb-16 text-center">
             <h1 className="text-[24px] font-semibold leading-[30px] tracking-[-0.035em] text-[#0d0d0d]">
-              有什么我能帮你的吗？
+              {surface === 'assistant' ? '你好，我是威彦达助理' : '需要完成什么任务？'}
             </h1>
+            <p className="mt-2 text-[11px] leading-[17px] text-[#777]">
+              {surface === 'assistant' ? '我会持续了解你的工作习惯，协助处理日常事务。' : '描述你的需求，我会匹配合适的智能体。'}
+            </p>
             <div className="mt-7 flex w-full max-w-3xl flex-col items-center gap-1.5">
-              {suggestionRows.map((row, rowIndex) => (
+              {(surface === 'assistant' ? [assistantSuggestions] : suggestionRows).map((row, rowIndex) => (
                 <div key={rowIndex} className="flex flex-wrap justify-center gap-2 sm:flex-nowrap">
                   {row.map((suggestion) => (
                     <button
@@ -223,19 +234,19 @@ export default function ChatPanel({
           )}
           <div className="mt-2 flex items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
-              <label className="flex items-center gap-1.5 text-[10px] text-[#666]">
-                <ShieldIcon />
-                <select
-                  aria-label="权限模式"
-                  value={permissionMode}
-                  onChange={(event) => onPermissionChange(event.target.value as ApolloPermissionMode)}
-                  className="border-0 bg-transparent py-1 pr-1 text-[10px] text-[#555] outline-none"
-                >
-                  <option value="ask">审批模式</option>
-                  <option value="unrestricted">全自动模式</option>
-                </select>
-              </label>
-              {runtimeMode !== 'normal' && (
+              {surface === 'assistant' && <label className="flex items-center gap-1.5 text-[10px] text-[#666]">
+                  <ShieldIcon />
+                  <select
+                    aria-label="权限模式"
+                    value={permissionMode}
+                    onChange={(event) => onPermissionChange(event.target.value as ApolloPermissionMode)}
+                    className="border-0 bg-transparent py-1 pr-1 text-[10px] text-[#555] outline-none"
+                  >
+                    <option value="ask">审批模式</option>
+                    <option value="unrestricted">全自动模式</option>
+                  </select>
+                </label>}
+              {surface === 'assistant' && runtimeMode !== 'normal' && (
                 <span className="rounded-md bg-blue-50 px-1.5 py-1 text-[10px] text-blue-700">{modeLabel(runtimeMode)}</span>
               )}
             </div>

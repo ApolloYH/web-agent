@@ -23,8 +23,11 @@ export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRo
   const configPath = path.join(workspaceRoot, '.apollo', 'config.json');
   const artifactRoot = path.join(workspaceRoot, 'artifacts');
   const databasePath = path.join(workspaceRoot, '.apollo', 'web-agent.sqlite');
+  const assistantSessionPath = path.join(workspaceRoot, '.apollo', 'web-assistant-session');
   let database: DatabaseSync | undefined;
   let engine: QueryEngine | undefined;
+  let assistantEngine: QueryEngine | undefined;
+  let activeEngine: QueryEngine | undefined;
   let sink: ((event: TraceEvent) => void) | undefined;
   let activeSend: Send | undefined;
   let busy = false;
@@ -64,18 +67,32 @@ export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRo
     return approved;
   };
 
-  const getEngine = async () => {
-    engine ??= await createQueryEngine({
-      envPath,
-      approvalProvider,
-      askUser: (question, options) =>
-        requestInteraction(
-          { type: 'interaction', kind: 'question', title: question, options },
-          '(no answer)',
-        ),
-      onEvent: (event) => sink?.(event),
-    });
+  const createEngine = async (sessionId?: string) => createQueryEngine({
+    envPath,
+    sessionId,
+    approvalProvider,
+    askUser: (question, options) =>
+      requestInteraction(
+        { type: 'interaction', kind: 'question', title: question, options },
+        '(no answer)',
+      ),
+    onEvent: (event) => sink?.(event),
+  });
+
+  const getEngine = async (channel: 'assistant' | 'entry' = 'entry') => {
+    if (channel === 'assistant') {
+      const sessionId = await fs.readFile(assistantSessionPath, 'utf8').then((value) => value.trim()).catch(() => '');
+      assistantEngine ??= await createEngine(sessionId || undefined);
+      return assistantEngine;
+    }
+    engine ??= await createEngine();
     return engine;
+  };
+
+  const closeEngines = async () => {
+    await Promise.all([engine?.close(), assistantEngine?.close()]);
+    engine = undefined;
+    assistantEngine = undefined;
   };
 
   const handle = async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
@@ -136,8 +153,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRo
           autoApproveReadOnly: true,
         };
         await writeConfig(configPath, config);
-        await engine?.close();
-        engine = undefined;
+        await closeEngines();
         return json(res, 200, { mode });
       } catch (error) {
         return jsonError(res, 400, error instanceof Error ? error.message : String(error));
@@ -156,8 +172,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRo
         const parsed = JSON.parse(config) as unknown;
         if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error('配置必须是 JSON 对象');
         await writeConfig(configPath, parsed as Record<string, unknown>);
-        await engine?.close();
-        engine = undefined;
+        await closeEngines();
         return json(res, 200, { ok: true });
       } catch (error) {
         return jsonError(res, 400, error instanceof Error ? error.message : String(error));
@@ -165,7 +180,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRo
     }
     if (req.url === '/apollo-api/status' && req.method === 'GET') {
       try {
-        return json(res, 200, runtimeStatus(await getEngine()));
+        return json(res, 200, runtimeStatus(await getEngine('assistant')));
       } catch (error) {
         return jsonError(res, 500, error instanceof Error ? error.message : String(error));
       }
@@ -175,8 +190,12 @@ export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRo
     if (busy) return jsonError(res, 409, '智能体正在处理上一条消息');
 
     let message: unknown;
+    let channel: 'assistant' | 'entry' = 'entry';
     try {
-      ({ message } = JSON.parse(await readBody(req)) as { message?: unknown });
+      const body = JSON.parse(await readBody(req)) as { message?: unknown; channel?: unknown };
+      message = body.message;
+      if (body.channel === 'assistant') channel = 'assistant';
+      else if (body.channel !== undefined && body.channel !== 'entry') throw new Error('channel 无效');
       if (typeof message !== 'string' || !message.trim()) throw new Error('message 不能为空');
     } catch (error) {
       return jsonError(res, 400, error instanceof Error ? error.message : String(error));
@@ -202,7 +221,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRo
 
     res.on('close', () => {
       closed = true;
-      if (!res.writableEnded) engine?.cancelCurrentTurn();
+      if (!res.writableEnded) activeEngine?.cancelCurrentTurn();
       for (const [id, pending] of interactions) {
         interactions.delete(id);
         pending.resolve(pending.fallback);
@@ -210,8 +229,13 @@ export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRo
     });
 
     try {
-      const runtime = await getEngine();
+      const runtime = await getEngine(channel);
+      activeEngine = runtime;
       await runInput(runtime, message.trim(), send);
+      if (channel === 'assistant' && runtime.getSessionId()) {
+        await fs.mkdir(path.dirname(assistantSessionPath), { recursive: true });
+        await fs.writeFile(assistantSessionPath, `${runtime.getSessionId()}\n`, 'utf8');
+      }
       const artifacts = await collectArtifacts(workspaceRoot, startedAt, changedPaths);
       send({ type: 'done', artifacts, status: runtimeStatus(runtime) });
     } catch (error) {
@@ -219,6 +243,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRo
     } finally {
       sink = undefined;
       activeSend = undefined;
+      activeEngine = undefined;
       busy = false;
       if (!closed) res.end();
     }
@@ -229,7 +254,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRo
     close: async () => {
       for (const pending of interactions.values()) pending.resolve(pending.fallback);
       interactions.clear();
-      await engine?.close();
+      await closeEngines();
       database?.close();
     },
   };

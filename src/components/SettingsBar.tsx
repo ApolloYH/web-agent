@@ -11,12 +11,14 @@ export default function SettingsBar({
   onChangeBackend,
   onChangeNoumi,
   apolloPermissionMode,
+  allowBackendSelection = true,
 }: {
   backend: BackendMode;
   noumi: NoumiSettings;
   onChangeBackend: (v: BackendMode) => void;
   onChangeNoumi: (v: NoumiSettings) => void;
   apolloPermissionMode: ApolloPermissionMode;
+  allowBackendSelection?: boolean;
 }) {
   const detailsRef = useDismissDetails();
   const badge =
@@ -47,7 +49,7 @@ export default function SettingsBar({
           <div className="absolute right-0 z-30 mt-2 w-[min(24rem,calc(100vw-1.5rem))] rounded-2xl border border-black/[0.08] bg-white p-4 shadow-[0_18px_48px_rgba(0,0,0,0.12)]">
             <h2 className="mb-3 text-[13px] font-semibold text-gray-900">设置</h2>
             {/* 后端模式选择 */}
-            <div className="mb-3">
+            {allowBackendSelection && <div className="mb-3">
               <span className="text-[11px] font-medium text-gray-600">后端模式</span>
               <div className="mt-2 grid grid-cols-2 gap-1 rounded-xl bg-gray-100 p-1 text-[11px]">
                 {(
@@ -67,7 +69,7 @@ export default function SettingsBar({
                   </button>
                 ))}
               </div>
-            </div>
+            </div>}
 
             {backend === 'noumi' && <NoumiPanel noumi={noumi} onChange={onChangeNoumi} />}
 

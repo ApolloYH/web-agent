@@ -11,6 +11,8 @@ export interface StoredConversation extends ConversationSummary {
   messages: ChatMessage[];
 }
 
+export const ASSISTANT_CONVERSATION_ID = 'assistant';
+export const ASSISTANT_CONVERSATION_TITLE = '助理';
 export const newConversationId = () => `chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 export async function listConversations(): Promise<ConversationSummary[]> {
@@ -20,7 +22,14 @@ export async function listConversations(): Promise<ConversationSummary[]> {
 }
 
 export async function getConversation(id: string): Promise<StoredConversation> {
+  const conversation = await getConversationIfExists(id);
+  if (!conversation) throw new Error('对话不存在');
+  return conversation;
+}
+
+export async function getConversationIfExists(id: string): Promise<StoredConversation | null> {
   const response = await fetch(`/apollo-api/conversations/${encodeURIComponent(id)}`);
+  if (response.status === 404) return null;
   if (!response.ok) throw new Error(`读取对话失败 ${response.status}`);
   const conversation = await response.json() as StoredConversation;
   conversation.messages = conversation.messages.map((message) => ({
