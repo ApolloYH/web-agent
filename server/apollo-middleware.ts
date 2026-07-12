@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';
-import { mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
@@ -12,53 +12,82 @@ import {
   type ApprovalProvider,
   type QueryEngine,
   type TraceEvent,
-} from '../agent/dist/sdk.js';
-import type { Artifact, RuntimeStatus } from '../src/types';
+} from '@apolloyh/apollo-agent';
+import type { Artifact, RuntimeStatus } from '../src/types/index.js';
+import { createEntryTools } from './entry-tools.js';
 
-const ARTIFACT_EXTENSIONS = new Set(['.md', '.json', '.docx', '.pdf']);
+const ARTIFACT_EXTENSIONS = new Set(['.docx', '.pdf', '.jpg', '.jpeg', '.png', '.webp']);
 const SKIP_DIRECTORIES = new Set(['.git', '.apollo', 'node_modules', 'dist']);
 const MAX_ARTIFACT_BYTES = 25 * 1024 * 1024;
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+const UPLOAD_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt', '.md', '.json']);
 
 type Send = (event: object) => void;
 type PendingInteraction = { resolve: (answer: string) => void; fallback: string };
 type AuthUser = { id: string; username: string; admin: boolean };
+type RunContext = {
+  send: Send;
+  sink: (event: TraceEvent) => void;
+  permissionMode: 'ask' | 'unrestricted';
+  interactionIds: Set<string>;
+  runtime?: QueryEngine;
+};
 
-export function createApolloMiddleware({ workspaceRoot, envPath, registrationInvite, adminUsername, allowUnrestricted = false }: { workspaceRoot: string; envPath: string; registrationInvite: string; adminUsername: string; allowUnrestricted?: boolean }) {
-  const baseConfigPath = path.join(workspaceRoot, 'config', 'web-apollo.json');
+type EntryConfig = {
+  langcoreApiKey: string;
+  langhubApiKey: string;
+  langhubBaseUrl: string;
+  projects: Record<string, string>;
+};
+
+export function createApolloMiddleware({ workspaceRoot, envPath, registrationInvite, adminUsername, allowUnrestricted = false, entry }: { workspaceRoot: string; envPath: string; registrationInvite: string; adminUsername: string; allowUnrestricted?: boolean; entry: EntryConfig }) {
+  const entryConfigTemplatePath = path.join(workspaceRoot, 'config', 'web-entry-apollo.json');
+  const entryConfigPath = path.join(workspaceRoot, '.apollo', 'web-entry-config.json');
+  const assistantConfigTemplatePath = path.join(workspaceRoot, 'config', 'web-assistant-apollo.json');
   const databasePath = path.join(workspaceRoot, '.apollo', 'web-agent.sqlite');
   let activeWorkspaceRoot = workspaceRoot;
-  let configPath = baseConfigPath;
+  let activeAssistantConfigPath = assistantConfigTemplatePath;
   let assistantSessionPath = path.join(workspaceRoot, '.apollo', 'web-assistant-session');
+  // ponytail: 同一用户的会话可并行；启用多用户并发时再把引擎与路径状态改为 per-user map。
   let activeUserId = '';
+  let userActivation: Promise<void> | undefined;
   let database: DatabaseSync | undefined;
-  let engine: QueryEngine | undefined;
+  const entryEngines = new Map<string, QueryEngine>();
   let assistantEngine: QueryEngine | undefined;
-  let activeEngine: QueryEngine | undefined;
-  let sink: ((event: TraceEvent) => void) | undefined;
-  let activeSend: Send | undefined;
-  let busy = false;
+  const runs = new Map<string, RunContext>();
   let interactionSequence = 0;
   const interactions = new Map<string, PendingInteraction>();
+  const entryTurnStates = new Map<string, { standardsQuery?: Promise<string> }>();
+  try { readFileSync(entryConfigPath); } catch {
+    mkdirSync(path.dirname(entryConfigPath), { recursive: true });
+    copyFileSync(entryConfigTemplatePath, entryConfigPath);
+  }
 
   const requestInteraction = (
+    runKey: string,
     payload: Omit<Extract<WebEvent, { type: 'interaction' }>, 'id'>,
     fallback: string,
   ): Promise<string> => {
+    const run = runs.get(runKey);
+    if (!run) return Promise.resolve(fallback);
     const id = `interaction-${interactionSequence++}`;
-    activeSend?.({ ...payload, id });
+    run.interactionIds.add(id);
+    run.send({ ...payload, id });
     return new Promise((resolve) => interactions.set(id, { resolve, fallback }));
   };
 
-  const approvalProvider: ApprovalProvider = async (request) => {
-    if (allowUnrestricted && await isUnrestricted(configPath)) return true;
+  const approvalProvider = (runKey: string): ApprovalProvider => async (request) => {
+    const run = runs.get(runKey);
+    if (allowUnrestricted && run?.permissionMode === 'unrestricted') return true;
     if (request.risk === 'low') return true;
-    sink?.({
+    run?.sink({
       type: 'approval_required',
       tool: request.toolName,
       risk: request.risk,
       reason: request.reason,
     });
     const answer = await requestInteraction(
+      runKey,
       {
         type: 'interaction',
         kind: 'approval',
@@ -69,50 +98,90 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       'deny',
     );
     const approved = answer === 'approve';
-    sink?.({ type: 'approval_result', tool: request.toolName, approved });
+    run?.sink({ type: 'approval_result', tool: request.toolName, approved });
     return approved;
   };
 
-  const createEngine = async (sessionId?: string) => createQueryEngine({
-    configPath: baseConfigPath,
+  const createAssistantEngine = async (runKey: string, sessionId?: string) => createQueryEngine({
+    configPath: activeAssistantConfigPath,
     configMode: 'isolated',
     workspaceRoot: activeWorkspaceRoot,
     envPath,
     sessionId,
-    approvalProvider,
+    approvalProvider: approvalProvider(runKey),
     askUser: (question, options) =>
       requestInteraction(
+        runKey,
         { type: 'interaction', kind: 'question', title: question, options },
         '(no answer)',
       ),
-    onEvent: (event) => sink?.(event),
+    onEvent: (event) => runs.get(runKey)?.sink(event),
   });
 
-  const getEngine = async (channel: 'assistant' | 'entry' = 'entry') => {
+  const getEngine = async (channel: 'assistant' | 'entry' = 'entry', conversationId = '') => {
+    const runKey = channel === 'assistant' ? 'assistant' : `entry:${conversationId}`;
     if (channel === 'assistant') {
       const sessionId = await fs.readFile(assistantSessionPath, 'utf8').then((value) => value.trim()).catch(() => '');
-      assistantEngine ??= await createEngine(sessionId || undefined);
+      assistantEngine ??= await createAssistantEngine(runKey, sessionId || undefined);
       return assistantEngine;
     }
-    engine ??= await createEngine();
-    return engine;
+    const existing = entryEngines.get(conversationId);
+    if (existing) return existing;
+    const sessionPath = entrySessionPath(activeWorkspaceRoot, conversationId);
+    const sessionId = await fs.readFile(sessionPath, 'utf8').then((value) => value.trim()).catch(() => '');
+    const turnState = entryTurnStates.get(conversationId) ?? {};
+    entryTurnStates.set(conversationId, turnState);
+    const runtime = await createQueryEngine({
+      configPath: entryConfigPath,
+      configMode: 'isolated',
+      workspaceRoot: activeWorkspaceRoot,
+      envPath,
+      sessionId: sessionId || undefined,
+      approvalProvider: approvalProvider(runKey),
+      askUser: (question, options) => requestInteraction(runKey, { type: 'interaction', kind: 'question', title: question, options }, '(no answer)'),
+      onEvent: (event) => runs.get(runKey)?.sink(event),
+      memoryEnabled: false,
+      extraTools: createEntryTools({
+        workspaceRoot: activeWorkspaceRoot,
+        conversationId,
+        langcoreApiKey: entry.langcoreApiKey,
+        langhubApiKey: entry.langhubApiKey,
+        langhubBaseUrl: entry.langhubBaseUrl,
+        automationMode: () => runs.get(runKey)?.permissionMode === 'unrestricted' ? 'auto' : 'ask',
+        projects: entry.projects,
+        turnState,
+      }),
+    });
+    entryEngines.set(conversationId, runtime);
+    return runtime;
   };
 
   const closeEngines = async () => {
-    await Promise.all([engine?.close(), assistantEngine?.close()]);
-    engine = undefined;
+    await Promise.all([assistantEngine?.close(), ...[...entryEngines.values()].map((runtime) => runtime.close())]);
+    entryEngines.clear();
+    entryTurnStates.clear();
     assistantEngine = undefined;
   };
 
   const activateUser = async (user: AuthUser) => {
     if (activeUserId === user.id) return;
-    if (busy) throw new Error('智能体正在处理其他任务，请稍后重试');
-    await closeEngines();
-    activeUserId = user.id;
-    activeWorkspaceRoot = path.join(workspaceRoot, '.apollo', 'users', user.id, 'workspace');
-    configPath = baseConfigPath;
-    assistantSessionPath = path.join(activeWorkspaceRoot, '.apollo', 'web-assistant-session');
-    await ensureUserWorkspace(activeWorkspaceRoot, path.join(workspaceRoot, 'skills'));
+    if (userActivation) {
+      await userActivation;
+      if (activeUserId === user.id) return;
+    }
+    userActivation = (async () => {
+      if (runs.size) throw new Error('其他用户的智能体正在运行，请稍后重试');
+      await closeEngines();
+      activeUserId = user.id;
+      activeWorkspaceRoot = path.join(workspaceRoot, '.apollo', 'users', user.id, 'workspace');
+      activeAssistantConfigPath = path.join(activeWorkspaceRoot, '.apollo', 'assistant-config.json');
+      assistantSessionPath = path.join(activeWorkspaceRoot, '.apollo', 'web-assistant-session');
+      await ensureUserWorkspace(activeWorkspaceRoot, path.join(workspaceRoot, 'entry-skills'));
+      try { await fs.access(activeAssistantConfigPath); } catch {
+        await fs.copyFile(assistantConfigTemplatePath, activeAssistantConfigPath);
+      }
+    })();
+    try { await userActivation; } finally { userActivation = undefined; }
   };
 
   const handle = async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
@@ -125,9 +194,11 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     if (!user) return jsonError(res, 401, '请先登录');
     const userWorkspaceRoot = path.join(workspaceRoot, '.apollo', 'users', user.id, 'workspace');
     const userArtifactRoot = path.join(userWorkspaceRoot, 'artifacts');
-    await ensureUserWorkspace(userWorkspaceRoot, path.join(workspaceRoot, 'skills'));
+    await ensureUserWorkspace(userWorkspaceRoot, path.join(workspaceRoot, 'entry-skills'));
 
     if (req.url === '/apollo-api/respond') return handleResponse(req, res, interactions);
+    if (req.url === '/apollo-api/uploads') return handleUploads(req, res, userWorkspaceRoot);
+    if (req.url === '/apollo-api/artifacts/import') return importArtifacts(req, res, userArtifactRoot);
     if (req.url === '/apollo-api/memories' && req.method === 'GET') {
       return json(res, 200, { memories: await listMemories(userWorkspaceRoot) });
     }
@@ -152,7 +223,24 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       return json(res, 200, { conversations: listConversations(database, user.id) });
     }
     if (req.url.startsWith('/apollo-api/conversations/')) {
-      return handleConversation(req, res, database, user.id);
+      try { await activateUser(user); } catch (error) { return jsonError(res, 409, error instanceof Error ? error.message : String(error)); }
+      const conversationId = decodeURIComponent(req.url.slice('/apollo-api/conversations/'.length).split('?', 1)[0]!);
+      if (req.method === 'DELETE' && runs.has(`entry:${conversationId}`)) return jsonError(res, 409, '请先停止正在运行的对话');
+      await handleConversation(req, res, database, user.id);
+      if (req.method === 'DELETE' && /^chat-[A-Za-z0-9-]{1,80}$/.test(conversationId)) {
+        const runtime = entryEngines.get(conversationId);
+        if (runtime) await runtime.close();
+        entryEngines.delete(conversationId);
+        entryTurnStates.delete(conversationId);
+        const sessionPath = entrySessionPath(userWorkspaceRoot, conversationId);
+        const sessionId = await fs.readFile(sessionPath, 'utf8').then((value) => value.trim()).catch(() => '');
+        await Promise.all([
+          fs.rm(sessionPath, { force: true }),
+          fs.rm(path.join(userWorkspaceRoot, '.apollo', 'entry-langhub-topics', `${conversationId}.json`), { force: true }),
+          sessionId ? fs.rm(path.join(userWorkspaceRoot, '.apollo', 'sessions', `${sessionId}.json`), { force: true }) : Promise.resolve(),
+        ]);
+      }
+      return;
     }
     if (req.url === '/apollo-api/artifacts' && req.method === 'GET') {
       const filesystemArtifacts = await listStoredArtifacts(userArtifactRoot);
@@ -171,11 +259,12 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
         const { text } = JSON.parse(await readBody(req)) as { text?: unknown };
         if (typeof text !== 'string' || !text.trim()) throw new Error('text 不能为空');
         const titleEngine = await createQueryEngine({
-          configPath: baseConfigPath,
+          configPath: entryConfigPath,
           configMode: 'isolated',
           workspaceRoot: userWorkspaceRoot,
           envPath,
           stream: false,
+          memoryEnabled: false,
           approvalProvider: async () => false,
         });
         try {
@@ -190,23 +279,26 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
         return jsonError(res, 400, error instanceof Error ? error.message : String(error));
       }
     }
-    if (req.url === '/apollo-api/permission') {
+    if (req.url.startsWith('/apollo-api/permission')) {
       await activateUser(user);
-      if (req.method === 'GET') return json(res, 200, { mode: allowUnrestricted ? await permissionMode(baseConfigPath) : 'ask' });
+      const requestedChannel = new URL(req.url, 'http://localhost').searchParams.get('channel') === 'entry' ? 'entry' : 'assistant';
+      const permissionConfigPath = requestedChannel === 'entry' ? entryConfigPath : activeAssistantConfigPath;
+      if (req.method === 'GET') return json(res, 200, { mode: allowUnrestricted ? await permissionMode(permissionConfigPath) : 'ask' });
       if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
-      if (!user.admin) return jsonError(res, 403, '只有管理员可以修改智能体权限');
-      if (busy) return jsonError(res, 409, '智能体正在运行，请稍后切换模式');
+      if (runs.size) return jsonError(res, 409, '智能体正在运行，请稍后切换模式');
       try {
-        const { mode } = JSON.parse(await readBody(req)) as { mode?: unknown };
+        const { mode, channel } = JSON.parse(await readBody(req)) as { mode?: unknown; channel?: unknown };
         if (mode !== 'ask' && mode !== 'unrestricted') throw new Error('无效的权限模式');
+        if (channel === 'entry' && !user.admin) throw new Error('只有管理员可以修改统一入口权限');
+        const targetConfigPath = channel === 'entry' ? entryConfigPath : activeAssistantConfigPath;
         if (mode === 'unrestricted' && !allowUnrestricted) throw new Error('当前部署未启用全自动权限；请先使用沙箱并设置 WEB_ALLOW_UNRESTRICTED=true');
-        const config = await readConfig(configPath);
+        const config = await readConfig(targetConfigPath);
         config.permissions = {
           ...(typeof config.permissions === 'object' && config.permissions ? config.permissions : {}),
           mode,
           autoApproveReadOnly: true,
         };
-        await writeConfig(configPath, config);
+        await writeConfig(targetConfigPath, config);
         await closeEngines();
         return json(res, 200, { mode });
       } catch (error) {
@@ -215,13 +307,12 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     }
     if (req.url === '/apollo-api/config') {
       await activateUser(user);
-      if (!user.admin) return jsonError(res, 403, '只有管理员可以查看或修改智能体配置');
       if (req.method === 'GET') {
-        const config = await fs.readFile(configPath, 'utf8').catch(() => '{}');
-        return json(res, 200, { path: 'config/web-apollo.json', config });
+        const config = await fs.readFile(activeAssistantConfigPath, 'utf8').catch(() => '{}');
+        return json(res, 200, { path: '当前用户/.apollo/assistant-config.json', config });
       }
       if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
-      if (busy) return jsonError(res, 409, '智能体正在运行，请稍后再保存配置');
+      if (runs.size) return jsonError(res, 409, '智能体正在运行，请稍后再保存配置');
       try {
         const { config } = JSON.parse(await readBody(req)) as { config?: unknown };
         if (typeof config !== 'string') throw new Error('config 必须是 JSON 文本');
@@ -229,7 +320,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
         if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error('配置必须是 JSON 对象');
         const permissions = (parsed as { permissions?: { mode?: unknown } }).permissions;
         if (permissions?.mode === 'unrestricted' && !allowUnrestricted) throw new Error('当前部署禁止保存 unrestricted 权限');
-        await writeConfig(configPath, parsed as Record<string, unknown>);
+        await writeConfig(activeAssistantConfigPath, parsed as Record<string, unknown>);
         await closeEngines();
         return json(res, 200, { ok: true });
       } catch (error) {
@@ -246,65 +337,114 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     }
     if (req.url !== '/apollo-api/chat') return next();
     if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
-    if (busy) return jsonError(res, 409, '智能体正在处理上一条消息');
     try { await activateUser(user); } catch (error) { return jsonError(res, 409, error instanceof Error ? error.message : String(error)); }
 
     let message: unknown;
     let channel: 'assistant' | 'entry' = 'entry';
+    let conversationId = '';
     try {
-      const body = JSON.parse(await readBody(req)) as { message?: unknown; channel?: unknown };
+      const body = JSON.parse(await readBody(req)) as { message?: unknown; channel?: unknown; conversationId?: unknown };
       message = body.message;
       if (body.channel === 'assistant') channel = 'assistant';
       else if (body.channel !== undefined && body.channel !== 'entry') throw new Error('channel 无效');
       if (typeof message !== 'string' || !message.trim()) throw new Error('message 不能为空');
+      if (channel === 'entry') {
+        if (typeof body.conversationId !== 'string' || !/^chat-[A-Za-z0-9-]{1,80}$/.test(body.conversationId)) throw new Error('conversationId 无效');
+        conversationId = body.conversationId;
+      }
     } catch (error) {
       return jsonError(res, 400, error instanceof Error ? error.message : String(error));
     }
 
-    busy = true;
+    const runKey = channel === 'assistant' ? 'assistant' : `entry:${conversationId}`;
+    if (runs.has(runKey)) return jsonError(res, 409, '当前对话正在处理上一条消息');
+
+    console.info(`[威彦达] 开始调用：Apollo Agent｜通道：${channel === 'assistant' ? '助理' : '统一入口'}｜输入：${logPreview(message as string)}`);
+
     const startedAt = Date.now();
     const changedPaths = new Set<string>();
+    const reportedArtifacts = new Map<string, NonNullable<Extract<TraceEvent, { type: 'tool_result' }>['artifacts']>[number]>();
     let closed = false;
     res.writeHead(200, {
       'Content-Type': 'text/event-stream; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
     });
+    res.flushHeaders();
     const send: Send = (event) => {
       if (!closed) res.write(`data: ${JSON.stringify(event)}\n\n`);
     };
-    activeSend = send;
-    sink = (event) => {
+    const heartbeat = setInterval(() => {
+      if (!closed) res.write(': heartbeat\n\n');
+    }, 15_000);
+    const sink = (event: TraceEvent) => {
       if (event.type === 'tool_result' && event.fileChange?.path) changedPaths.add(event.fileChange.path);
+      if (event.type === 'tool_result') event.artifacts?.forEach((artifact) => reportedArtifacts.set(artifact.path, artifact));
       send({ type: 'trace', event: webTraceEvent(event) });
     };
+    const configPath = channel === 'assistant' ? activeAssistantConfigPath : entryConfigPath;
+    const run: RunContext = {
+      send,
+      sink,
+      permissionMode: 'ask',
+      interactionIds: new Set(),
+    };
+    runs.set(runKey, run);
+    if (allowUnrestricted) run.permissionMode = await permissionMode(configPath);
 
     res.on('close', () => {
       closed = true;
-      if (!res.writableEnded) activeEngine?.cancelCurrentTurn();
-      for (const [id, pending] of interactions) {
+      const run = runs.get(runKey);
+      if (!res.writableEnded) run?.runtime?.cancelCurrentTurn();
+      for (const id of run?.interactionIds ?? []) {
+        const pending = interactions.get(id);
+        if (!pending) continue;
         interactions.delete(id);
         pending.resolve(pending.fallback);
       }
     });
 
     try {
-      const runtime = await getEngine(channel);
-      activeEngine = runtime;
+      if (channel === 'entry') {
+        const turnState = entryTurnStates.get(conversationId) ?? {};
+        turnState.standardsQuery = undefined;
+        entryTurnStates.set(conversationId, turnState);
+      }
+      const runtime = await getEngine(channel, conversationId);
+      runs.get(runKey)!.runtime = runtime;
       await runInput(runtime, message.trim(), send);
       if (channel === 'assistant' && runtime.getSessionId()) {
         await fs.mkdir(path.dirname(assistantSessionPath), { recursive: true });
         await fs.writeFile(assistantSessionPath, `${runtime.getSessionId()}\n`, 'utf8');
       }
-      const artifacts = await collectArtifacts(activeWorkspaceRoot, startedAt, changedPaths);
+      if (channel === 'entry' && runtime.getSessionId()) {
+        const sessionPath = entrySessionPath(activeWorkspaceRoot, conversationId);
+        await fs.mkdir(path.dirname(sessionPath), { recursive: true });
+        await fs.writeFile(sessionPath, `${runtime.getSessionId()}\n`, 'utf8');
+      }
+      const artifactScope = channel === 'entry' ? path.join('artifacts', conversationId) : undefined;
+      const artifacts = await collectArtifacts(activeWorkspaceRoot, startedAt, changedPaths, artifactScope, reportedArtifacts);
+      console.info(`[威彦达] 调用完成：Apollo Agent｜耗时：${Date.now() - startedAt}ms｜产出文件：${artifacts.length}个`);
       send({ type: 'done', artifacts, status: runtimeStatus(runtime) });
     } catch (error) {
-      send({ type: 'error', message: error instanceof Error ? error.message : String(error) });
+      const message = error instanceof Error ? error.message : String(error);
+      const artifactScope = channel === 'entry' ? path.join('artifacts', conversationId) : undefined;
+      const artifacts = await collectArtifacts(activeWorkspaceRoot, startedAt, changedPaths, artifactScope, reportedArtifacts);
+      console.error(`[威彦达] 调用失败：Apollo Agent｜错误：${logPreview(message)}｜已恢复文件：${artifacts.length}个`);
+      const runtime = runs.get(runKey)?.runtime;
+      if (runtime && artifacts.length) send({ type: 'done', artifacts, status: runtimeStatus(runtime) });
+      else send({ type: 'error', message });
     } finally {
-      sink = undefined;
-      activeSend = undefined;
-      activeEngine = undefined;
-      busy = false;
+      clearInterval(heartbeat);
+      const run = runs.get(runKey);
+      for (const id of run?.interactionIds ?? []) {
+        const pending = interactions.get(id);
+        if (!pending) continue;
+        interactions.delete(id);
+        pending.resolve(pending.fallback);
+      }
+      runs.delete(runKey);
       if (!closed) res.end();
     }
   };
@@ -320,13 +460,102 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
   };
 }
 
-async function ensureUserWorkspace(userRoot: string, sharedSkillsPath: string): Promise<void> {
+async function handleUploads(req: IncomingMessage, res: ServerResponse, userWorkspaceRoot: string): Promise<void> {
+  if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
+  try {
+    const requestLimit = 8 * MAX_UPLOAD_BYTES + 1024 * 1024;
+    const declared = Number(req.headers['content-length']);
+    if (Number.isFinite(declared) && declared > requestLimit) throw new Error('上传内容过大');
+    const body = await readBytes(req, requestLimit);
+    const request = new Request('http://localhost/upload', {
+      method: 'POST',
+      headers: req.headers as HeadersInit,
+      body: new Uint8Array(body).buffer,
+    });
+    const entries = (await request.formData()).getAll('files');
+    if (!entries.length || entries.length > 8) throw new Error('每次请选择 1–8 个文件');
+    const directory = path.join(userWorkspaceRoot, 'uploads');
+    await fs.mkdir(directory, { recursive: true });
+    const files = [];
+    for (const entry of entries) {
+      if (typeof entry === 'string') throw new Error('无效的文件');
+      const name = entry.name.replace(/[\\/\0]/g, '_').slice(-120) || 'file';
+      const ext = path.extname(name).toLowerCase();
+      if (!UPLOAD_EXTENSIONS.has(ext)) throw new Error(`不支持的文件类型：${ext || name}`);
+      if (entry.size <= 0 || entry.size > MAX_UPLOAD_BYTES) throw new Error(`${name} 必须小于 20MB`);
+      const storedName = `${randomUUID()}-${name}`;
+      const relative = path.join('uploads', storedName);
+      await fs.writeFile(path.join(userWorkspaceRoot, relative), Buffer.from(await entry.arrayBuffer()));
+      files.push({ id: storedName, name, size: entry.size, type: entry.type, path: relative });
+    }
+    return json(res, 200, { files });
+  } catch (error) {
+    return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function importArtifacts(req: IncomingMessage, res: ServerResponse, root: string): Promise<void> {
+  if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
+  try {
+    const body = JSON.parse(await readBody(req, 40 * 1024 * 1024)) as { artifacts?: unknown };
+    if (!Array.isArray(body.artifacts) || !body.artifacts.length || body.artifacts.length > 20) throw new Error('artifacts 无效');
+    await fs.mkdir(root, { recursive: true });
+    const artifacts: Artifact[] = [];
+    for (const value of body.artifacts) {
+      if (!value || typeof value !== 'object') continue;
+      const artifact = value as Partial<Artifact>;
+      if (!artifact.title || !isArtifactKind(artifact.kind)) continue;
+      const expectedExt = artifact.kind === 'word' ? '.docx' : artifact.kind === 'pdf' ? '.pdf' : path.extname(artifact.title).toLowerCase();
+      if (artifact.kind === 'image' && !ARTIFACT_EXTENSIONS.has(expectedExt)) throw new Error(`${artifact.title} 不是支持的图片格式`);
+      const baseName = artifact.title.replace(/[\\/\0]/g, '_').slice(-160);
+      const name = path.extname(baseName).toLowerCase() === expectedExt ? baseName : `${baseName}${expectedExt}`;
+      let bytes: Buffer;
+      if (artifact.kind === 'pdf' || artifact.kind === 'image') {
+        const match = typeof artifact.url === 'string' ? artifact.url.match(/^data:[^;]+;base64,(.+)$/s) : null;
+        if (!match) throw new Error(`${name} 缺少文件内容`);
+        bytes = Buffer.from(match[1]!, 'base64');
+      } else {
+        if (typeof artifact.content !== 'string') throw new Error(`${name} 缺少 Word 内容`);
+        bytes = Buffer.from(artifact.content, 'base64');
+      }
+      if (!bytes.length || bytes.length > MAX_ARTIFACT_BYTES) throw new Error(`${name} 文件为空或超过 25MB`);
+      const file = await availableArtifactPath(root, name);
+      await fs.writeFile(file, bytes);
+      console.info(`[威彦达] 文件已保存：LangHub → 用户文件库｜文件：${path.basename(file)}｜大小：${bytes.length}字节`);
+      const relative = path.relative(root, file);
+      artifacts.push({
+        id: relative,
+        title: path.basename(file),
+        kind: artifact.kind,
+        size: bytes.length,
+        url: `/apollo-api/artifact?path=${encodeURIComponent(relative)}`,
+        meta: { ...(artifact.meta ?? {}), path: relative, source: 'langhub' },
+      });
+    }
+    return json(res, 200, { artifacts });
+  } catch (error) {
+    return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+  }
+}
+
+async function availableArtifactPath(root: string, name: string): Promise<string> {
+  const ext = path.extname(name);
+  const stem = path.basename(name, ext);
+  for (let index = 0; ; index += 1) {
+    const file = path.join(root, index ? `${stem}-${index}${ext}` : name);
+    try { await fs.access(file); } catch { return file; }
+  }
+}
+
+async function ensureUserWorkspace(userRoot: string, sharedEntrySkillsPath: string): Promise<void> {
   await fs.mkdir(path.join(userRoot, '.apollo'), { recursive: true });
   await fs.mkdir(path.join(userRoot, 'artifacts'), { recursive: true });
-  const skillsLink = path.join(userRoot, 'skills');
-  try { await fs.access(skillsLink); } catch {
-    await fs.symlink(sharedSkillsPath, skillsLink, 'dir').catch(() => undefined);
-  }
+  await fs.mkdir(path.join(userRoot, 'assistant-skills'), { recursive: true });
+  const entrySkillsLink = path.join(userRoot, 'entry-skills');
+  const currentTarget = await fs.readlink(entrySkillsLink).catch(() => '');
+  if (path.resolve(path.dirname(entrySkillsLink), currentTarget) === path.resolve(sharedEntrySkillsPath)) return;
+  if (currentTarget) await fs.unlink(entrySkillsLink);
+  await fs.symlink(sharedEntrySkillsPath, entrySkillsLink, 'dir').catch(() => undefined);
 }
 
 async function handleAuth(req: IncomingMessage, res: ServerResponse, database: DatabaseSync, workspaceRoot: string, registrationInvite: string, adminUsername: string): Promise<void> {
@@ -362,7 +591,7 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, database: D
         const rename = database.prepare('UPDATE conversations SET id = ? WHERE id = ?');
         for (const row of rows) rename.run(`${id}:${row.id}`, row.id);
         const userRoot = path.join(workspaceRoot, '.apollo', 'users', id, 'workspace');
-        await ensureUserWorkspace(userRoot, path.join(workspaceRoot, 'skills'));
+        await ensureUserWorkspace(userRoot, path.join(workspaceRoot, 'entry-skills'));
         await fs.cp(path.join(workspaceRoot, '.apollo', 'memory'), path.join(userRoot, '.apollo', 'memory'), { recursive: true, force: false }).catch(() => undefined);
         await fs.cp(path.join(workspaceRoot, 'artifacts'), path.join(userRoot, 'artifacts'), { recursive: true, force: false }).catch(() => undefined);
       }
@@ -569,7 +798,7 @@ function listConversationArtifacts(database: DatabaseSync, userId: string) {
 }
 
 function isArtifactKind(value: unknown): value is Artifact['kind'] {
-  return value === 'word' || value === 'pdf' || value === 'json' || value === 'markdown';
+  return value === 'word' || value === 'pdf' || value === 'image';
 }
 
 async function handleConversation(req: IncomingMessage, res: ServerResponse, database: DatabaseSync, userId: string): Promise<void> {
@@ -639,8 +868,8 @@ async function permissionMode(configPath: string): Promise<'ask' | 'unrestricted
   return permissions?.mode === 'unrestricted' ? 'unrestricted' : 'ask';
 }
 
-async function isUnrestricted(configPath: string): Promise<boolean> {
-  return (await permissionMode(configPath)) === 'unrestricted';
+function entrySessionPath(workspaceRoot: string, conversationId: string): string {
+  return path.join(workspaceRoot, '.apollo', 'entry-sessions', `${conversationId}.session`);
 }
 
 function cleanTitle(value: string): string {
@@ -855,6 +1084,11 @@ function compactInput(input: Record<string, unknown>): Record<string, unknown> {
   );
 }
 
+
+function logPreview(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, 80);
+}
+
 function truncate(value: string, max: number): string {
   return value.length <= max ? value : `${value.slice(0, max)}\n… [truncated ${value.length - max} chars]`;
 }
@@ -868,6 +1102,18 @@ async function readBody(req: IncomingMessage, maxBytes = 1024 * 1024): Promise<s
   return body;
 }
 
+async function readBytes(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of req) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += bytes.length;
+    if (total > maxBytes) throw new Error('请求体过大');
+    chunks.push(bytes);
+  }
+  return Buffer.concat(chunks, total);
+}
+
 function json(res: ServerResponse, status: number, body: object): void {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(body));
@@ -877,10 +1123,20 @@ function jsonError(res: ServerResponse, status: number, message: string): void {
   json(res, status, { error: message });
 }
 
-async function collectArtifacts(root: string, startedAt: number, changedPaths: Set<string>): Promise<Artifact[]> {
-  const candidates = new Set([...changedPaths].map((file) => path.resolve(root, file)));
-  await findRecentArtifacts(root, startedAt, candidates);
-  const artifacts = await Promise.all([...candidates].map((file) => artifactFromFile(root, file)));
+async function collectArtifacts(
+  root: string,
+  startedAt: number,
+  changedPaths: Set<string>,
+  recentDirectory?: string,
+  reported = new Map<string, { title?: string }>(),
+): Promise<Artifact[]> {
+  const candidates = new Set([...reported.keys(), ...changedPaths].map((file) => path.resolve(root, file)));
+  if (!reported.size) await findRecentArtifacts(recentDirectory ? path.join(root, recentDirectory) : root, startedAt, candidates).catch(() => undefined);
+  const artifacts = await Promise.all([...candidates].map(async (file) => {
+    const artifact = await artifactFromFile(root, file);
+    const metadata = reported.get(path.relative(root, file));
+    return artifact && metadata?.title ? { ...artifact, title: path.basename(metadata.title) } : artifact;
+  }));
   return artifacts.filter((artifact): artifact is Artifact => artifact !== null);
 }
 
@@ -903,22 +1159,34 @@ async function artifactFromFile(root: string, file: string): Promise<Artifact | 
   if (relative.startsWith('..') || path.isAbsolute(relative)) return null;
   const ext = path.extname(file).toLowerCase();
   if (!ARTIFACT_EXTENSIONS.has(ext)) return null;
-  const stat = await fs.stat(file).catch(() => null);
+  const safeFile = await confinedRealFile(root, file);
+  if (!safeFile) return null;
+  const stat = await fs.stat(safeFile).catch(() => null);
   if (!stat?.isFile() || stat.size > MAX_ARTIFACT_BYTES) return null;
 
-  const bytes = await fs.readFile(file);
-  const common = { id: relative, title: path.basename(file), size: stat.size, meta: { path: relative } };
-  if (ext === '.md') return { ...common, kind: 'markdown', content: bytes.toString('utf8') };
-  if (ext === '.json') return { ...common, kind: 'json', content: bytes.toString('utf8') };
-  if (ext === '.docx') return { ...common, kind: 'word', content: bytes.toString('base64') };
-  return { ...common, kind: 'pdf', url: `data:application/pdf;base64,${bytes.toString('base64')}` };
+  const storedRelative = path.relative(path.join(root, 'artifacts'), file);
+  const url = !storedRelative.startsWith('..') && !path.isAbsolute(storedRelative)
+    ? `/apollo-api/artifact?path=${encodeURIComponent(storedRelative)}`
+    : undefined;
+  const common = {
+    id: relative,
+    title: path.basename(file),
+    size: stat.size,
+    ...(url ? { url } : {}),
+    meta: { path: relative },
+  };
+  if (ext === '.docx') return { ...common, kind: 'word' };
+  if (ext === '.pdf') return { ...common, kind: 'pdf' };
+  return { ...common, kind: 'image' };
 }
 
 async function listStoredArtifacts(root: string) {
   const files = new Set<string>();
   await findRecentArtifacts(root, 0, files).catch(() => undefined);
   const items = await Promise.all([...files].map(async (file) => {
-    const stat = await fs.stat(file);
+    const safeFile = await confinedRealFile(root, file);
+    if (!safeFile) return null;
+    const stat = await fs.stat(safeFile);
     const relative = path.relative(root, file);
     const ext = path.extname(file).toLowerCase();
     return {
@@ -930,7 +1198,7 @@ async function listStoredArtifacts(root: string) {
       url: `/apollo-api/artifact?path=${encodeURIComponent(relative)}`,
     };
   }));
-  return items.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
+  return items.filter((item): item is NonNullable<typeof item> => item !== null).sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
 }
 
 async function sendStoredArtifact(req: IncomingMessage, res: ServerResponse, root: string): Promise<void> {
@@ -942,29 +1210,42 @@ async function sendStoredArtifact(req: IncomingMessage, res: ServerResponse, roo
     if (safeRelative.startsWith('..') || path.isAbsolute(safeRelative)) return jsonError(res, 403, '无权访问该文件');
     const ext = path.extname(file).toLowerCase();
     if (!ARTIFACT_EXTENSIONS.has(ext)) return jsonError(res, 400, '不支持的文件类型');
-    const stat = await fs.stat(file);
+    const safeFile = await confinedRealFile(root, file);
+    if (!safeFile) return jsonError(res, 403, '无权访问该文件');
+    const stat = await fs.stat(safeFile);
     if (!stat.isFile() || stat.size > MAX_ARTIFACT_BYTES) return jsonError(res, 404, '文件不存在或过大');
     res.writeHead(200, {
       'Content-Type': artifactMime(ext),
       'Content-Length': stat.size,
       'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(path.basename(file))}`,
     });
-    res.end(await fs.readFile(file));
+    res.end(await fs.readFile(safeFile));
   } catch {
     jsonError(res, 404, '文件不存在');
+  }
+}
+
+async function confinedRealFile(root: string, file: string): Promise<string | null> {
+  try {
+    const [realRoot, realFile, fileStat] = await Promise.all([fs.realpath(root), fs.realpath(file), fs.lstat(file)]);
+    if (fileStat.isSymbolicLink()) return null;
+    const relative = path.relative(realRoot, realFile);
+    return relative.startsWith('..') || path.isAbsolute(relative) ? null : realFile;
+  } catch {
+    return null;
   }
 }
 
 function artifactKind(ext: string): Artifact['kind'] {
   if (ext === '.docx') return 'word';
   if (ext === '.pdf') return 'pdf';
-  if (ext === '.json') return 'json';
-  return 'markdown';
+  return 'image';
 }
 
 function artifactMime(ext: string): string {
   if (ext === '.docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   if (ext === '.pdf') return 'application/pdf';
-  if (ext === '.json') return 'application/json; charset=utf-8';
-  return 'text/markdown; charset=utf-8';
+  if (ext === '.png') return 'image/png';
+  if (ext === '.webp') return 'image/webp';
+  return 'image/jpeg';
 }

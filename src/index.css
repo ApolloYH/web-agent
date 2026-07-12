@@ -17,6 +17,15 @@ body,
   margin: 0;
 }
 
+#root {
+  width: calc(100% / 1.21);
+  height: calc(100% / 1.21);
+  zoom: 1.21;
+}
+
+#root .h-dvh { height: calc(100dvh / 1.21); }
+#root .min-h-dvh { min-height: calc(100dvh / 1.21); }
+
 body {
   font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',

@@ -1,89 +1,57 @@
-# Web Agent 工作台
+# 威彦达 Web Agent
 
-Apollo Agent 的 ChatGPT 风格 Web 工作台：在居中对话流中查看 CLI 运行过程，并按需打开 Word、PDF、JSON、Markdown 产出物 Canvas。
+威彦达的统一智能体入口。网页同时提供两套彼此隔离的 Apollo：
 
-## 技术栈
+- **统一入口（超级 Apollo）**：普通问答和润色直接回答；标准、规范和条款问题检索工标库；管控一张卡、监理文书、隐患识别、方案审查、图纸对比等业务通过专用 Skill 调用 LangHub。
+- **个人助理（个人 Apollo）**：处理用户日常工作，拥有独立配置、固定 session、个人技能和长期记忆，不加载统一入口业务技能。
 
-- **React 19 + Vite 7 + TypeScript + Tailwind v4**
-- 对话：直连 **OpenAI 兼容 `/chat/completions`**（SSE 流式）
-- Word 预览：**`docx-preview`**（纯前端把 docx 渲成 HTML，保留分页/字体/表格/图片/样式）
-- Markdown：`react-markdown` + `remark-gfm` + `highlight.js`
-- JSON：自研可折叠树视图
-- PDF：浏览器原生 `<iframe>` 预览
-
-> Vite 开发服务器会同时挂载本地 Apollo middleware；Mock 模式无需模型或额外后端。
-
-## 目录结构
-
-```
-src/
-  App.tsx                 主布局：侧栏 / 对话 / 产出物 Canvas
-  components/
-    AppSidebar.tsx        可折叠任务侧栏 + Apollo 快捷命令
-    ChatPanel.tsx         对话气泡 + 输入框 + 流式
-    ArtifactPanel.tsx     按需打开的产出物 Canvas
-    MarkdownView.tsx      Markdown 渲染
-    JsonView.tsx          JSON 折叠树
-    PdfView.tsx           PDF 预览（iframe）
-    WordView.tsx          docx-preview 渲染 Word（只读）
-    SettingsBar.tsx       Apollo / Mock / OpenAI / Noumi 设置
-    RuntimeStatusBar.tsx  模型、Token、缓存、会话运行指标
-  lib/
-    agent.ts              OpenAI 兼容流式客户端 + 产出物解析
-    mockAgent.ts          本地 mock（无后端也能跑通全链路）
-    settings.ts           配置持久化
-index.html                应用入口
-```
-
-## 快速开始
+## 启动
 
 ```bash
 pnpm install
 pnpm dev
 ```
 
-打开 http://localhost:5173。Web 助理使用 `config/web-apollo.json`，模型密钥读取项目 `.env`；CLI 的 `~/.apollo` 配置不会被 Web 读取。
+打开 http://localhost:5173。
 
-本地开发默认只监听 `127.0.0.1`。开放注册前必须配置 `WEB_REGISTRATION_INVITE` 和 `WEB_ADMIN_USERNAME`；生产部署必须使用 HTTPS 和持久化数据卷，不要用 Vite dev/preview 对外提供服务。没有进程级沙箱时保持 `WEB_ALLOW_UNRESTRICTED=false`。
+Vite 中间件同时承载登录、SQLite 对话记录、Apollo 流式事件、文件上传和产出物下载。开发环境只监听 `127.0.0.1`；生产部署应使用 HTTPS、持久化数据卷和正式 Node 服务，不要直接暴露 Vite dev/preview。
 
-## 接入你的后端 agent
+生产构建与启动：
 
-右上角「⚙ 设置」关闭 Mock，填入：
-
-- **Base URL**：如 `http://localhost:8000/v1`
-- **Model**：你的模型名
-- **API Key**：可选
-
-后端需兼容 OpenAI `POST /chat/completions`（`stream: true`，SSE，增量在 `choices[0].delta.content`）。
-
-### 产出物契约（双通道）
-
-agent 在流式回复末尾，用一个 ` ```artifacts ` 代码块声明产出物（会自动从对话正文中隐藏）：
-
-````
-```artifacts
-[
-  { "kind": "markdown", "title": "分析报告.md", "content": "## 结论\n..." },
-  { "kind": "json",     "title": "结果.json",   "content": "{ \"k\": 1 }" },
-  { "kind": "word",     "title": "报告.docx",   "url": "https://你的后台/files/1.docx" },
-  { "kind": "pdf",      "title": "汇报.pdf",     "url": "https://你的后台/files/1.pdf" }
-]
+```bash
+pnpm build
+pnpm start
 ```
-````
 
-- **通道 A（内联）**：`content` 字段——JSON / Markdown 直接内联；Word 也可内联为 base64 docx。
-- **通道 B（下载 URL）**：`url` 字段——Word / PDF 走后台可下载地址；前端 fetch 后预览。
-- 两个通道可同时给（`content` + `url`）；Word 优先用 `content`，其次拉 `url`。
+## 配置与隔离
 
-> `url` 若跨源，后台需允许 CORS；受保护资源可在 `WordView`/`agent` 层扩展带 token 的 fetch。
+- `config/web-entry-apollo.json`：统一入口公共业务配置模板，默认权限为 `ask`。
+- `.apollo/web-entry-config.json`：首次启动时从模板复制的统一入口运行时配置；权限切换只修改该文件，不污染 Git 模板。
+- `config/web-assistant-apollo.json`：个人助理部署模板。
+- `.apollo/users/<用户 id>/workspace/.apollo/assistant-config.json`：用户首次使用助理时从模板复制出的个人配置，可在助理设置中编辑。
+- `.apollo/users/<用户 id>/workspace/.apollo/web-assistant-session`：个人助理固定 session。
+- `.apollo/users/<用户 id>/workspace/.apollo/entry-sessions/`：每个统一入口对话的独立 session。
+- `.apollo/users/<用户 id>/workspace/artifacts/`：该用户的 Apollo 与 LangHub 产出文件。
 
-## 各类型预览说明
+Web 两套 Apollo 都使用 `configMode: "isolated"`，只读取项目内显式配置和项目 `.env`，不会读取 CLI 的 `~/.apollo` 配置。统一入口关闭 Apollo 记忆工具；个人助理保留记忆工具。
 
-| 类型 | 渲染方式 | 数据来源 |
-| --- | --- | --- |
-| Markdown | react-markdown（GFM + 代码高亮） | `content` |
-| JSON | 可折叠树 | `content` |
-| PDF | `<iframe>` 原生预览 | `url`（可为 data URL） |
-| Word | docx-preview 渲成 HTML | `content`(base64) 或 `url` |
+## 业务 Skill
 
-Word / PDF 面板右上角有「⬇ 下载」按钮，可把原文件保存到本机。
+- `entry-skills/query-engineering-standards`：工标库检索；固定使用 fast 模式，同一用户轮次最多真正请求一次检索服务。
+- `entry-skills/run-zhijian-task`：校验业务输入和附件后调用 LangHub，并把新文件下载到当前用户的 `artifacts/`。
+
+管控一张卡和隐患识别只要求一张现场图片；施工方案审查只要求一个方案文件。其他业务继续按 Skill 中的输入清单校验。
+
+同一用户的不同对话可以同时运行；不同 LangHub 项目可并行。同一个 LangHub 项目共享文件工作区，为避免两个对话互相收错成果文件，服务端会对该项目的实际任务调用排队。
+
+对话和文件库只展示 Word、PDF、JPG、JPEG、PNG、WebP；用户仍可上传其他允许格式作为 Agent 输入。文件结果由工具通过结构化 `artifacts` 上报，不依赖模型正文中的路径猜测。
+
+所需环境变量见 `.env.example`。密钥只在服务端读取，不得提交 `.env`。
+
+## 安全默认值
+
+- 默认权限是 `ask`。
+- `WEB_ALLOW_UNRESTRICTED=false` 时，前端不能启用全自动权限。
+- 统一入口权限只有管理员可修改；个人助理配置和权限归当前用户所有。
+- 注册应配置 `WEB_REGISTRATION_INVITE`，管理员由 `WEB_ADMIN_USERNAME` 显式指定。
+- 上传请求有总大小和单文件双重限制；附件和产出物下载会校验真实路径并拒绝符号链接越界。

@@ -9,6 +9,7 @@ export default function AppSidebar({
   onNewChat,
   onOpenAssistant,
   conversations,
+  runningConversationIds,
   activeConversationId,
   activeView,
   onOpenChat,
@@ -24,6 +25,7 @@ export default function AppSidebar({
   onNewChat: () => void;
   onOpenAssistant: () => void;
   conversations: ConversationSummary[];
+  runningConversationIds: Set<string>;
   activeConversationId: string;
   activeView: 'assistant' | 'chat' | 'library';
   onOpenChat: (id: string) => void;
@@ -57,7 +59,7 @@ export default function AppSidebar({
           className={`sidebar-item mt-0.5 ${activeView === 'assistant' ? 'bg-[#ececec]' : ''}`}
           title="助理"
         >
-          <AssistantIcon />
+          {runningConversationIds.has('assistant') ? <RunningIcon /> : <AssistantIcon />}
           <span className={open ? '' : 'lg:hidden'}>助理</span>
         </button>
 
@@ -82,6 +84,7 @@ export default function AppSidebar({
                   <ConversationRow
                     key={conversation.id}
                     conversation={conversation}
+                    running={runningConversationIds.has(conversation.id)}
                     open={open}
                     active={activeView === 'chat' && activeConversationId === conversation.id}
                     onOpen={() => onOpenChat(conversation.id)}
@@ -108,10 +111,11 @@ export default function AppSidebar({
   );
 }
 
-function ConversationRow({ conversation, open, active, onOpen, onRename, onMove, onDelete }: {
+function ConversationRow({ conversation, open, active, running, onOpen, onRename, onMove, onDelete }: {
   conversation: ConversationSummary;
   open: boolean;
   active: boolean;
+  running: boolean;
   onOpen: () => void;
   onRename: (title: string) => void;
   onMove: () => void;
@@ -142,7 +146,7 @@ function ConversationRow({ conversation, open, active, onOpen, onRename, onMove,
   return (
     <div className={`group relative flex items-center rounded-lg ${active ? 'bg-[#ececec]' : ''}`}>
       <button type="button" onClick={onOpen} className="sidebar-item min-w-0 flex-1 pr-1" title={conversation.title || '新对话'}>
-        <ChatIcon />
+        {running ? <RunningIcon /> : <ChatIcon />}
         <span className={`truncate ${open ? '' : 'lg:hidden'}`}>{conversation.title || '新对话'}</span>
       </button>
       {open && (
@@ -157,6 +161,15 @@ function ConversationRow({ conversation, open, active, onOpen, onRename, onMove,
         </details>
       )}
     </div>
+  );
+}
+
+function RunningIcon() {
+  return (
+    <svg className="size-[18px] shrink-0 animate-spin text-[#777]" viewBox="0 0 24 24" fill="none" aria-label="正在运行">
+      <circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="2" opacity="0.22" />
+      <path d="M12 3.5a8.5 8.5 0 0 1 8.5 8.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+    </svg>
   );
 }
 

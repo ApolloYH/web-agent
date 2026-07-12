@@ -5,8 +5,7 @@ const filters = [
   ['all', '全部'],
   ['word', 'Word'],
   ['pdf', 'PDF'],
-  ['markdown', 'Markdown'],
-  ['json', 'JSON'],
+  ['image', '图片'],
 ] as const;
 
 export default function FileLibrary({ files, loading }: { files: StoredArtifact[]; loading: boolean }) {
@@ -71,10 +70,7 @@ function FileRow({ file }: { file: StoredArtifact }) {
 }
 
 function artifactUrl(file: StoredArtifact): string | undefined {
-  if (file.url) return file.url;
-  if (!file.content) return undefined;
-  const mime = file.kind === 'json' ? 'application/json' : 'text/markdown';
-  return `data:${mime};charset=utf-8,${encodeURIComponent(file.content)}`;
+  return file.url;
 }
 
 function formatSize(bytes: number): string {

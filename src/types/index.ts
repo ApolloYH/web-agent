@@ -1,7 +1,7 @@
 // 产出物（agent 的产出）类型定义
 // 通道 A：agent 在流式消息里返回一个 JSON 字段描述产出物
 // 通道 B：产出物同时带一个后台可下载的 url
-export type ArtifactKind = 'word' | 'pdf' | 'json' | 'markdown';
+export type ArtifactKind = 'word' | 'pdf' | 'image';
 
 export interface Artifact {
   /** 稳定 id，用于面板选中 / 去重 */
@@ -11,12 +11,20 @@ export interface Artifact {
   title: string;
   /** 通道 B：后台可下载地址（Word/PDF 通常走这个） */
   url?: string;
-  /** 通道 A：内联内容（JSON/Markdown 通常直接内联，省一次请求） */
+  /** 兼容旧 Word 产物的内联内容 */
   content?: string;
   /** 可选：文件字节大小 */
   size?: number;
   /** 原样保留 agent 给的扩展元数据 */
   meta?: Record<string, unknown>;
+}
+
+export interface Attachment {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  path: string;
 }
 
 export type ChatRole = 'user' | 'assistant' | 'system';
@@ -114,4 +122,6 @@ export interface ChatMessage {
   steps?: ProcessStep[];
   /** 流式进行中标记 */
   streaming?: boolean;
+  /** 用户上传并持久化到其独立工作区的文件 */
+  attachments?: Attachment[];
 }

@@ -1,5 +1,5 @@
-import type { TraceEvent } from '../../agent/dist/sdk.js';
-import type { Artifact, RuntimeStatus } from '@/types';
+import type { TraceEvent } from '@apolloyh/apollo-agent';
+import type { Artifact, Attachment, RuntimeStatus } from '@/types';
 
 export type ApolloEvent =
   | { type: 'trace'; event: TraceEvent }
@@ -18,6 +18,18 @@ export type ApolloEvent =
 
 export type ApolloChannel = 'assistant' | 'entry';
 
+export async function uploadInputFiles(files: File[]): Promise<Attachment[]> {
+  if (!files.length) return [];
+  const body = new FormData();
+  for (const file of files) body.append('files', file, file.name);
+  const response = await fetch('/apollo-api/uploads', { method: 'POST', body });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error ?? `文件上传失败 ${response.status}`);
+  }
+  return (await response.json()).files;
+}
+
 export interface ApolloMemory {
   id: string;
   title: string;
@@ -32,11 +44,14 @@ export async function streamApollo(
   onEvent: (event: ApolloEvent) => void,
   signal?: AbortSignal,
   channel: ApolloChannel = 'entry',
+  conversationId?: string,
 ): Promise<Artifact[]> {
+  const startedAt = Date.now();
+  console.log(`[威彦达 Web] 开始调用：Apollo Agent｜通道：${channel === 'assistant' ? '助理' : '统一入口'}`);
   const response = await fetch('/apollo-api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, channel }),
+    body: JSON.stringify({ message, channel, conversationId }),
     signal,
   });
   if (!response.ok || !response.body) {
@@ -63,6 +78,7 @@ export async function streamApollo(
       onEvent(event);
     }
   }
+  console.log(`[威彦达 Web] 调用完成：Apollo Agent｜耗时：${Date.now() - startedAt}ms｜产出文件：${artifacts.length}个`);
   return artifacts;
 }
 
@@ -125,17 +141,17 @@ export async function deleteApolloMemory(id: string): Promise<void> {
 
 export type ApolloPermissionMode = 'ask' | 'unrestricted';
 
-export async function getApolloPermission(): Promise<ApolloPermissionMode> {
-  const response = await fetch('/apollo-api/permission');
+export async function getApolloPermission(channel: ApolloChannel = 'assistant'): Promise<ApolloPermissionMode> {
+  const response = await fetch(`/apollo-api/permission?channel=${channel}`);
   if (!response.ok) throw new Error(`读取权限模式失败 ${response.status}`);
   return (await response.json()).mode;
 }
 
-export async function saveApolloPermission(mode: ApolloPermissionMode): Promise<void> {
+export async function saveApolloPermission(mode: ApolloPermissionMode, channel: ApolloChannel = 'assistant'): Promise<void> {
   const response = await fetch('/apollo-api/permission', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode }),
+    body: JSON.stringify({ mode, channel }),
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));

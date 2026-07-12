@@ -1,6 +1,4 @@
 import { useEffect, useState } from 'react';
-import type { BackendMode, NoumiSettings } from '@/lib/settings';
-import { listNoumiProjects } from '@/lib/noumiAgent';
 import {
   deleteApolloMemory,
   getApolloConfig,
@@ -12,35 +10,21 @@ import type { ApolloMemory, ApolloPermissionMode } from '@/lib/apolloAgent';
 import { useDismissDetails } from '@/lib/useDismissDetails';
 
 export default function SettingsBar({
-  backend,
-  noumi,
-  onChangeBackend,
-  onChangeNoumi,
   apolloPermissionMode,
-  allowBackendSelection = true,
   canManageConfig = true,
 }: {
-  backend: BackendMode;
-  noumi: NoumiSettings;
-  onChangeBackend: (v: BackendMode) => void;
-  onChangeNoumi: (v: NoumiSettings) => void;
   apolloPermissionMode: ApolloPermissionMode;
-  allowBackendSelection?: boolean;
   canManageConfig?: boolean;
 }) {
   const detailsRef = useDismissDetails();
-  const badge =
-    backend === 'apollo'
-      ? { text: '本地智能体', dot: 'bg-emerald-500' }
-      : { text: 'Noumi', dot: 'bg-emerald-500' };
 
   return (
     <header className="relative flex h-12 shrink-0 items-center justify-between bg-white pl-12 pr-3 lg:px-3">
       <div className="flex min-w-0 items-center gap-2.5">
         <span className="text-[12px] font-semibold tracking-tight text-gray-900">威彦达</span>
         <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-gray-500">
-          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${badge.dot}`} aria-hidden="true" />
-          <span className="truncate">{badge.text}</span>
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden="true" />
+          <span className="truncate">个人助理</span>
         </span>
       </div>
 
@@ -56,34 +40,7 @@ export default function SettingsBar({
         </summary>
           <div className="absolute right-0 z-30 mt-2 max-h-[calc(100dvh-5rem)] w-[min(24rem,calc(100vw-1.5rem))] overflow-y-auto rounded-2xl border border-black/[0.08] bg-white p-4 shadow-[0_18px_48px_rgba(0,0,0,0.12)]">
             <h2 className="mb-3 text-[13px] font-semibold text-gray-900">设置</h2>
-            {/* 后端模式选择 */}
-            {allowBackendSelection && <div className="mb-3">
-              <span className="text-[11px] font-medium text-gray-600">后端模式</span>
-              <div className="mt-2 grid grid-cols-2 gap-1 rounded-xl bg-gray-100 p-1 text-[11px]">
-                {(
-                  [
-                    ['apollo', '本地'],
-                    ['noumi', 'Noumi'],
-                  ] as [BackendMode, string][]
-                ).map(([v, label]) => (
-                  <button
-                    key={v}
-                    onClick={() => onChangeBackend(v)}
-                    className={`min-w-0 rounded-lg px-1.5 py-2 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-900 ${
-                      backend === v ? 'bg-white font-medium text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'
-                    }`}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>}
-
-            {backend === 'noumi' && <NoumiPanel noumi={noumi} onChange={onChangeNoumi} />}
-
-            {backend === 'apollo' && (
-              <ApolloPanel permissionMode={apolloPermissionMode} canManageConfig={canManageConfig} />
-            )}
+            <ApolloPanel permissionMode={apolloPermissionMode} canManageConfig={canManageConfig} />
           </div>
       </details>
     </header>
@@ -109,7 +66,7 @@ function ApolloPanel({ permissionMode, canManageConfig }: { permissionMode: Apol
 
 function ApolloConfigPanel({ permissionMode }: { permissionMode: ApolloPermissionMode }) {
   const [config, setConfig] = useState('');
-  const [configPath, setConfigPath] = useState('config/web-apollo.json');
+  const [configPath, setConfigPath] = useState('当前用户/.apollo/assistant-config.json');
   const [state, setState] = useState<'loading' | 'idle' | 'saving' | 'saved' | 'error'>('loading');
   const [error, setError] = useState('');
 
@@ -281,146 +238,5 @@ function MemoryPanel() {
       )}
       {error && <p className="text-red-500">{error}</p>}
     </div>
-  );
-}
-
-function NoumiPanel({
-  noumi,
-  onChange,
-}: {
-  noumi: NoumiSettings;
-  onChange: (v: NoumiSettings) => void;
-}) {
-  const [projects, setProjects] = useState<{ id: string; topics: { id: string; name: string }[] }[]>(
-    [],
-  );
-  const [loadState, setLoadState] = useState<'idle' | 'loading' | 'error'>('idle');
-  const [err, setErr] = useState('');
-
-  // 有 baseUrl + apiKey 时，自动拉项目列表供选择
-  useEffect(() => {
-    if (!noumi.baseUrl || !noumi.apiKey) return;
-    let cancelled = false;
-    const ctrl = new AbortController();
-    setLoadState('loading');
-    setErr('');
-    listNoumiProjects({ baseUrl: noumi.baseUrl, apiKey: noumi.apiKey }, ctrl.signal)
-      .then((ps) => {
-        if (cancelled) return;
-        setProjects(ps);
-        setLoadState('idle');
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        setErr(e instanceof Error ? e.message : String(e));
-        setLoadState('error');
-      });
-    return () => {
-      cancelled = true;
-      ctrl.abort();
-    };
-  }, [noumi.baseUrl, noumi.apiKey]);
-
-  const topics = projects.find((p) => p.id === noumi.projectId)?.topics ?? [];
-
-  return (
-    <div className="space-y-2 text-[12px]">
-      <Field
-        label="Base URL"
-        value={noumi.baseUrl}
-        onChange={(v) => onChange({ ...noumi, baseUrl: v })}
-        placeholder="https://www.langhub.cn/api/external/v1"
-      />
-      <Field
-        label="API Key"
-        value={noumi.apiKey}
-        onChange={(v) => onChange({ ...noumi, apiKey: v })}
-        placeholder="nim_..."
-        type="password"
-      />
-
-      <label className="block">
-        <span className="text-gray-500">项目</span>
-        {projects.length > 0 ? (
-          <select
-            value={noumi.projectId}
-            onChange={(e) => onChange({ ...noumi, projectId: e.target.value, topicId: '' })}
-            className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
-          >
-            <option value="">（选择项目）</option>
-            {projects.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.id}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <input
-            value={noumi.projectId}
-            placeholder="项目 id，如 yh-文件生成"
-            onChange={(e) => onChange({ ...noumi, projectId: e.target.value })}
-            className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
-          />
-        )}
-      </label>
-
-      <label className="block">
-        <span className="text-gray-500">话题（留空自动新建）</span>
-        {topics.length > 0 ? (
-          <select
-            value={noumi.topicId}
-            onChange={(e) => onChange({ ...noumi, topicId: e.target.value })}
-            className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
-          >
-            <option value="">（新建临时话题）</option>
-            {topics.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}（{t.id}）
-              </option>
-            ))}
-          </select>
-        ) : (
-          <input
-            value={noumi.topicId}
-            placeholder="话题 id，留空自动新建"
-            onChange={(e) => onChange({ ...noumi, topicId: e.target.value })}
-            className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
-          />
-        )}
-      </label>
-
-      {loadState === 'loading' && <p className="text-[11px] text-gray-400">正在加载项目列表…</p>}
-      {loadState === 'error' && <p className="text-[11px] text-red-500">加载项目失败：{err}</p>}
-      <p className="text-[11px] leading-4 text-gray-400">
-        直连 langhub.cn。密钥仅存于本机浏览器，请勿在公开环境使用。
-      </p>
-    </div>
-  );
-}
-
-function Field({
-  label,
-  value,
-  onChange,
-  placeholder,
-  type = 'text',
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  type?: string;
-}) {
-  return (
-    <label className="block">
-      <span className="text-gray-500">{label}</span>
-      <input
-        type={type}
-        value={value}
-        placeholder={placeholder}
-        onChange={(e) => onChange(e.target.value)}
-        className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
-      />
-    </label>
   );
 }

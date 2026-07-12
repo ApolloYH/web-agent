@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ChatMessage, ProcessStep, RuntimeStatus } from '@/types';
+import type { ChatMessage, RuntimeStatus } from '@/types';
 import { extractArtifacts } from '@/lib/agent';
-import { mockStream } from '@/lib/mockAgent';
-import { runNoumiTask } from '@/lib/noumiAgent';
 import {
   getApolloPermission,
   getStoredArtifacts,
@@ -11,18 +9,11 @@ import {
   saveApolloPermission,
   streamApollo,
   summarizeConversationTitle,
+  uploadInputFiles,
   type ApolloPermissionMode,
   type StoredArtifact,
 } from '@/lib/apolloAgent';
 import { applyApolloEvent } from '@/lib/apolloTimeline';
-import {
-  loadBackend,
-  saveBackend,
-  loadNoumi,
-  saveNoumi,
-  type BackendMode,
-  type NoumiSettings,
-} from '@/lib/settings';
 import {
   deleteConversation,
   getConversation,
@@ -57,11 +48,10 @@ export default function App() {
 
 function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [streaming, setStreaming] = useState(false);
-  const [backend, setBackend] = useState<BackendMode>(() => loadBackend());
-  const [noumi, setNoumi] = useState<NoumiSettings>(() => loadNoumi());
+  const [runningConversationIds, setRunningConversationIds] = useState<Set<string>>(() => new Set());
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
   const [permissionMode, setPermissionMode] = useState<ApolloPermissionMode>('ask');
+  const [entryPermissionMode, setEntryPermissionMode] = useState<ApolloPermissionMode>('ask');
   const [conversationId, setConversationId] = useState(ASSISTANT_CONVERSATION_ID);
   const [conversationTitle, setConversationTitle] = useState(ASSISTANT_CONVERSATION_TITLE);
   const [conversationGroup, setConversationGroup] = useState<'最近' | '已归档'>('最近');
@@ -71,29 +61,40 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   const [storedArtifacts, setStoredArtifacts] = useState<StoredArtifact[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1024);
-  const abortRef = useRef<AbortController | null>(null);
-  const noumiTopicRef = useRef<string>('');
+  const abortRefs = useRef(new Map<string, AbortController>());
+  const messageCache = useRef(new Map<string, ChatMessage[]>());
+  const activeConversationIdRef = useRef(conversationId);
   const titleGeneratedRef = useRef(false);
+  const streaming = runningConversationIds.has(conversationId);
 
-  const toggleMock = useCallback((v: BackendMode) => {
-    setBackend(v);
-    saveBackend(v);
+  useEffect(() => {
+    activeConversationIdRef.current = conversationId;
+    messageCache.current.set(conversationId, messages);
+  }, [conversationId, messages]);
+
+  const updateRunMessages = useCallback((id: string, update: (current: ChatMessage[]) => ChatMessage[]) => {
+    const next = update(messageCache.current.get(id) ?? []);
+    messageCache.current.set(id, next);
+    if (activeConversationIdRef.current === id) setMessages(next);
+    return next;
   }, []);
 
-  const updateNoumi = useCallback((n: NoumiSettings) => {
-    setNoumi(n);
-    saveNoumi(n);
-  }, []);
-
-  const patchAssistant = useCallback((assistantId: string, patch: Partial<ChatMessage>) => {
-    setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, ...patch } : m)));
+  const finishRun = useCallback((id: string) => {
+    abortRefs.current.delete(id);
+    setRunningConversationIds((current) => {
+      const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
   }, []);
 
   useEffect(() => {
-    if (activeView !== 'assistant' && backend !== 'apollo') return;
-    getApolloStatus().then(setRuntimeStatus).catch(() => setRuntimeStatus(null));
-    getApolloPermission().then(setPermissionMode).catch(() => setPermissionMode('ask'));
-  }, [activeView, backend]);
+    const channel = activeView === 'assistant' ? 'assistant' : 'entry';
+    getApolloPermission(channel)
+      .then(channel === 'assistant' ? setPermissionMode : setEntryPermissionMode)
+      .catch(() => channel === 'assistant' ? setPermissionMode('ask') : setEntryPermissionMode('ask'));
+    if (channel === 'assistant') getApolloStatus().then(setRuntimeStatus).catch(() => setRuntimeStatus(null));
+  }, [activeView]);
 
   const rememberConversation = useCallback((conversation: ConversationSummary) => {
     if (conversation.id === ASSISTANT_CONVERSATION_ID) return;
@@ -152,15 +153,12 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   }, []);
 
   const handleSend = useCallback(
-    async (text: string) => {
+    async (text: string, inputFiles: File[] = []) => {
       const assistantSurface = activeView === 'assistant';
-      const selectedBackend: BackendMode = assistantSurface ? 'apollo' : backend;
-      if (!assistantSurface && !titleGeneratedRef.current) {
-        titleGeneratedRef.current = true;
-        void summarizeConversationTitle(text)
-          .then(setConversationTitle)
-          .catch(() => setConversationTitle(text.slice(0, 18)));
-      }
+      const targetConversationId = conversationId;
+      if (abortRefs.current.has(targetConversationId)) return;
+      const generateTitle = !assistantSurface && !titleGeneratedRef.current;
+      if (generateTitle) titleGeneratedRef.current = true;
       const userMsg: ChatMessage = { id: nextId('u'), role: 'user', content: text };
       const assistantId = nextId('a');
       const thoughtId = nextId('th');
@@ -180,24 +178,36 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
           },
         ],
       };
-      setMessages((prev) => [...prev, userMsg, assistantMsg]);
-      setStreaming(true);
+      const initialMessages = updateRunMessages(targetConversationId, (current) => [...current, userMsg, assistantMsg]);
+      const initialSave = saveConversation({ id: targetConversationId, title: conversationTitle, group: conversationGroup, messages: initialMessages })
+        .then(rememberConversation)
+        .catch(() => undefined);
+      if (generateTitle) {
+        void initialSave.then(() => summarizeConversationTitle(text))
+          .catch(() => text.slice(0, 18))
+          .then((title) => {
+            setConversationList((items) => items.map((item) => item.id === targetConversationId ? { ...item, title } : item));
+            if (activeConversationIdRef.current === targetConversationId) setConversationTitle(title);
+            void updateConversation(targetConversationId, { title }).catch(() => undefined);
+          });
+      }
 
       const controller = new AbortController();
-      abortRef.current = controller;
+      abortRefs.current.set(targetConversationId, controller);
+      setRunningConversationIds((current) => new Set(current).add(targetConversationId));
 
       let raw = '';
       const onDelta = (chunk: string) => {
         raw += chunk;
         const { cleanText } = extractArtifacts(raw);
-        setMessages((prev) =>
+        updateRunMessages(targetConversationId, (prev) =>
           prev.map((m) => (m.id === assistantId ? { ...m, content: cleanText } : m)),
         );
       };
 
       const finishThought = (detail?: string) => {
         const durationSec = (Date.now() - thoughtStart) / 1000;
-        setMessages((prev) =>
+        updateRunMessages(targetConversationId, (prev) =>
           prev.map((m) => {
             if (m.id !== assistantId) return m;
             const sourceSteps = m.steps ?? [];
@@ -226,122 +236,56 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
       };
 
       try {
-        if (selectedBackend === 'apollo') {
-          const artifacts = await streamApollo(
-            text,
-            (event) => {
-              if (event.type === 'trace' && event.event.type === 'assistant_delta') onDelta(event.event.text);
-              if (event.type === 'status' || event.type === 'done') setRuntimeStatus(event.status);
-              if (event.type === 'trace' || event.type === 'interaction') {
-                setMessages((prev) =>
-                  prev.map((message) =>
-                    message.id === assistantId
-                      ? { ...message, steps: applyApolloEvent(message.steps ?? [], event) }
-                      : message,
-                  ),
-                );
-              }
-            },
-            controller.signal,
-            assistantSurface ? 'assistant' : 'entry',
-          );
-          finishThought();
-          const { cleanText } = extractArtifacts(raw);
-          patchAssistant(assistantId, {
-            content: cleanText,
-            artifacts,
-            streaming: false,
-          });
-          setMessages((prev) =>
-            prev.map((message) =>
-              message.id === assistantId
-                ? {
-                    ...message,
-                    steps: (message.steps ?? []).map((step) =>
-                      step.pending && step.kind !== 'approval' && step.kind !== 'question'
-                        ? { ...step, pending: false }
-                        : step,
-                    ),
-                  }
-                : message,
-            ),
-          );
-          return;
+        const attachments = await uploadInputFiles(inputFiles);
+        if (attachments.length) {
+          updateRunMessages(targetConversationId, (current) => current.map((message) => message.id === userMsg.id ? { ...message, attachments } : message));
         }
-
-        if (selectedBackend === 'noumi') {
-          const result = await runNoumiTask(
-            {
-              baseUrl: noumi.baseUrl,
-              apiKey: noumi.apiKey,
-              projectId: noumi.projectId,
-              topicId: noumi.topicId || noumiTopicRef.current || undefined,
-            },
-            text,
-            onDelta,
-            controller.signal,
-          );
-          noumiTopicRef.current = result.topicId;
-          finishThought();
-          // 若有产出物，附加可折叠 Run 块
-          const runSteps: ProcessStep[] =
-            result.artifacts.length > 0
-              ? [
-                  {
-                    id: nextId('run'),
-                    kind: 'tool_run',
-                    title: 'Collect workspace artifacts',
-                    command: 'workspace tree · files · download',
-                    detail: result.artifacts.map((a) => `· ${a.title} (${a.kind})`).join('\n'),
-                    durationSec: 0.1,
-                  },
-                ]
-              : [];
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === assistantId
-                ? {
-                    ...m,
-                    content: result.text || raw,
-                    artifacts: result.artifacts,
-                    steps: [...(m.steps ?? []).map((s) => ({ ...s, pending: false })), ...runSteps],
-                    streaming: false,
-                  }
-                : m,
-            ),
-          );
-          return;
-        }
-
-        if (selectedBackend === 'mock') {
-          await mockStream(
-            text,
-            {
-              onDelta,
-              onSteps: (steps) => patchAssistant(assistantId, { steps }),
-            },
-            controller.signal,
-          );
-        }
-
-        const { cleanText, artifacts } = extractArtifacts(raw);
-        setMessages((prev) =>
+        const executionText = attachments.length
+          ? `${text}\n\n已上传文件：\n${attachments.map((file) => `- ${file.path}`).join('\n')}`
+          : text;
+        const artifacts = await streamApollo(
+          executionText,
+          (event) => {
+            if (event.type === 'trace' && event.event.type === 'assistant_delta') onDelta(event.event.text);
+            if (assistantSurface && (event.type === 'status' || event.type === 'done')) setRuntimeStatus(event.status);
+            if (event.type === 'trace' || event.type === 'interaction') {
+              updateRunMessages(targetConversationId, (prev) =>
+                prev.map((message) =>
+                  message.id === assistantId
+                    ? { ...message, steps: applyApolloEvent(message.steps ?? [], event) }
+                    : message,
+                ),
+              );
+            }
+          },
+          controller.signal,
+          assistantSurface ? 'assistant' : 'entry',
+          assistantSurface ? undefined : targetConversationId,
+        );
+        finishThought();
+        const { cleanText } = extractArtifacts(raw);
+        updateRunMessages(targetConversationId, (prev) =>
           prev.map((m) =>
             m.id === assistantId
               ? {
                   ...m,
-                  content: cleanText,
+                  content: cleanText || (artifacts.length ? '已生成成果文件。' : ''),
                   artifacts,
                   streaming: false,
-                  steps: (m.steps ?? []).map((s) => ({ ...s, pending: false })),
+                  steps: (m.steps ?? []).map((step) =>
+                    step.pending && step.kind !== 'approval' && step.kind !== 'question'
+                      ? { ...step, pending: false }
+                      : step,
+                  ),
                 }
               : m,
           ),
         );
       } catch (e) {
         const msg = controller.signal.aborted ? '已中断。' : e instanceof Error ? e.message : String(e);
+        console.error(`[威彦达 Web] 调用失败：${msg}`);
         finishThought(`出错：${msg}`);
-        setMessages((prev) =>
+        updateRunMessages(targetConversationId, (prev) =>
           prev.map((m) =>
             m.id === assistantId
               ? {
@@ -354,51 +298,50 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
           ),
         );
       } finally {
-        setStreaming(false);
-        abortRef.current = null;
+        finishRun(targetConversationId);
+        await initialSave;
+        const current = await getConversationIfExists(targetConversationId).catch(() => null);
+        if (current) {
+          await saveConversation({ ...current, messages: messageCache.current.get(targetConversationId) ?? current.messages })
+            .then(rememberConversation)
+            .catch(() => undefined);
+        }
       }
     },
-    [activeView, backend, noumi, patchAssistant],
+    [activeView, conversationGroup, conversationId, conversationTitle, finishRun, rememberConversation, updateRunMessages],
   );
 
   const handleStop = useCallback(() => {
-    abortRef.current?.abort();
-    setStreaming(false);
-  }, []);
+    abortRefs.current.get(conversationId)?.abort();
+  }, [conversationId]);
 
   const handleNewChat = useCallback(() => {
-    abortRef.current?.abort();
     if (messages.length || conversationTitle) {
       void saveConversation({ id: conversationId, title: conversationTitle, group: conversationGroup, messages })
         .then(rememberConversation)
         .catch(() => undefined);
     }
-    setConversationId(newConversationId());
+    const id = newConversationId();
+    activeConversationIdRef.current = id;
+    messageCache.current.set(id, []);
+    setConversationId(id);
     setMessages([]);
     setConversationTitle('');
     setConversationGroup('最近');
     titleGeneratedRef.current = false;
-    setStreaming(false);
-    noumiTopicRef.current = '';
     setActiveView('chat');
-    if (backend === 'apollo') {
-      void streamApollo('/clear', (event) => {
-        if (event.type === 'status' || event.type === 'done') setRuntimeStatus(event.status);
-      }, undefined, 'entry').catch(() => undefined);
-    }
-  }, [backend, conversationGroup, conversationId, conversationTitle, messages, rememberConversation]);
+  }, [conversationGroup, conversationId, conversationTitle, messages, rememberConversation]);
 
   const openAssistant = useCallback(async () => {
     if (activeView === 'assistant') return;
-    abortRef.current?.abort();
     setHistoryReady(false);
     try {
       const conversation = await getConversationIfExists(ASSISTANT_CONVERSATION_ID);
+      activeConversationIdRef.current = ASSISTANT_CONVERSATION_ID;
       setConversationId(ASSISTANT_CONVERSATION_ID);
       setConversationTitle(ASSISTANT_CONVERSATION_TITLE);
       setConversationGroup('最近');
-      setMessages(conversation?.messages ?? []);
-      setStreaming(false);
+      setMessages(messageCache.current.get(ASSISTANT_CONVERSATION_ID) ?? conversation?.messages ?? []);
       setActiveView('assistant');
       titleGeneratedRef.current = true;
     } catch (error) {
@@ -413,15 +356,14 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
       setActiveView('chat');
       return;
     }
-    abortRef.current?.abort();
     setHistoryReady(false);
     try {
       const conversation = await getConversation(id);
+      activeConversationIdRef.current = conversation.id;
       setConversationId(conversation.id);
       setConversationTitle(conversation.title);
       setConversationGroup(conversation.group);
-      setMessages(conversation.messages);
-      setStreaming(false);
+      setMessages(messageCache.current.get(conversation.id) ?? conversation.messages);
       setActiveView('chat');
       titleGeneratedRef.current = Boolean(conversation.title || conversation.messages.length);
     } catch (error) {
@@ -452,14 +394,17 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   }, [conversationId, conversationList]);
 
   const removeConversation = useCallback(async (id: string) => {
+    if (abortRefs.current.has(id)) throw new Error('请先停止正在运行的对话');
     await deleteConversation(id);
     setConversationList((items) => items.filter((item) => item.id !== id));
     if (id !== conversationId) return;
-    setConversationId(newConversationId());
+    const nextId = newConversationId();
+    activeConversationIdRef.current = nextId;
+    messageCache.current.set(nextId, []);
+    setConversationId(nextId);
     setConversationTitle('');
     setConversationGroup('最近');
     setMessages([]);
-    setStreaming(false);
     titleGeneratedRef.current = false;
   }, [conversationId]);
 
@@ -478,19 +423,21 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   const handleCommand = useCallback(async (command: string) => {
     const assistantSurface = activeView === 'assistant';
     if (streaming) return;
+    const targetConversationId = conversationId;
+    const controller = new AbortController();
+    abortRefs.current.set(targetConversationId, controller);
+    setRunningConversationIds((current) => new Set(current).add(targetConversationId));
     if (command === '/clear') {
-      setStreaming(true);
       try {
-        if (assistantSurface || backend === 'apollo') {
-          await streamApollo(command, (event) => {
-            if (event.type === 'status' || event.type === 'done') setRuntimeStatus(event.status);
-          }, undefined, assistantSurface ? 'assistant' : 'entry');
-        } else {
-          noumiTopicRef.current = '';
-        }
-        await deleteConversation(conversationId).catch(() => undefined);
-        setConversationList((items) => items.filter((item) => item.id !== conversationId));
-        setConversationId(assistantSurface ? ASSISTANT_CONVERSATION_ID : newConversationId());
+        await streamApollo(command, (event) => {
+          if (event.type === 'status' || event.type === 'done') setRuntimeStatus(event.status);
+        }, controller.signal, assistantSurface ? 'assistant' : 'entry', assistantSurface ? undefined : targetConversationId);
+        await deleteConversation(targetConversationId).catch(() => undefined);
+        setConversationList((items) => items.filter((item) => item.id !== targetConversationId));
+        const nextId = assistantSurface ? ASSISTANT_CONVERSATION_ID : newConversationId();
+        activeConversationIdRef.current = nextId;
+        messageCache.current.set(nextId, []);
+        setConversationId(nextId);
         setMessages([]);
         setConversationTitle(assistantSurface ? ASSISTANT_CONVERSATION_TITLE : '');
         setConversationGroup('最近');
@@ -498,30 +445,42 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
       } catch (error) {
         window.alert(error instanceof Error ? error.message : String(error));
       } finally {
-        setStreaming(false);
+        finishRun(targetConversationId);
       }
       return;
     }
-    if (!assistantSurface && backend !== 'apollo') return;
-    setStreaming(true);
+    if (!assistantSurface) {
+      finishRun(targetConversationId);
+      return;
+    }
     try {
       await streamApollo(command, (event) => {
         if (event.type === 'status' || event.type === 'done') setRuntimeStatus(event.status);
-      }, undefined, assistantSurface ? 'assistant' : 'entry');
+      }, controller.signal, 'assistant');
     } catch (error) {
       window.alert(error instanceof Error ? error.message : String(error));
     } finally {
-      setStreaming(false);
+      finishRun(targetConversationId);
     }
-  }, [activeView, backend, conversationId, streaming]);
+  }, [activeView, conversationId, finishRun, streaming]);
 
   const changePermissionMode = useCallback(async (mode: ApolloPermissionMode) => {
     setPermissionMode(mode);
     try {
-      await saveApolloPermission(mode);
+      await saveApolloPermission(mode, 'assistant');
       setRuntimeStatus(await getApolloStatus());
     } catch (error) {
       setPermissionMode(mode === 'ask' ? 'unrestricted' : 'ask');
+      window.alert(error instanceof Error ? error.message : String(error));
+    }
+  }, []);
+
+  const changeEntryPermissionMode = useCallback(async (mode: ApolloPermissionMode) => {
+    setEntryPermissionMode(mode);
+    try {
+      await saveApolloPermission(mode, 'entry');
+    } catch (error) {
+      setEntryPermissionMode(mode === 'ask' ? 'unrestricted' : 'ask');
       window.alert(error instanceof Error ? error.message : String(error));
     }
   }, []);
@@ -540,6 +499,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
           if (window.innerWidth < 1024) setSidebarOpen(false);
         }}
         conversations={conversationList}
+        runningConversationIds={runningConversationIds}
         activeConversationId={conversationId}
         activeView={activeView}
         onOpenChat={(id) => {
@@ -572,12 +532,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
             <MenuIcon />
           </button>
           {activeView === 'assistant' && <SettingsBar
-              backend="apollo"
-              noumi={noumi}
-              onChangeBackend={toggleMock}
-              onChangeNoumi={updateNoumi}
               apolloPermissionMode={permissionMode}
-              allowBackendSelection={false}
               canManageConfig={user.admin}
             />}
           {activeView === 'assistant' && <RuntimeStatusBar status={runtimeStatus} />}
@@ -592,9 +547,9 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
               onCommand={handleCommand}
               onRespond={handleRespond}
               runtimeMode={runtimeStatus?.mode ?? 'normal'}
-              permissionMode={permissionMode}
-              onPermissionChange={changePermissionMode}
-              canManagePermission={user.admin}
+              permissionMode={activeView === 'assistant' ? permissionMode : entryPermissionMode}
+              onPermissionChange={activeView === 'assistant' ? changePermissionMode : changeEntryPermissionMode}
+              canManagePermission={activeView === 'assistant' ? true : user.admin}
               surface={activeView === 'assistant' ? 'assistant' : 'entry'}
             />
           )}

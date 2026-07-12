@@ -1,14 +1,11 @@
 import type { Artifact } from '@/types';
-import MarkdownView from './MarkdownView';
-import JsonView from './JsonView';
 import PdfView from './PdfView';
 import WordView from './WordView';
 
 const KIND_LABEL: Record<Artifact['kind'], string> = {
   word: 'Word',
   pdf: 'PDF',
-  json: 'JSON',
-  markdown: 'Markdown',
+  image: '图片',
 };
 
 function download(artifact: Artifact) {
@@ -100,10 +97,6 @@ export default function ArtifactPanel({
 
 export function ArtifactBody({ artifact }: { artifact: Artifact }) {
   switch (artifact.kind) {
-    case 'markdown':
-      return <MarkdownView content={artifact.content ?? ''} />;
-    case 'json':
-      return <JsonView content={artifact.content ?? ''} />;
     case 'pdf':
       return artifact.url ? <PdfView url={artifact.url} /> : <Empty text="PDF 缺少 url" />;
     case 'word':
@@ -112,6 +105,8 @@ export function ArtifactBody({ artifact }: { artifact: Artifact }) {
       ) : (
         <Empty text="Word 缺少 content 或 url" />
       );
+    case 'image':
+      return artifact.url ? <img src={artifact.url} alt={artifact.title} className="h-full w-full object-contain" /> : <Empty text="图片缺少 url" />;
     default:
       return <Empty text="未知产出物类型" />;
   }

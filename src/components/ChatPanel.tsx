@@ -57,7 +57,7 @@ export default function ChatPanel({
 }: {
   messages: ChatMessage[];
   streaming: boolean;
-  onSend: (text: string) => void;
+  onSend: (text: string, files?: File[]) => void;
   onStop: () => void;
   onCommand: (command: string) => void;
   onRespond: (messageId: string, stepId: string, answer: string) => Promise<void>;
@@ -68,10 +68,13 @@ export default function ChatPanel({
   canManagePermission: boolean;
 }) {
   const [input, setInput] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
   const [selectedCommand, setSelectedCommand] = useState(0);
+  const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const commandMenuRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useLayoutEffect(() => {
     const container = scrollRef.current;
@@ -102,11 +105,13 @@ export default function ChatPanel({
 
   const send = (text: string) => {
     const trimmed = text.trim();
-    if (!trimmed || streaming) return;
-    const definition = availableCommands.find((item) => item.command === trimmed.split(/\s+/, 1)[0]);
-    if (definition && 'control' in definition && definition.control) onCommand(trimmed);
-    else onSend(trimmed);
+    if ((!trimmed && !files.length) || streaming) return;
+    const prompt = trimmed || '请处理我上传的文件';
+    const definition = availableCommands.find((item) => item.command === prompt.split(/\s+/, 1)[0]);
+    if (definition && 'control' in definition && definition.control) onCommand(prompt);
+    else onSend(prompt, files);
     setInput('');
+    setFiles([]);
   };
 
   const chooseCommand = (index: number) => {
@@ -114,6 +119,16 @@ export default function ChatPanel({
     if (!item) return;
     setInput(`${item.command} `);
     requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
+  const copyMessage = async (id: string, content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedMessageId(id);
+      window.setTimeout(() => setCopiedMessageId((current) => current === id ? null : current), 1500);
+    } catch {
+      window.alert('复制失败，请检查浏览器剪贴板权限');
+    }
   };
 
   return (
@@ -181,10 +196,23 @@ export default function ChatPanel({
                         ))}
                       </div>
                     )}
+                    {message.content && (
+                      <MessageCopyButton copied={copiedMessageId === message.id} onClick={() => void copyMessage(message.id, message.content)} />
+                    )}
                   </div>
                 ) : (
-                  <div className="max-w-[80%] whitespace-pre-wrap rounded-[16px] bg-[#f4f4f4] px-3.5 py-2 text-[13px] leading-5 text-[#0d0d0d]">
-                    {message.content}
+                  <div className="flex max-w-[80%] flex-col items-end">
+                    <div className="rounded-[16px] bg-[#f4f4f4] px-3.5 py-2 text-[13px] leading-5 text-[#0d0d0d]">
+                      {message.attachments?.map((file) => (
+                        <div key={file.id} className="mb-1 flex items-center gap-1.5 truncate text-[11px] text-[#666]">
+                          <FileIcon /> <span className="truncate">{file.name}</span>
+                        </div>
+                      ))}
+                      <div className="whitespace-pre-wrap">{message.content}</div>
+                    </div>
+                    {message.content && (
+                      <MessageCopyButton copied={copiedMessageId === message.id} onClick={() => void copyMessage(message.id, message.content)} />
+                    )}
                   </div>
                 )}
               </div>
@@ -195,6 +223,16 @@ export default function ChatPanel({
 
       <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-white via-white to-transparent px-[10px] pb-5 pt-8 md:px-6 md:pb-10">
         <div className="pointer-events-auto relative mx-auto max-w-3xl rounded-[19px] border border-[#e5e5e5] bg-white p-2.5 shadow-[0_2px_12px_rgba(0,0,0,0.07)] transition-colors focus-within:border-[#b8b8b8]">
+          {files.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-1.5 px-1">
+              {files.map((file, index) => (
+                <span key={`${file.name}-${file.lastModified}`} className="inline-flex max-w-[220px] items-center gap-1 rounded-lg bg-[#f2f2f2] px-2 py-1 text-[10px] text-[#555]">
+                  <span className="truncate">{file.name}</span>
+                  <button type="button" aria-label={`移除 ${file.name}`} onClick={() => setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="text-[#888] hover:text-[#222]">×</button>
+                </span>
+              ))}
+            </div>
+          )}
           <textarea
             ref={textareaRef}
             value={input}
@@ -246,7 +284,22 @@ export default function ChatPanel({
           )}
           <div className="mt-2 flex items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
-              {surface === 'assistant' && canManagePermission && <label className="flex items-center gap-1.5 text-[10px] text-[#666]">
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept=".jpg,.jpeg,.png,.webp,.pdf,.doc,.docx,.xls,.xlsx,.txt,.md,.json"
+                className="hidden"
+                onChange={(event) => {
+                  const selected = Array.from(event.target.files ?? []);
+                  setFiles((current) => [...current, ...selected].slice(0, 8));
+                  event.currentTarget.value = '';
+                }}
+              />
+              <button type="button" aria-label="上传文件" onClick={() => fileInputRef.current?.click()} className="flex size-7 items-center justify-center rounded-full text-[#666] hover:bg-[#f2f2f2] hover:text-[#222]">
+                <PaperclipIcon />
+              </button>
+              {canManagePermission && <label className="flex items-center gap-1.5 text-[10px] text-[#666]">
                   <ShieldIcon />
                   <select
                     aria-label="权限模式"
@@ -276,7 +329,7 @@ export default function ChatPanel({
                 type="button"
                 onClick={() => send(input)}
                 aria-label="发送消息"
-                disabled={!input.trim()}
+                disabled={!input.trim() && !files.length}
                 className="flex size-7 items-center justify-center rounded-full bg-[#0d0d0d] text-white transition-colors hover:bg-[#303030] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0d0d0d] disabled:cursor-default disabled:bg-[#d7d7d7]"
               >
                 <SendIcon />
@@ -287,6 +340,18 @@ export default function ChatPanel({
       </div>
     </div>
   );
+}
+
+function MessageCopyButton({ copied, onClick }: { copied: boolean; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className="mt-1.5 inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[10px] text-[#888] hover:bg-[#f4f4f4] hover:text-[#303030]" aria-label="复制消息" title="复制消息">
+      <CopyIcon /> {copied ? '已复制' : '复制'}
+    </button>
+  );
+}
+
+function CopyIcon() {
+  return <svg viewBox="0 0 24 24" width="13" height="13" fill="none" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="1.7" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" stroke="currentColor" strokeWidth="1.7" /></svg>;
 }
 
 function InlineArtifact({ artifact }: { artifact: Artifact }) {
@@ -303,7 +368,7 @@ function InlineArtifact({ artifact }: { artifact: Artifact }) {
           <a href={downloadUrl} download={artifact.title} className="text-[#555] underline-offset-2 hover:underline">下载</a>
         )}
       </div>
-      <div className={isDocument ? 'h-[520px] max-h-[65vh]' : 'max-h-[520px] overflow-auto'}>
+      <div className={`h-[360px] max-h-[45vh] overflow-auto ${isDocument ? 'bg-[#f5f5f5]' : ''}`}>
         <ArtifactBody artifact={artifact} />
       </div>
     </section>
@@ -312,12 +377,10 @@ function InlineArtifact({ artifact }: { artifact: Artifact }) {
 
 function artifactDownloadUrl(artifact: Artifact): string | undefined {
   if (artifact.url) return artifact.url;
-  if (!artifact.content) return undefined;
-  if (artifact.kind === 'word') {
+  if (artifact.kind === 'word' && artifact.content) {
     return `data:application/vnd.openxmlformats-officedocument.wordprocessingml.document;base64,${artifact.content}`;
   }
-  const mime = artifact.kind === 'json' ? 'application/json' : 'text/markdown';
-  return `data:${mime};charset=utf-8,${encodeURIComponent(artifact.content)}`;
+  return undefined;
 }
 
 function modeLabel(mode: string): string {
@@ -357,6 +420,14 @@ function FileIcon() {
     <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
       <path d="M7 3h7l4 4v14H7V3Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
       <path d="M14 3v5h4M10 12h5m-5 4h5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function PaperclipIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" aria-hidden="true">
+      <path d="m20.5 11.5-8.3 8.3a6 6 0 0 1-8.5-8.5l9-9a4 4 0 0 1 5.7 5.7l-9 9a2 2 0 0 1-2.9-2.8l8.4-8.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

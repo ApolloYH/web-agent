@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { FileChange, ProcessStep } from '@/types';
+import MarkdownView from './MarkdownView';
 
 export default function ProcessTimeline({
   steps,
@@ -231,7 +232,9 @@ function InteractionStep({
     <div className={`rounded-lg border p-3 text-[12px] leading-[18px] ${step.kind === 'approval' ? 'border-amber-200 bg-amber-50' : 'border-blue-200 bg-blue-50'}`}>
       <div className="flex items-center gap-2 font-semibold text-gray-800">
         <span>{step.pending ? '?' : '●'}</span>
-        <span>{step.kind === 'approval' ? `Approval · ${step.title}` : step.title}</span>
+        {step.kind === 'approval'
+          ? <span>Approval · {step.title}</span>
+          : <MarkdownView content={step.title} className="prose-chat min-w-0 flex-1" />}
         {step.risk && <span className="rounded bg-white/70 px-1.5 text-[10px] uppercase text-amber-700">{step.risk}</span>}
       </div>
       {step.detail && <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap text-[11px] leading-[18px] text-gray-600">{step.detail}</pre>}

@@ -5,13 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && pnpm build:server",
+    "build:server": "tsc -p tsconfig.server.json",
+    "start": "node server-dist/server/production.js",
     "preview": "vite preview --host 127.0.0.1"
   },
   "engines": {
     "node": ">=20.19.0"
   },
   "dependencies": {
+    "@apolloyh/apollo-agent": "workspace:*",
     "docx-preview": "^0.4.0",
     "highlight.js": "^11.10.0",
     "react": "^19.0.0",
