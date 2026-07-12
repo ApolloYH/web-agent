@@ -23,7 +23,7 @@ export default function RuntimeStatusBar({ status }: { status: RuntimeStatus | n
         ) : <>
         <div className="mb-3 flex items-start justify-between gap-4 border-b border-gray-100 pb-3">
           <div>
-            <p className="font-medium text-gray-900">威彦达智能体 {status.version}</p>
+            <p className="font-medium text-gray-900">Apollo {status.version}</p>
             <p className="mt-0.5 text-gray-500">{status.model} · {modeLabel(status.mode)}</p>
           </div>
           <span className="shrink-0 text-right text-gray-500">{status.messages} 条消息</span>

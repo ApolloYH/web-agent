@@ -18,7 +18,7 @@ export default function LoginScreen({ hasUsers, registrationEnabled, onAuthentic
   return (
     <main className="flex min-h-dvh items-center justify-center bg-[#f7f7f7] px-5">
       <form onSubmit={submit} className="w-full max-w-[340px] rounded-2xl border border-black/[0.07] bg-white p-7 shadow-[0_18px_50px_rgba(0,0,0,0.08)]">
-        <div className="mb-7 flex items-center gap-2.5"><img src="./wyd_mark_transparent.png" alt="WYD" className="size-8 object-contain" /><div><h1 className="text-[16px] font-semibold text-[#202123]">威彦达</h1><p className="text-[10px] text-[#888]">智能体工作台</p></div></div>
+        <div className="mb-7 flex items-center gap-2.5"><img src="./apollo-avatar.jpg" alt="Apollo" className="size-8 rounded-full object-cover" /><div><h1 className="text-[16px] font-semibold text-[#202123]">Apollo</h1><p className="text-[10px] text-[#888]">个人超级助手</p></div></div>
         <h2 className="text-[14px] font-medium text-[#202123]">{mode === 'login' ? '登录账号' : '创建本地账号'}</h2>
         <div className="mt-4 space-y-3">
           <input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" placeholder="用户名" aria-label="用户名" className="h-10 w-full rounded-xl border border-[#ddd] px-3 text-[12px] outline-none focus:border-[#999] focus:ring-2 focus:ring-black/5" />

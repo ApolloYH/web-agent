@@ -42,8 +42,8 @@ export default function AppSidebar({
       <aside className={`fixed inset-y-0 left-0 z-40 flex shrink-0 flex-col bg-[#f9f9f9] p-1.5 transition-[width,transform] duration-200 lg:static ${open ? 'w-[210px] translate-x-0' : 'w-[210px] -translate-x-full lg:w-[50px] lg:translate-x-0'}`}>
         <div className={`flex h-10 items-center justify-between ${open ? 'px-1.5' : 'px-0.5'}`}>
           <div className={`flex items-center gap-2 overflow-hidden ${open ? '' : 'lg:w-0'}`}>
-            <img src="./wyd_mark_transparent.png" alt="WYD" className="h-6 w-6 shrink-0 object-contain" />
-            <span className="whitespace-nowrap text-[12px] font-semibold text-[#202123]">威彦达</span>
+            <img src="./apollo-avatar.jpg" alt="Apollo" className="h-6 w-6 shrink-0 rounded-full object-cover" />
+            <span className="whitespace-nowrap text-[12px] font-semibold text-[#202123]">Apollo</span>
           </div>
           <button aria-label={open ? '收起侧栏' : '展开侧栏'} onClick={onToggle} className="icon-button inline-flex shrink-0"><SidebarIcon /></button>
         </div>

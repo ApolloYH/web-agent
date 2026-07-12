@@ -23,14 +23,6 @@ const assistantSuggestions = [
 ];
 
 const slashCommands = [
-  { command: '/工标库', description: '检索工标库并回答', argument: '输入问题' },
-  { command: '/隐患识别', description: '识别主网/配网现场隐患', argument: '描述现场或上传资料' },
-  { command: '/方案审查', description: '审查施工方案', argument: '说明审查重点' },
-  { command: '/通知单', description: '生成监理通知单', argument: '输入已确认隐患和发单信息' },
-  { command: '/监理日志', description: '生成监理日志', argument: '输入当日施工与监理信息' },
-  { command: '/监理文书', description: '生成规划、细则或总结', argument: '输入文书类型和工程信息' },
-  { command: '/管控一张卡', description: '生成现场风险管控卡', argument: '描述作业并提供现场资料' },
-  { command: '/单线图对比', description: '对比改造前后单线图', argument: '说明对比方式' },
   { command: '/plan', description: '进入计划模式', control: true },
   { command: '/approve', description: '批准当前计划并执行', control: true },
   { command: '/reject', description: '拒绝当前计划', control: true },
@@ -142,7 +134,7 @@ export default function ChatPanel({
         {messages.length === 0 ? (
           <div className="mx-auto flex min-h-full max-w-3xl flex-col items-center justify-center pb-16 text-center">
             <h1 className="text-[24px] font-semibold leading-[30px] tracking-[-0.035em] text-[#0d0d0d]">
-              {surface === 'assistant' ? '你好，我是威彦达助理' : '需要完成什么任务？'}
+              {surface === 'assistant' ? '你好，我是 Apollo' : '需要完成什么任务？'}
             </h1>
             <p className="mt-2 text-[11px] leading-[17px] text-[#777]">
               {surface === 'assistant' ? '我会持续了解你的工作习惯，协助处理日常事务。' : '描述你的需求，我会匹配合适的智能体。'}
@@ -259,7 +251,7 @@ export default function ChatPanel({
               }
             }}
             rows={1}
-            placeholder="给威彦达发消息"
+            placeholder="给 Apollo 发消息"
             aria-label="消息内容"
             className="block max-h-[200px] min-h-5 w-full resize-none overflow-y-auto border-0 bg-transparent px-1 text-[12px] leading-[18px] text-[#0d0d0d] outline-none placeholder:text-[#8f8f8f] focus-visible:outline-none"
           />

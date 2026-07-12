@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';
-import { copyFileSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
@@ -58,10 +58,11 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
   let interactionSequence = 0;
   const interactions = new Map<string, PendingInteraction>();
   const entryTurnStates = new Map<string, { standardsQuery?: Promise<string> }>();
-  try { readFileSync(entryConfigPath); } catch {
-    mkdirSync(path.dirname(entryConfigPath), { recursive: true });
-    copyFileSync(entryConfigTemplatePath, entryConfigPath);
-  }
+  const entryTemplate = JSON.parse(readFileSync(entryConfigTemplatePath, 'utf8')) as Record<string, unknown>;
+  let entryRuntime: Record<string, unknown> = {};
+  try { entryRuntime = JSON.parse(readFileSync(entryConfigPath, 'utf8')) as Record<string, unknown>; } catch { /* first start */ }
+  mkdirSync(path.dirname(entryConfigPath), { recursive: true });
+  writeFileSync(entryConfigPath, `${JSON.stringify({ ...entryTemplate, permissions: entryRuntime.permissions ?? entryTemplate.permissions }, null, 2)}\n`, 'utf8');
 
   const requestInteraction = (
     runKey: string,
@@ -176,10 +177,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       activeWorkspaceRoot = path.join(workspaceRoot, '.apollo', 'users', user.id, 'workspace');
       activeAssistantConfigPath = path.join(activeWorkspaceRoot, '.apollo', 'assistant-config.json');
       assistantSessionPath = path.join(activeWorkspaceRoot, '.apollo', 'web-assistant-session');
-      await ensureUserWorkspace(activeWorkspaceRoot, path.join(workspaceRoot, 'entry-skills'));
-      try { await fs.access(activeAssistantConfigPath); } catch {
-        await fs.copyFile(assistantConfigTemplatePath, activeAssistantConfigPath);
-      }
+      await ensureUserWorkspace(activeWorkspaceRoot, path.join(workspaceRoot, 'entry-skills'), assistantConfigTemplatePath);
     })();
     try { await userActivation; } finally { userActivation = undefined; }
   };
@@ -194,7 +192,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     if (!user) return jsonError(res, 401, '请先登录');
     const userWorkspaceRoot = path.join(workspaceRoot, '.apollo', 'users', user.id, 'workspace');
     const userArtifactRoot = path.join(userWorkspaceRoot, 'artifacts');
-    await ensureUserWorkspace(userWorkspaceRoot, path.join(workspaceRoot, 'entry-skills'));
+    await ensureUserWorkspace(userWorkspaceRoot, path.join(workspaceRoot, 'entry-skills'), assistantConfigTemplatePath);
 
     if (req.url === '/apollo-api/respond') return handleResponse(req, res, interactions);
     if (req.url === '/apollo-api/uploads') return handleUploads(req, res, userWorkspaceRoot);
@@ -359,7 +357,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     const runKey = channel === 'assistant' ? 'assistant' : `entry:${conversationId}`;
     if (runs.has(runKey)) return jsonError(res, 409, '当前对话正在处理上一条消息');
 
-    console.info(`[威彦达] 开始调用：Apollo Agent｜通道：${channel === 'assistant' ? '助理' : '统一入口'}｜输入：${logPreview(message as string)}`);
+    console.info(`[Apollo] 开始调用：Apollo Agent｜通道：${channel === 'assistant' ? '助理' : '统一入口'}｜输入：${logPreview(message as string)}`);
 
     const startedAt = Date.now();
     const changedPaths = new Set<string>();
@@ -425,13 +423,13 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       }
       const artifactScope = channel === 'entry' ? path.join('artifacts', conversationId) : undefined;
       const artifacts = await collectArtifacts(activeWorkspaceRoot, startedAt, changedPaths, artifactScope, reportedArtifacts);
-      console.info(`[威彦达] 调用完成：Apollo Agent｜耗时：${Date.now() - startedAt}ms｜产出文件：${artifacts.length}个`);
+      console.info(`[Apollo] 调用完成：Apollo Agent｜耗时：${Date.now() - startedAt}ms｜产出文件：${artifacts.length}个`);
       send({ type: 'done', artifacts, status: runtimeStatus(runtime) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const artifactScope = channel === 'entry' ? path.join('artifacts', conversationId) : undefined;
       const artifacts = await collectArtifacts(activeWorkspaceRoot, startedAt, changedPaths, artifactScope, reportedArtifacts);
-      console.error(`[威彦达] 调用失败：Apollo Agent｜错误：${logPreview(message)}｜已恢复文件：${artifacts.length}个`);
+      console.error(`[Apollo] 调用失败：Apollo Agent｜错误：${logPreview(message)}｜已恢复文件：${artifacts.length}个`);
       const runtime = runs.get(runKey)?.runtime;
       if (runtime && artifacts.length) send({ type: 'done', artifacts, status: runtimeStatus(runtime) });
       else send({ type: 'error', message });
@@ -521,7 +519,7 @@ async function importArtifacts(req: IncomingMessage, res: ServerResponse, root: 
       if (!bytes.length || bytes.length > MAX_ARTIFACT_BYTES) throw new Error(`${name} 文件为空或超过 25MB`);
       const file = await availableArtifactPath(root, name);
       await fs.writeFile(file, bytes);
-      console.info(`[威彦达] 文件已保存：LangHub → 用户文件库｜文件：${path.basename(file)}｜大小：${bytes.length}字节`);
+      console.info(`[Apollo] 文件已保存：LangHub → 用户文件库｜文件：${path.basename(file)}｜大小：${bytes.length}字节`);
       const relative = path.relative(root, file);
       artifacts.push({
         id: relative,
@@ -547,15 +545,24 @@ async function availableArtifactPath(root: string, name: string): Promise<string
   }
 }
 
-async function ensureUserWorkspace(userRoot: string, sharedEntrySkillsPath: string): Promise<void> {
+async function ensureUserWorkspace(userRoot: string, sharedEntrySkillsPath: string, assistantConfigTemplatePath: string): Promise<void> {
   await fs.mkdir(path.join(userRoot, '.apollo'), { recursive: true });
   await fs.mkdir(path.join(userRoot, 'artifacts'), { recursive: true });
   await fs.mkdir(path.join(userRoot, 'assistant-skills'), { recursive: true });
   const entrySkillsLink = path.join(userRoot, 'entry-skills');
   const currentTarget = await fs.readlink(entrySkillsLink).catch(() => '');
-  if (path.resolve(path.dirname(entrySkillsLink), currentTarget) === path.resolve(sharedEntrySkillsPath)) return;
-  if (currentTarget) await fs.unlink(entrySkillsLink);
-  await fs.symlink(sharedEntrySkillsPath, entrySkillsLink, 'dir').catch(() => undefined);
+  if (path.resolve(path.dirname(entrySkillsLink), currentTarget) !== path.resolve(sharedEntrySkillsPath)) {
+    if (currentTarget) await fs.unlink(entrySkillsLink);
+    await fs.symlink(sharedEntrySkillsPath, entrySkillsLink, 'dir').catch(() => undefined);
+  }
+  const assistantConfigPath = path.join(userRoot, '.apollo', 'assistant-config.json');
+  try { await fs.access(assistantConfigPath); } catch { await fs.copyFile(assistantConfigTemplatePath, assistantConfigPath); }
+  const migrationMarker = path.join(userRoot, '.apollo', 'assistant-brand-v2');
+  try { await fs.access(migrationMarker); } catch {
+    const [current, template] = await Promise.all([readConfig(assistantConfigPath), readConfig(assistantConfigTemplatePath)]);
+    await writeConfig(assistantConfigPath, { ...current, systemPrompt: template.systemPrompt });
+    await fs.writeFile(migrationMarker, '2\n', 'utf8');
+  }
 }
 
 async function handleAuth(req: IncomingMessage, res: ServerResponse, database: DatabaseSync, workspaceRoot: string, registrationInvite: string, adminUsername: string): Promise<void> {
@@ -564,7 +571,7 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, database: D
     return json(res, 200, { user: authenticatedUser(req, database), hasUsers: Boolean(database.prepare('SELECT 1 FROM users LIMIT 1').get()), registrationEnabled: Boolean(registrationInvite) });
   }
   if (route === '/apollo-api/auth/logout' && req.method === 'POST') {
-    const token = cookieValue(req, 'wyd_session');
+    const token = cookieValue(req, 'apollo_session');
     if (token) database.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').run(hashToken(token));
     setSessionCookie(req, res, '', 0);
     return json(res, 200, { ok: true });
@@ -591,7 +598,7 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, database: D
         const rename = database.prepare('UPDATE conversations SET id = ? WHERE id = ?');
         for (const row of rows) rename.run(`${id}:${row.id}`, row.id);
         const userRoot = path.join(workspaceRoot, '.apollo', 'users', id, 'workspace');
-        await ensureUserWorkspace(userRoot, path.join(workspaceRoot, 'entry-skills'));
+        await ensureUserWorkspace(userRoot, path.join(workspaceRoot, 'entry-skills'), path.join(workspaceRoot, 'config', 'web-assistant-apollo.json'));
         await fs.cp(path.join(workspaceRoot, '.apollo', 'memory'), path.join(userRoot, '.apollo', 'memory'), { recursive: true, force: false }).catch(() => undefined);
         await fs.cp(path.join(workspaceRoot, 'artifacts'), path.join(userRoot, 'artifacts'), { recursive: true, force: false }).catch(() => undefined);
       }
@@ -613,7 +620,7 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, database: D
 }
 
 function authenticatedUser(req: IncomingMessage, database: DatabaseSync): AuthUser | null {
-  const token = cookieValue(req, 'wyd_session');
+  const token = cookieValue(req, 'apollo_session');
   if (!token) return null;
   const user = database.prepare(`SELECT users.id, users.username, users.is_admin AS "isAdmin" FROM auth_sessions JOIN users ON users.id = auth_sessions.user_id WHERE auth_sessions.token_hash = ? AND auth_sessions.expires_at > ?`).get(hashToken(token), new Date().toISOString()) as { id: string; username: string; isAdmin: number } | undefined;
   return user ? { id: user.id, username: user.username, admin: user.isAdmin === 1 } : null;
@@ -646,7 +653,7 @@ function isSameOriginMutation(req: IncomingMessage): boolean {
 
 function setSessionCookie(req: IncomingMessage, res: ServerResponse, token: string, maxAge: number): void {
   const secure = isHttps(req);
-  res.setHeader('Set-Cookie', `wyd_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? '; Secure' : ''}`);
+  res.setHeader('Set-Cookie', `apollo_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? '; Secure' : ''}`);
 }
 
 function passwordHash(password: string): string {

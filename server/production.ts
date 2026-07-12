@@ -33,7 +33,7 @@ const server = createServer((req, res) => {
   void apollo.handle(req, res, () => { void serveStatic(req.url || '/', req.method || 'GET', res); });
 });
 
-server.listen(port, '127.0.0.1', () => console.info(`[威彦达] 生产服务已启动：http://127.0.0.1:${port}`));
+server.listen(port, '127.0.0.1', () => console.info(`[Apollo] 生产服务已启动：http://127.0.0.1:${port}`));
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => server.close(() => { void apollo.close().finally(() => process.exit(0)); }));

@@ -2,7 +2,7 @@
 
 > 逆向自前端打包文件（uni-app + Vue），记录「每个页面让用户填什么 / 交互流程」。
 > 来源：https://ai-manager-h5.shippilot.shop/ ，后端 API：`https://ai-manager-api.shippilot.shop/api`（前缀 `/main/`）。
-> 机构：威彦达监理。仅前端静态分析，不含任何真实用户运行时数据。
+> 仅保留前端功能分析，不含机构信息和任何真实用户运行时数据。
 
 ## 概览
 

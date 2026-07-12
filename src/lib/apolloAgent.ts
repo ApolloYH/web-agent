@@ -47,7 +47,7 @@ export async function streamApollo(
   conversationId?: string,
 ): Promise<Artifact[]> {
   const startedAt = Date.now();
-  console.log(`[威彦达 Web] 开始调用：Apollo Agent｜通道：${channel === 'assistant' ? '助理' : '统一入口'}`);
+  console.log(`[Apollo Web] 开始调用：Apollo Agent｜通道：${channel === 'assistant' ? '助理' : '统一入口'}`);
   const response = await fetch('/apollo-api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -78,7 +78,7 @@ export async function streamApollo(
       onEvent(event);
     }
   }
-  console.log(`[威彦达 Web] 调用完成：Apollo Agent｜耗时：${Date.now() - startedAt}ms｜产出文件：${artifacts.length}个`);
+  console.log(`[Apollo Web] 调用完成：Apollo Agent｜耗时：${Date.now() - startedAt}ms｜产出文件：${artifacts.length}个`);
   return artifacts;
 }
 

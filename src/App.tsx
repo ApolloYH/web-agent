@@ -283,7 +283,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
         );
       } catch (e) {
         const msg = controller.signal.aborted ? '已中断。' : e instanceof Error ? e.message : String(e);
-        console.error(`[威彦达 Web] 调用失败：${msg}`);
+        console.error(`[Apollo Web] 调用失败：${msg}`);
         finishThought(`出错：${msg}`);
         updateRunMessages(targetConversationId, (prev) =>
           prev.map((m) =>

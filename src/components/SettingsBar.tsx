@@ -21,10 +21,10 @@ export default function SettingsBar({
   return (
     <header className="relative flex h-12 shrink-0 items-center justify-between bg-white pl-12 pr-3 lg:px-3">
       <div className="flex min-w-0 items-center gap-2.5">
-        <span className="text-[12px] font-semibold tracking-tight text-gray-900">威彦达</span>
+        <span className="text-[12px] font-semibold tracking-tight text-gray-900">Apollo</span>
         <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-gray-500">
           <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden="true" />
-          <span className="truncate">个人助理</span>
+          <span className="truncate">个人超级助手</span>
         </span>
       </div>
 

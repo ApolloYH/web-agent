@@ -1,4 +1,4 @@
 interface:
-  display_name: "智监业务执行"
+  display_name: "专业业务执行"
   short_description: "整理业务输入、上传附件并调用 LangHub 智能体生成工程监理成果文件"
-  default_prompt: "使用 $run-zhijian-task 根据当前对话和附件执行智监业务任务。"
+  default_prompt: "使用 $run-zhijian-task 根据当前对话和附件执行专业业务任务。"

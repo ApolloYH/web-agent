@@ -30,7 +30,7 @@ export function createEntryTools(config: EntryToolConfig): ToolDefinition[] {
   return [
     {
       name: 'query_engineering_standards',
-      description: '检索威彦达工标库中的国家标准、行业标准、企业标准、工程规范和条款。query 必须结合当前对话补全为可独立理解的完整问题。',
+      description: '检索工标库中的国家标准、行业标准、企业标准、工程规范和条款。query 必须结合当前对话补全为可独立理解的完整问题。',
       risk: 'low',
       input_schema: {
         type: 'object',
@@ -41,7 +41,7 @@ export function createEntryTools(config: EntryToolConfig): ToolDefinition[] {
       },
       execute: async (input) => {
         if (config.turnState.standardsQuery) {
-          console.info('[威彦达] 工标库检索｜本轮复用首次结果');
+          console.info('[Apollo] 工标库检索｜本轮复用首次结果');
           return { content: await config.turnState.standardsQuery };
         }
         const request = queryStandards(requiredString(input, 'query'), config.langcoreApiKey);
@@ -78,7 +78,7 @@ export function createEntryTools(config: EntryToolConfig): ToolDefinition[] {
 
 async function queryStandards(query: string, apiKey: string): Promise<string> {
   if (!apiKey) throw new Error('未配置 LANGCORE_API_KEY');
-  console.info(`[威彦达] 工标库检索｜问题：${preview(query)}`);
+  console.info(`[Apollo] 工标库检索｜问题：${preview(query)}`);
   const response = await fetch('https://app.langcore.cn/api/v1/repo/query', {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -93,7 +93,7 @@ async function queryStandards(query: string, apiKey: string): Promise<string> {
   });
   const text = await response.text();
   if (!response.ok) {
-    console.error(`[威彦达] 工标库检索失败｜HTTP ${response.status}｜响应：${preview(text)}`);
+    console.error(`[Apollo] 工标库检索失败｜HTTP ${response.status}｜响应：${preview(text)}`);
     throw new Error(`工标库查询失败 ${response.status}: ${text.slice(0, 300)}`);
   }
   let payload: unknown = text;
@@ -110,7 +110,7 @@ async function runLangHubTask(config: EntryToolConfig, task: typeof TASKS[number
   const baseUrl = config.langhubBaseUrl.replace(/\/$/, '');
   const topicId = await topicForConversation(config, task, projectId, baseUrl);
   const safeFiles = await resolveWorkspaceFiles(config.workspaceRoot, files);
-  console.info(`[威彦达] LangHub 开始｜任务：${task}｜附件：${safeFiles.length}个｜模式：${config.automationMode() === 'auto' ? '全自动' : '审批'}`);
+  console.info(`[Apollo] LangHub 开始｜任务：${task}｜附件：${safeFiles.length}个｜模式：${config.automationMode() === 'auto' ? '全自动' : '审批'}`);
 
   const attachedProcessFileIds: string[] = [];
   for (const file of safeFiles) {
@@ -124,7 +124,7 @@ async function runLangHubTask(config: EntryToolConfig, task: typeof TASKS[number
     const processFileId = (JSON.parse(responseText) as { file?: { id?: unknown } }).file?.id;
     if (typeof processFileId !== 'string' || !processFileId) throw new Error(`LangHub 附件上传失败：${path.basename(file)} 未返回 file.id`);
     attachedProcessFileIds.push(processFileId);
-    console.info(`[威彦达] LangHub 附件已上传｜文件：${path.basename(file)}`);
+    console.info(`[Apollo] LangHub 附件已上传｜文件：${path.basename(file)}`);
   }
 
   const before = new Map((await listFiles(baseUrl, config.langhubApiKey, projectId)).map((item) => [item.path, fileSignature(item)]));
@@ -144,7 +144,7 @@ async function runLangHubTask(config: EntryToolConfig, task: typeof TASKS[number
     title: path.basename(file).replace(/^\d+-/, ''),
     size: (await fs.stat(path.join(config.workspaceRoot, file))).size,
   })));
-  console.info(`[威彦达] LangHub 完成｜任务：${task}｜产出文件：${saved.length}个`);
+  console.info(`[Apollo] LangHub 完成｜任务：${task}｜产出文件：${saved.length}个`);
   return {
     content: [text || 'LangHub 任务已完成。', saved.length ? `已保存文件：\n${saved.map((file) => `- ${file}`).join('\n')}` : '本次未发现新的产出文件。'].join('\n\n'),
     artifacts,
@@ -160,7 +160,7 @@ async function acquireProjectLock(projectId: string): Promise<() => void> {
   const current = new Promise<void>((resolve) => { unlock = resolve; });
   langHubProjectLocks.set(projectId, current);
   if (previous) {
-    console.info(`[威彦达] LangHub 排队｜项目：${projectId}`);
+    console.info(`[Apollo] LangHub 排队｜项目：${projectId}`);
     await previous;
   }
   return () => {
@@ -179,7 +179,7 @@ async function waitForFreshArtifacts(
   const deadline = Date.now() + 5 * 60_000;
   let previous = '';
   let stableSince = 0;
-  console.info('[威彦达] LangHub 等待成果文件写入');
+  console.info('[Apollo] LangHub 等待成果文件写入');
   while (Date.now() < deadline) {
     const files = (await listFiles(baseUrl, apiKey, projectId)).filter((item) =>
       /\.(docx|pdf|jpe?g|png|webp)$/i.test(item.path)
