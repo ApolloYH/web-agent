@@ -45,22 +45,36 @@ export default function FileLibrary({ files, loading }: { files: StoredArtifact[
           </div>
           {loading ? (
             <div className="px-3 py-12 text-center text-[12px] text-[#999]">正在读取文件…</div>
-          ) : visibleFiles.length ? visibleFiles.map((file) => (
-            <a key={file.id} href={file.url} target="_blank" rel="noreferrer" className="grid min-h-14 grid-cols-[minmax(0,1fr)_100px] items-center gap-4 rounded-xl px-3 text-[12px] transition-colors hover:bg-[#f7f7f7] sm:grid-cols-[minmax(0,1fr)_120px_90px]">
-              <span className="flex min-w-0 items-center gap-3">
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-[10px] bg-[#f4f4f4] text-[#555]"><FileTypeIcon /></span>
-                <span className="truncate text-[#303030]">{file.title}</span>
-              </span>
-              <span className="text-[11px] text-[#888]">{formatDate(file.modifiedAt)}</span>
-              <span className="hidden text-[11px] text-[#888] sm:block">{formatSize(file.size)}</span>
-            </a>
-          )) : (
+          ) : visibleFiles.length ? visibleFiles.map((file) => <FileRow key={file.id} file={file} />) : (
             <div className="px-3 py-16 text-center text-[12px] text-[#999]">{files.length ? '没有匹配的文件' : '生成的文件会保存在这里'}</div>
           )}
         </div>
       </div>
     </section>
   );
+}
+
+function FileRow({ file }: { file: StoredArtifact }) {
+  const href = artifactUrl(file);
+  const content = (
+    <>
+      <span className="flex min-w-0 items-center gap-3">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-[10px] bg-[#f4f4f4] text-[#555]"><FileTypeIcon /></span>
+        <span className="truncate text-[#303030]">{file.title}</span>
+      </span>
+      <span className="text-[11px] text-[#888]">{formatDate(file.modifiedAt)}</span>
+      <span className="hidden text-[11px] text-[#888] sm:block">{formatSize(file.size)}</span>
+    </>
+  );
+  const className = 'grid min-h-14 grid-cols-[minmax(0,1fr)_100px] items-center gap-4 rounded-xl px-3 text-[12px] transition-colors hover:bg-[#f7f7f7] sm:grid-cols-[minmax(0,1fr)_120px_90px]';
+  return href ? <a href={href} target="_blank" rel="noreferrer" className={className}>{content}</a> : <div className={className}>{content}</div>;
+}
+
+function artifactUrl(file: StoredArtifact): string | undefined {
+  if (file.url) return file.url;
+  if (!file.content) return undefined;
+  const mime = file.kind === 'json' ? 'application/json' : 'text/markdown';
+  return `data:${mime};charset=utf-8,${encodeURIComponent(file.content)}`;
 }
 
 function formatSize(bytes: number): string {

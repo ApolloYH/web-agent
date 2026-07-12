@@ -41,11 +41,21 @@ import FileLibrary from '@/components/FileLibrary';
 import SettingsBar from '@/components/SettingsBar';
 import RuntimeStatusBar from '@/components/RuntimeStatusBar';
 import { MenuIcon } from '@/components/Icons';
+import LoginScreen from '@/components/LoginScreen';
+import { getCurrentUser, logout, type AuthUser } from '@/lib/auth';
 
 let idSeq = 0;
 const nextId = (p: string) => `${p}-${Date.now()}-${idSeq++}`;
 
 export default function App() {
+  const [auth, setAuth] = useState<{ loading: boolean; user: AuthUser | null; hasUsers: boolean; registrationEnabled: boolean }>({ loading: true, user: null, hasUsers: false, registrationEnabled: false });
+  useEffect(() => { getCurrentUser().then(({ user, hasUsers, registrationEnabled }) => setAuth({ loading: false, user, hasUsers, registrationEnabled })).catch(() => setAuth({ loading: false, user: null, hasUsers: false, registrationEnabled: false })); }, []);
+  if (auth.loading) return <div className="flex min-h-dvh items-center justify-center text-[12px] text-[#888]">正在加载…</div>;
+  if (!auth.user) return <LoginScreen hasUsers={auth.hasUsers} registrationEnabled={auth.registrationEnabled} onAuthenticated={(user) => setAuth({ ...auth, loading: false, user, hasUsers: true })} />;
+  return <WorkspaceApp user={auth.user} onLogout={async () => { await logout(); setAuth({ ...auth, loading: false, user: null, hasUsers: true }); }} />;
+}
+
+function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [backend, setBackend] = useState<BackendMode>(() => loadBackend());
@@ -467,21 +477,37 @@ export default function App() {
 
   const handleCommand = useCallback(async (command: string) => {
     const assistantSurface = activeView === 'assistant';
-    if ((!assistantSurface && backend !== 'apollo') || streaming) return;
-    setStreaming(true);
-    try {
-      await streamApollo(command, (event) => {
-        if (event.type === 'status' || event.type === 'done') setRuntimeStatus(event.status);
-      }, undefined, assistantSurface ? 'assistant' : 'entry');
-      if (command === '/clear') {
-        void deleteConversation(conversationId).catch(() => undefined);
+    if (streaming) return;
+    if (command === '/clear') {
+      setStreaming(true);
+      try {
+        if (assistantSurface || backend === 'apollo') {
+          await streamApollo(command, (event) => {
+            if (event.type === 'status' || event.type === 'done') setRuntimeStatus(event.status);
+          }, undefined, assistantSurface ? 'assistant' : 'entry');
+        } else {
+          noumiTopicRef.current = '';
+        }
+        await deleteConversation(conversationId).catch(() => undefined);
         setConversationList((items) => items.filter((item) => item.id !== conversationId));
         setConversationId(assistantSurface ? ASSISTANT_CONVERSATION_ID : newConversationId());
         setMessages([]);
         setConversationTitle(assistantSurface ? ASSISTANT_CONVERSATION_TITLE : '');
         setConversationGroup('最近');
         titleGeneratedRef.current = false;
+      } catch (error) {
+        window.alert(error instanceof Error ? error.message : String(error));
+      } finally {
+        setStreaming(false);
       }
+      return;
+    }
+    if (!assistantSurface && backend !== 'apollo') return;
+    setStreaming(true);
+    try {
+      await streamApollo(command, (event) => {
+        if (event.type === 'status' || event.type === 'done') setRuntimeStatus(event.status);
+      }, undefined, assistantSurface ? 'assistant' : 'entry');
     } catch (error) {
       window.alert(error instanceof Error ? error.message : String(error));
     } finally {
@@ -531,6 +557,8 @@ export default function App() {
             void removeConversation(id).catch((error) => window.alert(error instanceof Error ? error.message : String(error)));
           }
         }}
+        username={user.username}
+        onLogout={onLogout}
       />
 
       <main className="relative flex min-w-0 flex-1">
@@ -550,6 +578,7 @@ export default function App() {
               onChangeNoumi={updateNoumi}
               apolloPermissionMode={permissionMode}
               allowBackendSelection={false}
+              canManageConfig={user.admin}
             />}
           {activeView === 'assistant' && <RuntimeStatusBar status={runtimeStatus} />}
           {activeView === 'library' ? (
@@ -565,6 +594,7 @@ export default function App() {
               runtimeMode={runtimeStatus?.mode ?? 'normal'}
               permissionMode={permissionMode}
               onPermissionChange={changePermissionMode}
+              canManagePermission={user.admin}
               surface={activeView === 'assistant' ? 'assistant' : 'entry'}
             />
           )}

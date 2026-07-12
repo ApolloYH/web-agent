@@ -18,6 +18,15 @@ export type ApolloEvent =
 
 export type ApolloChannel = 'assistant' | 'entry';
 
+export interface ApolloMemory {
+  id: string;
+  title: string;
+  content: string;
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export async function streamApollo(
   message: string,
   onEvent: (event: ApolloEvent) => void,
@@ -93,6 +102,27 @@ export async function saveApolloConfig(config: string): Promise<void> {
   }
 }
 
+export async function listApolloMemories(): Promise<ApolloMemory[]> {
+  const response = await fetch('/apollo-api/memories');
+  if (!response.ok) throw new Error(`读取记忆失败 ${response.status}`);
+  return (await response.json()).memories;
+}
+
+export async function saveApolloMemory(memory: Pick<ApolloMemory, 'title' | 'content' | 'tags'> & { id?: string }): Promise<ApolloMemory> {
+  const response = await fetch('/apollo-api/memories', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(memory),
+  });
+  if (!response.ok) throw new Error(`保存记忆失败 ${response.status}`);
+  return (await response.json()).memory;
+}
+
+export async function deleteApolloMemory(id: string): Promise<void> {
+  const response = await fetch(`/apollo-api/memories/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (!response.ok) throw new Error(`删除记忆失败 ${response.status}`);
+}
+
 export type ApolloPermissionMode = 'ask' | 'unrestricted';
 
 export async function getApolloPermission(): Promise<ApolloPermissionMode> {
@@ -129,7 +159,8 @@ export interface StoredArtifact {
   kind: Artifact['kind'];
   size: number;
   modifiedAt: string;
-  url: string;
+  url?: string;
+  content?: string;
 }
 
 export async function getStoredArtifacts(): Promise<StoredArtifact[]> {

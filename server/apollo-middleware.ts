@@ -3,9 +3,12 @@ import { mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
+import { createHash, randomBytes, scryptSync, timingSafeEqual, randomUUID } from 'node:crypto';
 import {
   PRODUCT,
   createQueryEngine,
+  listMemories,
+  saveMemory,
   type ApprovalProvider,
   type QueryEngine,
   type TraceEvent,
@@ -18,12 +21,15 @@ const MAX_ARTIFACT_BYTES = 25 * 1024 * 1024;
 
 type Send = (event: object) => void;
 type PendingInteraction = { resolve: (answer: string) => void; fallback: string };
+type AuthUser = { id: string; username: string; admin: boolean };
 
-export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRoot: string; envPath: string }) {
-  const configPath = path.join(workspaceRoot, '.apollo', 'config.json');
-  const artifactRoot = path.join(workspaceRoot, 'artifacts');
+export function createApolloMiddleware({ workspaceRoot, envPath, registrationInvite, adminUsername, allowUnrestricted = false }: { workspaceRoot: string; envPath: string; registrationInvite: string; adminUsername: string; allowUnrestricted?: boolean }) {
+  const baseConfigPath = path.join(workspaceRoot, 'config', 'web-apollo.json');
   const databasePath = path.join(workspaceRoot, '.apollo', 'web-agent.sqlite');
-  const assistantSessionPath = path.join(workspaceRoot, '.apollo', 'web-assistant-session');
+  let activeWorkspaceRoot = workspaceRoot;
+  let configPath = baseConfigPath;
+  let assistantSessionPath = path.join(workspaceRoot, '.apollo', 'web-assistant-session');
+  let activeUserId = '';
   let database: DatabaseSync | undefined;
   let engine: QueryEngine | undefined;
   let assistantEngine: QueryEngine | undefined;
@@ -44,7 +50,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRo
   };
 
   const approvalProvider: ApprovalProvider = async (request) => {
-    if (await isUnrestricted(configPath)) return true;
+    if (allowUnrestricted && await isUnrestricted(configPath)) return true;
     if (request.risk === 'low') return true;
     sink?.({
       type: 'approval_required',
@@ -68,6 +74,9 @@ export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRo
   };
 
   const createEngine = async (sessionId?: string) => createQueryEngine({
+    configPath: baseConfigPath,
+    configMode: 'isolated',
+    workspaceRoot: activeWorkspaceRoot,
     envPath,
     sessionId,
     approvalProvider,
@@ -95,26 +104,66 @@ export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRo
     assistantEngine = undefined;
   };
 
+  const activateUser = async (user: AuthUser) => {
+    if (activeUserId === user.id) return;
+    if (busy) throw new Error('智能体正在处理其他任务，请稍后重试');
+    await closeEngines();
+    activeUserId = user.id;
+    activeWorkspaceRoot = path.join(workspaceRoot, '.apollo', 'users', user.id, 'workspace');
+    configPath = baseConfigPath;
+    assistantSessionPath = path.join(activeWorkspaceRoot, '.apollo', 'web-assistant-session');
+    await ensureUserWorkspace(activeWorkspaceRoot, path.join(workspaceRoot, 'skills'));
+  };
+
   const handle = async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
     if (!req.url?.startsWith('/apollo-api/')) return next();
-    if (!isLoopback(req.socket.remoteAddress)) {
-      return jsonError(res, 403, '智能体 API 仅接受本机请求');
-    }
+    if (isHttps(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    if (!isSameOriginMutation(req)) return jsonError(res, 403, '跨站请求已拒绝');
+    database ??= openConversationDatabase(databasePath);
+    if (req.url.startsWith('/apollo-api/auth/')) return handleAuth(req, res, database, workspaceRoot, registrationInvite, adminUsername);
+    const user = authenticatedUser(req, database);
+    if (!user) return jsonError(res, 401, '请先登录');
+    const userWorkspaceRoot = path.join(workspaceRoot, '.apollo', 'users', user.id, 'workspace');
+    const userArtifactRoot = path.join(userWorkspaceRoot, 'artifacts');
+    await ensureUserWorkspace(userWorkspaceRoot, path.join(workspaceRoot, 'skills'));
 
     if (req.url === '/apollo-api/respond') return handleResponse(req, res, interactions);
+    if (req.url === '/apollo-api/memories' && req.method === 'GET') {
+      return json(res, 200, { memories: await listMemories(userWorkspaceRoot) });
+    }
+    if (req.url === '/apollo-api/memories' && req.method === 'PUT') {
+      try {
+        const body = JSON.parse(await readBody(req)) as { id?: unknown; title?: unknown; content?: unknown; tags?: unknown };
+        if (body.id !== undefined && typeof body.id !== 'string') throw new Error('id 无效');
+        if (typeof body.title !== 'string' || typeof body.content !== 'string') throw new Error('标题和内容必填');
+        const tags = Array.isArray(body.tags) ? body.tags.filter((tag): tag is string => typeof tag === 'string') : [];
+        return json(res, 200, { memory: await saveMemory(userWorkspaceRoot, { id: body.id, title: body.title, content: body.content, tags }) });
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
+    }
+    if (req.url.startsWith('/apollo-api/memories/') && req.method === 'DELETE') {
+      const id = decodeURIComponent(req.url.slice('/apollo-api/memories/'.length));
+      if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(id)) return jsonError(res, 400, '记忆 id 无效');
+      await fs.rm(path.join(userWorkspaceRoot, '.apollo', 'memory', `${id}.json`), { force: true });
+      return json(res, 200, { ok: true });
+    }
     if (req.url === '/apollo-api/conversations' && req.method === 'GET') {
-      database ??= openConversationDatabase(databasePath);
-      return json(res, 200, { conversations: listConversations(database) });
+      return json(res, 200, { conversations: listConversations(database, user.id) });
     }
     if (req.url.startsWith('/apollo-api/conversations/')) {
-      database ??= openConversationDatabase(databasePath);
-      return handleConversation(req, res, database);
+      return handleConversation(req, res, database, user.id);
     }
     if (req.url === '/apollo-api/artifacts' && req.method === 'GET') {
-      return json(res, 200, { artifacts: await listStoredArtifacts(artifactRoot) });
+      const filesystemArtifacts = await listStoredArtifacts(userArtifactRoot);
+      const conversationArtifacts = listConversationArtifacts(database, user.id);
+      const artifacts = [...filesystemArtifacts, ...conversationArtifacts]
+        .filter((artifact, index, items) => items.findIndex((item) => item.id === artifact.id) === index)
+        .sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
+      return json(res, 200, { artifacts });
     }
     if (req.url.startsWith('/apollo-api/artifact?') && req.method === 'GET') {
-      return sendStoredArtifact(req, res, artifactRoot);
+      return sendStoredArtifact(req, res, userArtifactRoot);
     }
     if (req.url === '/apollo-api/title') {
       if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
@@ -122,7 +171,9 @@ export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRo
         const { text } = JSON.parse(await readBody(req)) as { text?: unknown };
         if (typeof text !== 'string' || !text.trim()) throw new Error('text 不能为空');
         const titleEngine = await createQueryEngine({
-          configPath,
+          configPath: baseConfigPath,
+          configMode: 'isolated',
+          workspaceRoot: userWorkspaceRoot,
           envPath,
           stream: false,
           approvalProvider: async () => false,
@@ -133,19 +184,22 @@ export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRo
         } finally {
           const sessionId = titleEngine.getSessionId();
           await titleEngine.close();
-          if (sessionId) await fs.rm(path.join(workspaceRoot, '.apollo', 'sessions', `${sessionId}.json`), { force: true });
+          if (sessionId) await fs.rm(path.join(userWorkspaceRoot, '.apollo', 'sessions', `${sessionId}.json`), { force: true });
         }
       } catch (error) {
         return jsonError(res, 400, error instanceof Error ? error.message : String(error));
       }
     }
     if (req.url === '/apollo-api/permission') {
-      if (req.method === 'GET') return json(res, 200, { mode: await permissionMode(configPath) });
+      await activateUser(user);
+      if (req.method === 'GET') return json(res, 200, { mode: allowUnrestricted ? await permissionMode(baseConfigPath) : 'ask' });
       if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
+      if (!user.admin) return jsonError(res, 403, '只有管理员可以修改智能体权限');
       if (busy) return jsonError(res, 409, '智能体正在运行，请稍后切换模式');
       try {
         const { mode } = JSON.parse(await readBody(req)) as { mode?: unknown };
         if (mode !== 'ask' && mode !== 'unrestricted') throw new Error('无效的权限模式');
+        if (mode === 'unrestricted' && !allowUnrestricted) throw new Error('当前部署未启用全自动权限；请先使用沙箱并设置 WEB_ALLOW_UNRESTRICTED=true');
         const config = await readConfig(configPath);
         config.permissions = {
           ...(typeof config.permissions === 'object' && config.permissions ? config.permissions : {}),
@@ -160,9 +214,11 @@ export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRo
       }
     }
     if (req.url === '/apollo-api/config') {
+      await activateUser(user);
+      if (!user.admin) return jsonError(res, 403, '只有管理员可以查看或修改智能体配置');
       if (req.method === 'GET') {
         const config = await fs.readFile(configPath, 'utf8').catch(() => '{}');
-        return json(res, 200, { path: '.apollo/config.json', config });
+        return json(res, 200, { path: 'config/web-apollo.json', config });
       }
       if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
       if (busy) return jsonError(res, 409, '智能体正在运行，请稍后再保存配置');
@@ -171,6 +227,8 @@ export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRo
         if (typeof config !== 'string') throw new Error('config 必须是 JSON 文本');
         const parsed = JSON.parse(config) as unknown;
         if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error('配置必须是 JSON 对象');
+        const permissions = (parsed as { permissions?: { mode?: unknown } }).permissions;
+        if (permissions?.mode === 'unrestricted' && !allowUnrestricted) throw new Error('当前部署禁止保存 unrestricted 权限');
         await writeConfig(configPath, parsed as Record<string, unknown>);
         await closeEngines();
         return json(res, 200, { ok: true });
@@ -180,6 +238,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRo
     }
     if (req.url === '/apollo-api/status' && req.method === 'GET') {
       try {
+        await activateUser(user);
         return json(res, 200, runtimeStatus(await getEngine('assistant')));
       } catch (error) {
         return jsonError(res, 500, error instanceof Error ? error.message : String(error));
@@ -188,6 +247,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRo
     if (req.url !== '/apollo-api/chat') return next();
     if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
     if (busy) return jsonError(res, 409, '智能体正在处理上一条消息');
+    try { await activateUser(user); } catch (error) { return jsonError(res, 409, error instanceof Error ? error.message : String(error)); }
 
     let message: unknown;
     let channel: 'assistant' | 'entry' = 'entry';
@@ -236,7 +296,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRo
         await fs.mkdir(path.dirname(assistantSessionPath), { recursive: true });
         await fs.writeFile(assistantSessionPath, `${runtime.getSessionId()}\n`, 'utf8');
       }
-      const artifacts = await collectArtifacts(workspaceRoot, startedAt, changedPaths);
+      const artifacts = await collectArtifacts(activeWorkspaceRoot, startedAt, changedPaths);
       send({ type: 'done', artifacts, status: runtimeStatus(runtime) });
     } catch (error) {
       send({ type: 'error', message: error instanceof Error ? error.message : String(error) });
@@ -260,6 +320,123 @@ export function createApolloMiddleware({ workspaceRoot, envPath }: { workspaceRo
   };
 }
 
+async function ensureUserWorkspace(userRoot: string, sharedSkillsPath: string): Promise<void> {
+  await fs.mkdir(path.join(userRoot, '.apollo'), { recursive: true });
+  await fs.mkdir(path.join(userRoot, 'artifacts'), { recursive: true });
+  const skillsLink = path.join(userRoot, 'skills');
+  try { await fs.access(skillsLink); } catch {
+    await fs.symlink(sharedSkillsPath, skillsLink, 'dir').catch(() => undefined);
+  }
+}
+
+async function handleAuth(req: IncomingMessage, res: ServerResponse, database: DatabaseSync, workspaceRoot: string, registrationInvite: string, adminUsername: string): Promise<void> {
+  const route = req.url!.split('?', 1)[0];
+  if (route === '/apollo-api/auth/me' && req.method === 'GET') {
+    return json(res, 200, { user: authenticatedUser(req, database), hasUsers: Boolean(database.prepare('SELECT 1 FROM users LIMIT 1').get()), registrationEnabled: Boolean(registrationInvite) });
+  }
+  if (route === '/apollo-api/auth/logout' && req.method === 'POST') {
+    const token = cookieValue(req, 'wyd_session');
+    if (token) database.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').run(hashToken(token));
+    setSessionCookie(req, res, '', 0);
+    return json(res, 200, { ok: true });
+  }
+  if ((route !== '/apollo-api/auth/login' && route !== '/apollo-api/auth/register') || req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
+  try {
+    const body = JSON.parse(await readBody(req)) as { username?: unknown; password?: unknown; inviteCode?: unknown };
+    if (typeof body.username !== 'string' || typeof body.password !== 'string') throw new Error('用户名和密码必填');
+    const username = body.username.trim();
+    if (!/^[\p{L}\p{N}_-]{2,32}$/u.test(username)) throw new Error('用户名需为 2–32 个字母、数字、中文、下划线或短横线');
+    if (body.password.length < 8 || body.password.length > 128) throw new Error('密码长度需为 8–128 位');
+    let user: AuthUser;
+    if (route.endsWith('/register')) {
+      if (!registrationInvite) return jsonError(res, 403, '当前部署已关闭注册');
+      if (typeof body.inviteCode !== 'string' || !secureTextEqual(body.inviteCode, registrationInvite)) return jsonError(res, 403, '邀请码无效');
+      const firstUser = !database.prepare('SELECT 1 FROM users LIMIT 1').get();
+      if (firstUser && (!adminUsername || username.toLowerCase() !== adminUsername.toLowerCase())) return jsonError(res, 403, '首个账号必须使用 WEB_ADMIN_USERNAME 指定的管理员用户名');
+      const admin = Boolean(adminUsername) && username.toLowerCase() === adminUsername.toLowerCase();
+      const id = randomUUID();
+      database.prepare('INSERT INTO users (id, username, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?, ?)').run(id, username, passwordHash(body.password), admin ? 1 : 0, new Date().toISOString());
+      user = { id, username, admin };
+      if (firstUser) {
+        const rows = database.prepare("SELECT id FROM conversations WHERE instr(id, ':') = 0").all() as Array<{ id: string }>;
+        const rename = database.prepare('UPDATE conversations SET id = ? WHERE id = ?');
+        for (const row of rows) rename.run(`${id}:${row.id}`, row.id);
+        const userRoot = path.join(workspaceRoot, '.apollo', 'users', id, 'workspace');
+        await ensureUserWorkspace(userRoot, path.join(workspaceRoot, 'skills'));
+        await fs.cp(path.join(workspaceRoot, '.apollo', 'memory'), path.join(userRoot, '.apollo', 'memory'), { recursive: true, force: false }).catch(() => undefined);
+        await fs.cp(path.join(workspaceRoot, 'artifacts'), path.join(userRoot, 'artifacts'), { recursive: true, force: false }).catch(() => undefined);
+      }
+    } else {
+      const row = database.prepare('SELECT id, username, password_hash AS "passwordHash" FROM users WHERE username = ?').get(username) as { id: string; username: string; passwordHash: string } | undefined;
+      if (!row || !verifyPassword(body.password, row.passwordHash)) throw new Error('用户名或密码错误');
+      user = { id: row.id, username: row.username, admin: isAdmin(database, row.id) };
+    }
+    const token = randomBytes(32).toString('base64url');
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    database.prepare('DELETE FROM auth_sessions WHERE expires_at <= ?').run(new Date().toISOString());
+    database.prepare('INSERT INTO auth_sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').run(hashToken(token), user.id, expiresAt.toISOString());
+    setSessionCookie(req, res, token, 30 * 24 * 60 * 60);
+    return json(res, 200, { user });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return jsonError(res, message.includes('UNIQUE') ? 409 : 400, message.includes('UNIQUE') ? '用户名已存在' : message);
+  }
+}
+
+function authenticatedUser(req: IncomingMessage, database: DatabaseSync): AuthUser | null {
+  const token = cookieValue(req, 'wyd_session');
+  if (!token) return null;
+  const user = database.prepare(`SELECT users.id, users.username, users.is_admin AS "isAdmin" FROM auth_sessions JOIN users ON users.id = auth_sessions.user_id WHERE auth_sessions.token_hash = ? AND auth_sessions.expires_at > ?`).get(hashToken(token), new Date().toISOString()) as { id: string; username: string; isAdmin: number } | undefined;
+  return user ? { id: user.id, username: user.username, admin: user.isAdmin === 1 } : null;
+}
+
+function isAdmin(database: DatabaseSync, userId: string): boolean {
+  return (database.prepare('SELECT is_admin AS "isAdmin" FROM users WHERE id = ?').get(userId) as { isAdmin?: number } | undefined)?.isAdmin === 1;
+}
+
+function secureTextEqual(left: string, right: string): boolean {
+  const a = Buffer.from(left);
+  const b = Buffer.from(right);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function cookieValue(req: IncomingMessage, name: string): string | undefined {
+  return req.headers.cookie?.split(';').map((part) => part.trim()).find((part) => part.startsWith(`${name}=`))?.slice(name.length + 1);
+}
+
+function isHttps(req: IncomingMessage): boolean {
+  return req.headers['x-forwarded-proto'] === 'https' || Boolean((req.socket as { encrypted?: boolean }).encrypted);
+}
+
+function isSameOriginMutation(req: IncomingMessage): boolean {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return true;
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  try { return new URL(origin).host === req.headers.host; } catch { return false; }
+}
+
+function setSessionCookie(req: IncomingMessage, res: ServerResponse, token: string, maxAge: number): void {
+  const secure = isHttps(req);
+  res.setHeader('Set-Cookie', `wyd_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? '; Secure' : ''}`);
+}
+
+function passwordHash(password: string): string {
+  const salt = randomBytes(16);
+  return `${salt.toString('base64')}:${scryptSync(password, salt, 64).toString('base64')}`;
+}
+
+function verifyPassword(password: string, encoded: string): boolean {
+  const [saltText, hashText] = encoded.split(':');
+  if (!saltText || !hashText) return false;
+  const expected = Buffer.from(hashText, 'base64');
+  const actual = scryptSync(password, Buffer.from(saltText, 'base64'), expected.length);
+  return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+function hashToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
 function openConversationDatabase(databasePath: string): DatabaseSync {
   mkdirSync(path.dirname(databasePath), { recursive: true });
   const database = new DatabaseSync(databasePath);
@@ -277,10 +454,33 @@ function openConversationDatabase(databasePath: string): DatabaseSync {
     CREATE TABLE IF NOT EXISTS app_meta (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
-    )
+    );
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      password_hash TEXT NOT NULL,
+      is_admin INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS auth_sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
   `);
+  migrateExplicitAdmin(database);
   migrateApolloSessions(database, path.join(path.dirname(databasePath), 'sessions'));
   return database;
+}
+
+function migrateExplicitAdmin(database: DatabaseSync): void {
+  const columns = database.prepare('PRAGMA table_info(users)').all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === 'is_admin')) database.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0');
+  if (database.prepare("SELECT value FROM app_meta WHERE key = 'explicit_admin_migrated'").get()) return;
+  const existing = database.prepare('SELECT id FROM users ORDER BY created_at').all() as Array<{ id: string }>;
+  if (existing.length === 1) database.prepare('UPDATE users SET is_admin = 1 WHERE id = ?').run(existing[0]!.id);
+  database.prepare("INSERT OR REPLACE INTO app_meta (key, value) VALUES ('explicit_admin_migrated', ?)").run(new Date().toISOString());
 }
 
 function migrateApolloSessions(database: DatabaseSync, sessionsPath: string): void {
@@ -328,23 +528,61 @@ function visibleSessionText(content: unknown): string {
   }).join('\n\n').trim();
 }
 
-function listConversations(database: DatabaseSync) {
+function listConversations(database: DatabaseSync, userId: string) {
+  const prefix = `${userId}:`;
   return database.prepare(`
-    SELECT id, title, group_name AS "group", updated_at AS "updatedAt"
-    FROM conversations ORDER BY updated_at DESC
-  `).all();
+    SELECT substr(id, ?) AS id, title, group_name AS "group", updated_at AS "updatedAt"
+    FROM conversations WHERE id LIKE ? ORDER BY updated_at DESC
+  `).all(prefix.length + 1, `${prefix}%`);
 }
 
-async function handleConversation(req: IncomingMessage, res: ServerResponse, database: DatabaseSync): Promise<void> {
-  const id = decodeURIComponent(req.url!.slice('/apollo-api/conversations/'.length).split('?', 1)[0]!);
-  if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) return jsonError(res, 400, '无效的对话 id');
+function listConversationArtifacts(database: DatabaseSync, userId: string) {
+  const rows = database.prepare('SELECT id, messages_json AS messages, updated_at AS "updatedAt" FROM conversations WHERE id LIKE ?').all(`${userId}:%`) as Array<{ id: string; messages: string; updatedAt: string }>;
+  return rows.flatMap((row) => {
+    try {
+      const messages = JSON.parse(row.messages) as Array<{ artifacts?: unknown }>;
+      if (!Array.isArray(messages)) return [];
+      return messages.flatMap((message) => {
+        if (!Array.isArray(message?.artifacts)) return [];
+        return message.artifacts.flatMap((value) => {
+          if (!value || typeof value !== 'object') return [];
+          const artifact = value as Partial<Artifact>;
+          if (!artifact.id || !artifact.title || !isArtifactKind(artifact.kind)) return [];
+          const content = typeof artifact.content === 'string' ? artifact.content : undefined;
+          const url = typeof artifact.url === 'string' ? artifact.url : undefined;
+          if (!content && !url) return [];
+          return [{
+            id: `conversation:${row.id}:${artifact.id}`,
+            title: artifact.title,
+            kind: artifact.kind,
+            size: typeof artifact.size === 'number' ? artifact.size : content ? Buffer.byteLength(content) : 0,
+            modifiedAt: row.updatedAt,
+            ...(url ? { url } : {}),
+            ...(content ? { content } : {}),
+          }];
+        });
+      });
+    } catch {
+      return [];
+    }
+  });
+}
+
+function isArtifactKind(value: unknown): value is Artifact['kind'] {
+  return value === 'word' || value === 'pdf' || value === 'json' || value === 'markdown';
+}
+
+async function handleConversation(req: IncomingMessage, res: ServerResponse, database: DatabaseSync, userId: string): Promise<void> {
+  const publicId = decodeURIComponent(req.url!.slice('/apollo-api/conversations/'.length).split('?', 1)[0]!);
+  const id = `${userId}:${publicId}`;
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(publicId)) return jsonError(res, 400, '无效的对话 id');
   if (req.method === 'GET') {
     const row = database.prepare(`
       SELECT id, title, group_name AS "group", messages_json AS "messages", updated_at AS "updatedAt"
       FROM conversations WHERE id = ?
     `).get(id) as { id: string; title: string; group: string; messages: string; updatedAt: string } | undefined;
     if (!row) return jsonError(res, 404, '对话不存在');
-    return json(res, 200, { ...row, messages: JSON.parse(row.messages) });
+    return json(res, 200, { ...row, id: publicId, messages: JSON.parse(row.messages) });
   }
   if (req.method === 'DELETE') {
     database.prepare('DELETE FROM conversations WHERE id = ?').run(id);
@@ -375,7 +613,7 @@ async function handleConversation(req: IncomingMessage, res: ServerResponse, dat
         messages_json = excluded.messages_json,
         updated_at = excluded.updated_at
     `).run(id, title, group, JSON.stringify(body.messages), now, now);
-    return json(res, 200, { id, title, group, updatedAt: now });
+    return json(res, 200, { id: publicId, title, group, updatedAt: now });
   } catch (error) {
     return jsonError(res, 400, error instanceof Error ? error.message : String(error));
   }
@@ -628,10 +866,6 @@ async function readBody(req: IncomingMessage, maxBytes = 1024 * 1024): Promise<s
     if (body.length > maxBytes) throw new Error('请求体过大');
   }
   return body;
-}
-
-function isLoopback(address = ''): boolean {
-  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
 }
 
 function json(res: ServerResponse, status: number, body: object): void {

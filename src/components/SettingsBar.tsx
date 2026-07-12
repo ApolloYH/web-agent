@@ -1,8 +1,14 @@
 import { useEffect, useState } from 'react';
 import type { BackendMode, NoumiSettings } from '@/lib/settings';
 import { listNoumiProjects } from '@/lib/noumiAgent';
-import { getApolloConfig, saveApolloConfig } from '@/lib/apolloAgent';
-import type { ApolloPermissionMode } from '@/lib/apolloAgent';
+import {
+  deleteApolloMemory,
+  getApolloConfig,
+  listApolloMemories,
+  saveApolloConfig,
+  saveApolloMemory,
+} from '@/lib/apolloAgent';
+import type { ApolloMemory, ApolloPermissionMode } from '@/lib/apolloAgent';
 import { useDismissDetails } from '@/lib/useDismissDetails';
 
 export default function SettingsBar({
@@ -12,6 +18,7 @@ export default function SettingsBar({
   onChangeNoumi,
   apolloPermissionMode,
   allowBackendSelection = true,
+  canManageConfig = true,
 }: {
   backend: BackendMode;
   noumi: NoumiSettings;
@@ -19,6 +26,7 @@ export default function SettingsBar({
   onChangeNoumi: (v: NoumiSettings) => void;
   apolloPermissionMode: ApolloPermissionMode;
   allowBackendSelection?: boolean;
+  canManageConfig?: boolean;
 }) {
   const detailsRef = useDismissDetails();
   const badge =
@@ -46,7 +54,7 @@ export default function SettingsBar({
             <circle cx="12" cy="10.5" r="2.5" />
           </svg>
         </summary>
-          <div className="absolute right-0 z-30 mt-2 w-[min(24rem,calc(100vw-1.5rem))] rounded-2xl border border-black/[0.08] bg-white p-4 shadow-[0_18px_48px_rgba(0,0,0,0.12)]">
+          <div className="absolute right-0 z-30 mt-2 max-h-[calc(100dvh-5rem)] w-[min(24rem,calc(100vw-1.5rem))] overflow-y-auto rounded-2xl border border-black/[0.08] bg-white p-4 shadow-[0_18px_48px_rgba(0,0,0,0.12)]">
             <h2 className="mb-3 text-[13px] font-semibold text-gray-900">设置</h2>
             {/* 后端模式选择 */}
             {allowBackendSelection && <div className="mb-3">
@@ -74,7 +82,7 @@ export default function SettingsBar({
             {backend === 'noumi' && <NoumiPanel noumi={noumi} onChange={onChangeNoumi} />}
 
             {backend === 'apollo' && (
-              <ApolloPanel permissionMode={apolloPermissionMode} />
+              <ApolloPanel permissionMode={apolloPermissionMode} canManageConfig={canManageConfig} />
             )}
           </div>
       </details>
@@ -82,9 +90,26 @@ export default function SettingsBar({
   );
 }
 
-function ApolloPanel({ permissionMode }: { permissionMode: ApolloPermissionMode }) {
+function ApolloPanel({ permissionMode, canManageConfig }: { permissionMode: ApolloPermissionMode; canManageConfig: boolean }) {
+  const [tab, setTab] = useState<'config' | 'memory'>(canManageConfig ? 'config' : 'memory');
+
+  return (
+    <div>
+      <div className="mb-3 flex gap-1 rounded-xl bg-gray-100 p-1 text-[11px]">
+        {([...(canManageConfig ? [['config', '配置'] as const] : []), ['memory', '记忆'] as const]).map(([value, label]) => (
+          <button key={value} type="button" onClick={() => setTab(value)} className={`flex-1 rounded-lg px-3 py-1.5 transition-colors ${tab === value ? 'bg-white font-medium text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === 'config' && canManageConfig ? <ApolloConfigPanel permissionMode={permissionMode} /> : <MemoryPanel />}
+    </div>
+  );
+}
+
+function ApolloConfigPanel({ permissionMode }: { permissionMode: ApolloPermissionMode }) {
   const [config, setConfig] = useState('');
-  const [configPath, setConfigPath] = useState('.apollo/config.json');
+  const [configPath, setConfigPath] = useState('config/web-apollo.json');
   const [state, setState] = useState<'loading' | 'idle' | 'saving' | 'saved' | 'error'>('loading');
   const [error, setError] = useState('');
 
@@ -160,6 +185,101 @@ function ApolloPanel({ permissionMode }: { permissionMode: ApolloPermissionMode 
       </div>
       {state === 'saved' && <p className="text-emerald-600">已保存，下次消息自动使用新配置。</p>}
       {state === 'error' && <p className="text-red-500">{error}</p>}
+    </div>
+  );
+}
+
+const emptyMemory = { title: '', content: '', tags: [] as string[] };
+
+function MemoryPanel() {
+  const [memories, setMemories] = useState<ApolloMemory[]>([]);
+  const [selectedId, setSelectedId] = useState<string>();
+  const [draft, setDraft] = useState(emptyMemory);
+  const [tags, setTags] = useState('');
+  const [state, setState] = useState<'loading' | 'idle' | 'saving' | 'error'>('loading');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    listApolloMemories()
+      .then((items) => {
+        setMemories(items);
+        const first = items[0];
+        if (first) {
+          setSelectedId(first.id);
+          setDraft({ title: first.title, content: first.content, tags: first.tags });
+          setTags(first.tags.join(', '));
+        }
+        setState('idle');
+      })
+      .catch((reason) => {
+        setError(reason instanceof Error ? reason.message : String(reason));
+        setState('error');
+      });
+  }, []);
+
+  const select = (memory?: ApolloMemory) => {
+    setSelectedId(memory?.id);
+    setDraft(memory ? { title: memory.title, content: memory.content, tags: memory.tags } : emptyMemory);
+    setTags(memory?.tags.join(', ') ?? '');
+    setError('');
+  };
+
+  const save = async () => {
+    if (!draft.title.trim() || !draft.content.trim()) {
+      setError('请填写标题和记忆内容');
+      return;
+    }
+    setState('saving');
+    setError('');
+    try {
+      const saved = await saveApolloMemory({
+        id: selectedId,
+        title: draft.title.trim(),
+        content: draft.content.trim(),
+        tags: tags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean),
+      });
+      setMemories((items) => [saved, ...items.filter((item) => item.id !== saved.id)]);
+      select(saved);
+      setState('idle');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+      setState('error');
+    }
+  };
+
+  const remove = async () => {
+    if (!selectedId || !window.confirm('确定删除这条记忆吗？')) return;
+    try {
+      await deleteApolloMemory(selectedId);
+      const remaining = memories.filter((item) => item.id !== selectedId);
+      setMemories(remaining);
+      select(remaining[0]);
+      setState('idle');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+      setState('error');
+    }
+  };
+
+  return (
+    <div className="space-y-3 text-[11px]">
+      <div><span className="font-medium text-gray-600">当前助理记忆</span><p className="mt-1 text-[10px] leading-4 text-gray-400">这里显示助理已经保存的长期记忆，修改后会直接影响后续对话。</p></div>
+      {state === 'loading' ? <p className="py-5 text-center text-gray-400">正在读取记忆…</p> : (
+        <>
+          {memories.length > 0 && (
+            <div className="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto">
+              {memories.map((memory) => <button type="button" key={memory.id} onClick={() => select(memory)} className={`rounded-lg px-2.5 py-1.5 text-left ${selectedId === memory.id ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{memory.title}</button>)}
+            </div>
+          )}
+          {selectedId ? <>
+            <input value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} aria-label="记忆标题" className="w-full rounded-lg border border-gray-300 px-2.5 py-2 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200" />
+            <input value={tags} onChange={(event) => setTags(event.target.value)} placeholder="标签，用逗号分隔（可选）" aria-label="记忆标签" className="w-full rounded-lg border border-gray-300 px-2.5 py-2 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200" />
+            <textarea value={draft.content} onChange={(event) => setDraft((current) => ({ ...current, content: event.target.value }))} aria-label="记忆内容" rows={8} className="w-full resize-y rounded-lg border border-gray-300 px-2.5 py-2 leading-4 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200" />
+            <div className="flex justify-end gap-2"><button type="button" onClick={remove} className="rounded-lg px-3 py-1.5 text-red-600 hover:bg-red-50">删除</button><button type="button" onClick={save} disabled={state === 'saving'} className="rounded-lg bg-gray-900 px-3 py-1.5 font-medium text-white hover:bg-gray-700 disabled:bg-gray-300">{state === 'saving' ? '保存中…' : '保存修改'}</button></div>
+          </> : <p className="rounded-xl bg-gray-50 px-3 py-5 text-center text-[10px] leading-4 text-gray-400">当前助理还没有长期记忆。你可以在对话中告诉助理“请记住……”，保存后会显示在这里。</p>}
+        </>
+      )}
+      {error && <p className="text-red-500">{error}</p>}
     </div>
   );
 }

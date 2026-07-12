@@ -59,6 +59,7 @@ export default function WordView({ url, content, fileName }: Props) {
           experimental: true,
           useBase64URL: true,
         });
+        sanitizeRenderedDocument(container);
         if (!cancelled) setStatus('ready');
       } catch (e) {
         if (cancelled) return;
@@ -88,4 +89,17 @@ export default function WordView({ url, content, fileName }: Props) {
       )}
     </div>
   );
+}
+
+function sanitizeRenderedDocument(container: HTMLElement): void {
+  container.querySelectorAll('script, iframe, object, embed, foreignObject, meta, link').forEach((element) => element.remove());
+  container.querySelectorAll('*').forEach((element) => {
+    for (const attribute of [...element.attributes]) {
+      const name = attribute.name.toLowerCase();
+      const value = attribute.value.trim().toLowerCase();
+      if (name.startsWith('on') || ((name === 'href' || name === 'xlink:href' || name === 'src') && value.startsWith('javascript:'))) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  });
 }

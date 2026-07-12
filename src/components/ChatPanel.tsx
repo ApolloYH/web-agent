@@ -53,6 +53,7 @@ export default function ChatPanel({
   permissionMode,
   onPermissionChange,
   surface,
+  canManagePermission,
 }: {
   messages: ChatMessage[];
   streaming: boolean;
@@ -64,11 +65,13 @@ export default function ChatPanel({
   permissionMode: ApolloPermissionMode;
   onPermissionChange: (mode: ApolloPermissionMode) => void;
   surface: 'assistant' | 'entry';
+  canManagePermission: boolean;
 }) {
   const [input, setInput] = useState('');
   const [selectedCommand, setSelectedCommand] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const commandMenuRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
     const container = scrollRef.current;
@@ -82,7 +85,7 @@ export default function ChatPanel({
     textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
   }, [input]);
 
-  const availableCommands = surface === 'assistant' ? slashCommands : slashCommands.filter((item) => !('control' in item && item.control));
+  const availableCommands = surface === 'assistant' ? slashCommands : slashCommands.filter((item) => item.command === '/clear' || !('control' in item && item.control));
   const commandToken = input.trimStart().split(/\s/, 1)[0];
   const commandMenuOpen = input.startsWith('/') && !input.includes(' ');
   const matchingCommands = commandMenuOpen
@@ -90,6 +93,12 @@ export default function ChatPanel({
     : [];
 
   useEffect(() => setSelectedCommand(0), [commandToken]);
+
+  useEffect(() => {
+    commandMenuRef.current
+      ?.querySelector<HTMLElement>(`[data-command-index="${selectedCommand}"]`)
+      ?.scrollIntoView({ block: 'nearest' });
+  }, [selectedCommand, matchingCommands.length]);
 
   const send = (text: string) => {
     const trimmed = text.trim();
@@ -217,10 +226,13 @@ export default function ChatPanel({
             className="block max-h-[200px] min-h-5 w-full resize-none overflow-y-auto border-0 bg-transparent px-1 text-[12px] leading-[18px] text-[#0d0d0d] outline-none placeholder:text-[#8f8f8f] focus-visible:outline-none"
           />
           {matchingCommands.length > 0 && (
-            <div className="absolute inset-x-0 bottom-full mb-2 max-h-[min(360px,calc(100dvh-180px))] touch-pan-y overflow-y-scroll overscroll-contain rounded-2xl border border-black/10 bg-white p-1.5 [scrollbar-gutter:stable] shadow-[0_12px_36px_rgba(0,0,0,0.14)]">
+            <div ref={commandMenuRef} role="listbox" className="absolute inset-x-0 bottom-full mb-2 max-h-[min(360px,calc(100dvh-180px))] touch-pan-y overflow-y-scroll overscroll-contain rounded-2xl border border-black/10 bg-white p-1.5 [scrollbar-gutter:stable] shadow-[0_12px_36px_rgba(0,0,0,0.14)]">
               {matchingCommands.map((item, index) => (
                 <button
                   key={item.command}
+                  data-command-index={index}
+                  role="option"
+                  aria-selected={index === selectedCommand}
                   type="button"
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => chooseCommand(index)}
@@ -234,7 +246,7 @@ export default function ChatPanel({
           )}
           <div className="mt-2 flex items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
-              {surface === 'assistant' && <label className="flex items-center gap-1.5 text-[10px] text-[#666]">
+              {surface === 'assistant' && canManagePermission && <label className="flex items-center gap-1.5 text-[10px] text-[#666]">
                   <ShieldIcon />
                   <select
                     aria-label="权限模式"

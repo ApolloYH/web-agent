@@ -42,7 +42,9 @@ pnpm install
 pnpm dev
 ```
 
-打开 http://localhost:5173。默认连接 `agent/` 中的 Apollo SDK，并读取 `agent/.apollo/.env`；Mock、OpenAI-compatible 和 Noumi 模式仍可在设置中切换。
+打开 http://localhost:5173。Web 助理使用 `config/web-apollo.json`，模型密钥读取项目 `.env`；CLI 的 `~/.apollo` 配置不会被 Web 读取。
+
+本地开发默认只监听 `127.0.0.1`。开放注册前必须配置 `WEB_REGISTRATION_INVITE` 和 `WEB_ADMIN_USERNAME`；生产部署必须使用 HTTPS 和持久化数据卷，不要用 Vite dev/preview 对外提供服务。没有进程级沙箱时保持 `WEB_ALLOW_UNRESTRICTED=false`。
 
 ## 接入你的后端 agent
 

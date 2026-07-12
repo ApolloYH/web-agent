@@ -16,6 +16,8 @@ export default function AppSidebar({
   onRenameChat,
   onMoveChat,
   onDeleteChat,
+  username,
+  onLogout,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -29,6 +31,8 @@ export default function AppSidebar({
   onRenameChat: (id: string, title: string) => void;
   onMoveChat: (id: string) => void;
   onDeleteChat: (id: string) => void;
+  username: string;
+  onLogout: () => void;
 }) {
   return (
     <>
@@ -91,6 +95,13 @@ export default function AppSidebar({
               </section>
             );
           })}
+        </div>
+        <div className="mt-1 border-t border-black/[0.05] pt-1">
+          <button type="button" onClick={onLogout} className="sidebar-item" title={`${username} · 退出登录`}>
+            <span className="flex size-[18px] shrink-0 items-center justify-center rounded-full bg-[#dedede] text-[9px] font-semibold text-[#555]">{username.slice(0, 1).toUpperCase()}</span>
+            <span className={`min-w-0 flex-1 truncate text-left ${open ? '' : 'lg:hidden'}`}>{username}</span>
+            <span className={`text-[9px] text-[#999] ${open ? '' : 'lg:hidden'}`}>退出</span>
+          </button>
         </div>
       </aside>
     </>

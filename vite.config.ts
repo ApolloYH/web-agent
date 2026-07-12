@@ -13,7 +13,10 @@ export default defineConfig(({ mode }) => {
   const noumiKey = env.NOUMI_API_KEY || '';
   const apollo = createApolloMiddleware({
     workspaceRoot: process.cwd(),
-    envPath: resolve(process.cwd(), 'agent/.apollo/.env'),
+    envPath: resolve(process.cwd(), '.env'),
+    registrationInvite: env.WEB_REGISTRATION_INVITE || '',
+    adminUsername: env.WEB_ADMIN_USERNAME || '',
+    allowUnrestricted: env.WEB_ALLOW_UNRESTRICTED === 'true',
   });
 
   return {
@@ -40,7 +43,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      host: true,
+      host: '127.0.0.1',
       watch: { ignored: ['**/agent/dist/**'] },
       // 开发代理：前端同源请求 /noumi-api/* → 转发到 langhub.cn，绕开 CORS。
       // 若配置了 NOUMI_API_KEY，则由代理注入 Authorization，密钥不出现在浏览器里。
@@ -61,5 +64,6 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
+    preview: { host: '127.0.0.1' },
   };
 });
