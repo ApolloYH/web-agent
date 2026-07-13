@@ -78,7 +78,7 @@ function ProcessStepRow({
         <StatusGlyph step={step} />
         <span className={`min-w-0 flex-1 font-medium ${toneClass(step.tone)}`}>{title}</span>
         {step.risk && step.risk !== 'low' && (
-          <span className="rounded bg-amber-100 px-1.5 text-[10px] uppercase text-amber-700">{step.risk}</span>
+          <span className="rounded bg-[#fff4cc] px-1.5 text-[10px] uppercase text-[#735700]">{step.risk}</span>
         )}
         {hasBody && <span className="text-gray-400">{open ? '▾' : '▸'}</span>}
       </button>
@@ -91,10 +91,10 @@ function ProcessStepRow({
             </pre>
           )}
           {step.progress?.map((line, index) => (
-            <div key={`${index}-${line}`} className="text-gray-500">{line}</div>
+            <div key={`${index}-${line}`} className="process-output">{line}</div>
           ))}
-          {detail?.trim() && <pre className={`max-h-72 overflow-auto whitespace-pre-wrap text-[11px] text-gray-500 ${step.kind === 'thought' ? 'leading-4' : 'leading-[18px]'}`}>{detail}</pre>}
-          {step.result && <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-lg bg-slate-50 p-2 text-[11px] leading-[18px] text-gray-600">{step.result}</pre>}
+          {detail?.trim() && <pre className={`process-output max-h-72 overflow-auto whitespace-pre-wrap text-[11px] ${step.kind === 'thought' ? 'leading-4' : 'leading-[18px]'}`}>{detail}</pre>}
+          {step.result && <pre className="process-result max-h-72 overflow-auto whitespace-pre-wrap rounded-lg p-2 text-[11px] leading-[18px]">{step.result}</pre>}
           {step.fileChange && <FileDiff change={step.fileChange} />}
         </div>
       )}
@@ -105,12 +105,12 @@ function ProcessStepRow({
 function StatusGlyph({ step }: { step: ProcessStep }) {
   if (step.pending) return <SpinnerGlyph />;
   const color = step.tone === 'error'
-    ? 'text-red-500'
+    ? 'process-tone-error'
     : step.tone === 'warning'
-      ? 'text-amber-500'
+      ? 'process-tone-warning'
       : step.tone === 'success'
-        ? 'text-emerald-500'
-        : 'text-gray-400';
+        ? 'process-tone-success'
+        : 'process-tone-info';
   return <span className={`w-3 shrink-0 text-[11px] leading-none ${color}`}>●</span>;
 }
 
@@ -118,10 +118,10 @@ function SpinnerGlyph() {
   const frames = ['·', '✢', '✳', '✶', '✻', '✽', '✽', '✻', '✶', '✳', '✢'];
   const [frame, setFrame] = useState(0);
   useEffect(() => {
-    const timer = window.setInterval(() => setFrame((value) => (value + 1) % frames.length), 160);
+    const timer = window.setInterval(() => setFrame((value) => (value + 1) % frames.length), 140);
     return () => window.clearInterval(timer);
   }, [frames.length]);
-  return <span className="w-3 shrink-0 text-[12px] leading-none text-blue-500">{frames[frame]}</span>;
+  return <span className="inline-flex h-[18px] w-3 shrink-0 items-center justify-center text-[12px] leading-none text-blue-500">{frames[frame]}</span>;
 }
 
 function FileDiff({ change }: { change: FileChange }) {
@@ -159,20 +159,20 @@ function FileDiff({ change }: { change: FileChange }) {
   });
 
   return (
-    <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-      <div className="flex items-center justify-between border-b border-gray-200 bg-gray-50 px-3 py-1.5">
-        <span className="font-medium text-gray-700">{change.kind === 'create' ? 'Write' : 'Update'}({change.path})</span>
-        <span className="text-[11px]"><b className="text-emerald-600">+{change.added}</b>{change.kind === 'update' && <b className="ml-2 text-red-500">-{change.removed}</b>}</span>
+    <div className="diff-panel overflow-hidden rounded-lg border">
+      <div className="diff-header flex items-center justify-between border-b px-3 py-1.5">
+        <span className="font-medium">{change.kind === 'create' ? 'Write' : 'Update'}({change.path})</span>
+        <span className="text-[11px]"><b className="diff-add">+{change.added}</b>{change.kind === 'update' && <b className="diff-remove ml-2">-{change.removed}</b>}</span>
       </div>
       <div className="max-h-80 overflow-auto font-mono text-[11px] leading-[18px]">
         {rows.map((row) => (
-          <div key={row.id} className={`flex ${row.kind === 'add' ? 'bg-emerald-50 text-emerald-900' : row.kind === 'remove' ? 'bg-red-50 text-red-900' : 'text-gray-600'}`}>
-            <span className="w-10 shrink-0 select-none border-r border-black/5 pr-2 text-right text-gray-400">{row.number}</span>
+          <div key={row.id} className={`flex ${row.kind === 'add' ? 'diff-row-add' : row.kind === 'remove' ? 'diff-row-remove' : 'diff-row-context'}`}>
+            <span className="diff-gutter w-10 shrink-0 select-none border-r pr-2 text-right">{row.number}</span>
             <span className="w-7 shrink-0 select-none text-center">{row.marker}</span>
             <span className="whitespace-pre pr-3">{row.content}</span>
           </div>
         ))}
-        {change.omitted > 0 && <div className="px-3 py-1 text-gray-400">… +{change.omitted} lines</div>}
+        {change.omitted > 0 && <div className="process-output px-3 py-1">… +{change.omitted} lines</div>}
       </div>
     </div>
   );
@@ -264,9 +264,9 @@ function ActionButton({ children, onClick, primary = false }: { children: React.
 }
 
 function toneClass(tone: ProcessStep['tone']): string {
-  if (tone === 'error') return 'text-red-700';
-  if (tone === 'warning') return 'text-amber-700';
-  if (tone === 'success') return 'text-emerald-700';
-  if (tone === 'info') return 'text-blue-700';
-  return 'text-gray-700';
+  if (tone === 'error') return 'process-tone-error';
+  if (tone === 'warning') return 'process-tone-warning';
+  if (tone === 'success') return 'process-tone-success';
+  if (tone === 'info') return 'process-tone-info';
+  return 'process-tone-neutral';
 }

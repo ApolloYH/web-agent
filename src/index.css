@@ -1,5 +1,4 @@
 @import 'tailwindcss';
-@import 'highlight.js/styles/github.css';
 
 :root {
   color-scheme: light;
@@ -8,6 +7,11 @@
   --app-muted: #6e6e80;
   --app-border: #e5e5e5;
   --app-sidebar: #f9f9f9;
+  /* Apollo standard status palette. Keep these canonical values unchanged. */
+  --palette-blue: #4285f4;
+  --palette-red: #ea4335;
+  --palette-yellow: #fbbc05;
+  --palette-green: #34a853;
 }
 
 html,
@@ -95,8 +99,52 @@ summary:focus-visible {
 .prose-chat ul { list-style: disc; padding-left: 1.4em; margin: 0.4em 0; }
 .prose-chat ol { list-style: decimal; padding-left: 1.4em; margin: 0.4em 0; }
 .prose-chat code { background: rgba(0,0,0,0.06); padding: 0.1em 0.35em; border-radius: 4px; font-size: 0.9em; }
-.prose-chat pre { background: #0d1117; color: #e6edf3; padding: 0.9em; border-radius: 8px; overflow-x: auto; margin: 0.6em 0; }
+.prose-chat pre { background: #1f1f1f; color: #eeeef2; padding: 0.9em; border: 1px solid #343434; border-radius: 8px; overflow-x: auto; margin: 0.6em 0; }
 .prose-chat pre code { background: transparent; padding: 0; color: inherit; }
+.prose-chat .hljs-comment,
+.prose-chat .hljs-quote { color: #75715e; }
+.prose-chat .hljs-keyword,
+.prose-chat .hljs-selector-tag,
+.prose-chat .hljs-meta .hljs-keyword { color: #f92672; }
+.prose-chat .hljs-string,
+.prose-chat .hljs-regexp,
+.prose-chat .hljs-meta-string { color: #e6db74; }
+.prose-chat .hljs-title,
+.prose-chat .hljs-title.function_,
+.prose-chat .hljs-title.class_,
+.prose-chat .hljs-type { color: #a6e22e; }
+.prose-chat .hljs-built_in,
+.prose-chat .hljs-attr,
+.prose-chat .hljs-property,
+.prose-chat .hljs-variable.language_ { color: #a6e22e; }
+.prose-chat .hljs-number,
+.prose-chat .hljs-literal,
+.prose-chat .hljs-symbol { color: #be84ff; }
+.prose-chat .hljs-subst,
+.prose-chat .hljs-variable { color: #eeeef2; }
+.prose-chat .hljs-params { color: #fd971f; }
+.prose-chat .hljs-addition { color: #d9f2df; background: #225c2b; }
+.prose-chat .hljs-deletion { color: #f8dddd; background: #7a2936; }
+
+.process-tone-info { color: var(--palette-blue); }
+.process-tone-success { color: #267d3e; }
+.process-tone-warning { color: #806000; }
+.process-tone-error { color: #b9342b; }
+.process-tone-neutral { color: #3f4650; }
+.process-output { color: #4b607d; }
+.process-result {
+  border-left: 2px solid var(--palette-blue);
+  background: #f3f6fb;
+  color: #344a67;
+}
+.diff-panel { border-color: #343434; background: #1f1f1f; color: #eeeef2; }
+.diff-header { border-color: #3b3b3b; background: #272727; }
+.diff-row-add { background: #225c2b; color: #d9f2df; }
+.diff-row-remove { background: #7a2936; color: #f8dddd; }
+.diff-row-context { color: #d0d0d8; }
+.diff-gutter { border-color: #3b3b3b; color: #9b9ba5; }
+.diff-add { color: var(--palette-green); }
+.diff-remove { color: var(--palette-red); }
 .prose-chat table { border-collapse: collapse; margin: 0.6em 0; }
 .prose-chat th, .prose-chat td { border: 1px solid #d0d7de; padding: 0.35em 0.7em; }
 .prose-chat a { color: #2563eb; text-decoration: underline; }
