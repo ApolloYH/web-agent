@@ -1,5 +1,7 @@
 # Apollo Web Agent
 
+> 当前 Web 主线对应 Agent `@apolloyh/apollo-agent@0.2.1`。项目状态、生产部署差异和新对话交接入口见 [docs/进度文档.md](docs/进度文档.md)。
+
 Apollo 个人超级助手提供两套彼此隔离的工作模式：
 
 - **统一入口模式**：普通问答和润色直接回答；标准、规范和条款问题检索工标库；专业业务通过专用 Skill 调用 LangHub。
