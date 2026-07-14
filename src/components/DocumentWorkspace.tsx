@@ -289,12 +289,14 @@ function WordEditor({ document, editorRef, onSave, onStatus, onError }: {
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [failed, setFailed] = useState('');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
     let disposed = false;
     let instance: OfficeEditorInstance | null = null;
+    setLoading(true);
     onStatus('ready');
     const hostUrl = officeHostUrl();
     void (async () => {
@@ -311,6 +313,7 @@ function WordEditor({ document, editorRef, onSave, onStatus, onError }: {
           instance = value;
           editorRef.current = value;
           setFailed('');
+          setLoading(false);
           onStatus('ready');
         },
         onDirtyChange: (dirty) => {
@@ -322,6 +325,7 @@ function WordEditor({ document, editorRef, onSave, onStatus, onError }: {
         onError: (caught) => {
           if (disposed) return;
           const message = caught.message;
+          setLoading(false);
           setFailed(message);
           onError(message);
         },
@@ -336,6 +340,7 @@ function WordEditor({ document, editorRef, onSave, onStatus, onError }: {
     }).catch((caught) => {
       if (disposed) return;
       const message = caught instanceof Error ? caught.message : String(caught);
+      setLoading(false);
       setFailed(message);
       onError(message);
     });
@@ -356,7 +361,25 @@ function WordEditor({ document, editorRef, onSave, onStatus, onError }: {
       </div>
     );
   }
-  return <div ref={containerRef} className="h-full w-full bg-white" />;
+  return (
+    <div className="relative h-full w-full bg-white">
+      <div ref={containerRef} className="h-full w-full bg-white" />
+      {loading && (
+        <div
+          role="status"
+          aria-live="polite"
+          aria-label="正在加载 Word 文档"
+          className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-white"
+        >
+          <span
+            aria-hidden="true"
+            className="h-7 w-7 animate-spin rounded-full border-2 border-[#dedede] border-t-[#171717] motion-reduce:animate-none"
+          />
+          <span className="text-[12px] text-[#777]">正在加载 Word 文档…</span>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function officeHostUrl(): string {
