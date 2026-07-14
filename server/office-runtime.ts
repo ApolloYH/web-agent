@@ -18,13 +18,27 @@ export function serveOfficeRuntime(
   let stat;
   try { stat = statSync(file); } catch { return next(); }
   if (!stat.isFile()) return next();
+  const compressedFile = `${file}.br`;
+  const acceptsBrotli = /(?:^|,)\s*br\s*(?:;|,|$)/i.test(req.headers['accept-encoding'] || '');
+  let servedFile = file;
+  if (acceptsBrotli) {
+    try {
+      const compressedStat = statSync(compressedFile);
+      if (compressedStat.isFile()) {
+        servedFile = compressedFile;
+        stat = compressedStat;
+      }
+    } catch { /* The uncompressed runtime file remains the fallback. */ }
+  }
   res.writeHead(200, {
     'Content-Type': officeMime(file),
     'Content-Length': stat.size,
     'Cache-Control': 'no-cache',
+    'Vary': 'Accept-Encoding',
+    ...(servedFile === compressedFile ? { 'Content-Encoding': 'br' } : {}),
   });
   if (req.method === 'HEAD') res.end();
-  else createReadStream(file).pipe(res);
+  else createReadStream(servedFile).pipe(res);
 }
 
 export function startOfficeRuntimeServer(port: number): HttpServer | null {
