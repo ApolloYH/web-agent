@@ -34,7 +34,7 @@ import RuntimeStatusBar from '@/components/RuntimeStatusBar';
 import { MenuIcon } from '@/components/Icons';
 import LoginScreen from '@/components/LoginScreen';
 import { getCurrentUser, logout, type AuthUser } from '@/lib/auth';
-import DocumentWorkspace, { type DocumentWorkspaceHandle } from '@/components/DocumentWorkspace';
+import DocumentWorkspace, { officeHostUrl, type DocumentWorkspaceHandle } from '@/components/DocumentWorkspace';
 import { openArtifact, openLibraryFile, type LibraryFile, type OpenDocument } from '@/lib/documentFiles';
 import { chooseLocalFolder, ensureFolderPermission, listLocalFiles, restoreLocalFolder, type DirectoryHandle } from '@/lib/localFolder';
 
@@ -49,6 +49,22 @@ const documentConversationId = (value: string) => {
 export default function App() {
   const [auth, setAuth] = useState<{ loading: boolean; user: AuthUser | null; hasUsers: boolean; registrationEnabled: boolean }>({ loading: true, user: null, hasUsers: false, registrationEnabled: false });
   useEffect(() => { getCurrentUser().then(({ user, hasUsers, registrationEnabled }) => setAuth({ loading: false, user, hasUsers, registrationEnabled })).catch(() => setAuth({ loading: false, user: null, hasUsers: false, registrationEnabled: false })); }, []);
+  useEffect(() => {
+    let frame: HTMLIFrameElement | undefined;
+    const warmOffice = () => {
+      frame = document.createElement('iframe');
+      frame.hidden = true;
+      frame.tabIndex = -1;
+      frame.src = new URL('/office-warmup.html', officeHostUrl()).href;
+      document.body.appendChild(frame);
+    };
+    if (document.readyState === 'complete') warmOffice();
+    else window.addEventListener('load', warmOffice, { once: true });
+    return () => {
+      window.removeEventListener('load', warmOffice);
+      frame?.remove();
+    };
+  }, []);
   if (auth.loading) return <div className="flex min-h-dvh items-center justify-center text-[12px] text-[#888]">正在加载…</div>;
   if (!auth.user) return <LoginScreen hasUsers={auth.hasUsers} registrationEnabled={auth.registrationEnabled} onAuthenticated={(user) => setAuth({ ...auth, loading: false, user, hasUsers: true })} />;
   return <WorkspaceApp user={auth.user} onLogout={async () => { await logout(); setAuth({ ...auth, loading: false, user: null, hasUsers: true }); }} />;

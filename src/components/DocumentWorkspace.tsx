@@ -359,7 +359,7 @@ function WordEditor({ document, editorRef, onSave, onStatus, onError }: {
   return <div ref={containerRef} className="h-full w-full bg-white" />;
 }
 
-function officeHostUrl(): string {
+export function officeHostUrl(): string {
   const configured = import.meta.env.VITE_OFFICE_HOST_URL as string | undefined;
   if (configured) return configured;
   if (window.location.hostname === 'apollo.yh521.top') return 'https://office.yh521.top/office-host.html';
