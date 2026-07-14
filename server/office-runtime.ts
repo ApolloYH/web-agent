@@ -2,12 +2,26 @@ import { createReadStream, readFileSync, statSync } from 'node:fs';
 import { createServer, type Server as HttpServer } from 'node:http';
 import { resolve } from 'node:path';
 
-const OFFICE_WARMUP_HTML = '<!doctype html><meta charset="utf-8"><script>(async()=>{try{if("serviceWorker" in navigator){await navigator.serviceWorker.register("/document_editor_service_worker.js");await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(r=>navigator.serviceWorker.addEventListener("controllerchange",r,{once:true}))}const response=await fetch("/wasm/x2t/x2t.wasm");await response.arrayBuffer()}catch{}})()</script>';
-const SERVICE_WORKER_STRATEGY_MARKER = '  // 8. Determine Strategy';
+const OFFICE_WARM_ASSETS = [
+  '/wasm/x2t/x2t.wasm',
+  '/sdkjs/word/sdk-all.js',
+  '/sdkjs/common/libfont/engine/fonts.wasm',
+  '/sdkjs/common/spell/spell/spell.wasm',
+  '/sdkjs/common/zlib/engine/zlib.wasm',
+  '/web-apps/apps/documenteditor/main/app.js',
+  '/web-apps/apps/documenteditor/main/code.js',
+  '/fonts/000.ttf',
+  '/fonts/001.ttc',
+];
+const OFFICE_WARMUP_HTML = `<!doctype html><meta charset="utf-8"><script>(async()=>{try{if("serviceWorker" in navigator){await navigator.serviceWorker.register("/document_editor_service_worker.js");await navigator.serviceWorker.ready;if(!navigator.serviceWorker.controller)await new Promise(r=>navigator.serviceWorker.addEventListener("controllerchange",r,{once:true}))}await Promise.all(${JSON.stringify(OFFICE_WARM_ASSETS)}.map(async path=>{const response=await fetch(path);await response.arrayBuffer()}))}catch{}})()</script>`;
+const SERVICE_WORKER_GLOBAL_MARKER = 'const ONLYOFFICE_RUNTIME_ASSET_REGEX =';
+const SERVICE_WORKER_STRATEGY_MARKER = '  // 7. Skip font files';
 const SERVICE_WORKER_EVICTION_MARKER = '        cache.delete(keys[0]).then(() => limitCacheSize(name, maxItems));';
-const CONVERTER_SAFE_EVICTION = `        const oldest = keys.find((key) => !new URL(key.url).pathname.endsWith('/wasm/x2t/x2t.wasm'));
+const WARM_ASSET_SET = `const APOLLO_WARM_ASSETS = new Set(${JSON.stringify(OFFICE_WARM_ASSETS)});
+`;
+const WARM_ASSET_SAFE_EVICTION = `        const oldest = keys.find((key) => !APOLLO_WARM_ASSETS.has(new URL(key.url).pathname));
         if (oldest) cache.delete(oldest).then(() => limitCacheSize(name, maxItems));`;
-const CONVERTER_CACHE_FIRST = `  if (url.pathname === '/wasm/x2t/x2t.wasm') {
+const WARM_ASSET_CACHE_FIRST = `  if (APOLLO_WARM_ASSETS.has(url.pathname)) {
     event.respondWith(caches.open(CACHE_NAME).then(async (cache) => {
       const cached = await cache.match(event.request);
       if (cached) return cached;
@@ -48,8 +62,9 @@ export function serveOfficeRuntime(
   if (pathname === '/sw.js') {
     const source = readFileSync(file, 'utf8');
     const body = source
-      .replace(SERVICE_WORKER_EVICTION_MARKER, CONVERTER_SAFE_EVICTION)
-      .replace(SERVICE_WORKER_STRATEGY_MARKER, `${CONVERTER_CACHE_FIRST}${SERVICE_WORKER_STRATEGY_MARKER}`);
+      .replace(SERVICE_WORKER_GLOBAL_MARKER, `${WARM_ASSET_SET}${SERVICE_WORKER_GLOBAL_MARKER}`)
+      .replace(SERVICE_WORKER_EVICTION_MARKER, WARM_ASSET_SAFE_EVICTION)
+      .replace(SERVICE_WORKER_STRATEGY_MARKER, `${WARM_ASSET_CACHE_FIRST}${SERVICE_WORKER_STRATEGY_MARKER}`);
     res.writeHead(200, {
       'Content-Type': 'text/javascript; charset=utf-8',
       'Content-Length': Buffer.byteLength(body),
@@ -62,20 +77,20 @@ export function serveOfficeRuntime(
   const compressedFile = `${file}.br`;
   const acceptsBrotli = /(?:^|,)\s*br\s*(?:;|,|$)/i.test(req.headers['accept-encoding'] || '');
   let servedFile = file;
-  if (acceptsBrotli && file.endsWith('/wasm/x2t/x2t.wasm')) {
+  if (acceptsBrotli) {
     try {
       const compressedStat = statSync(compressedFile);
-      if (compressedStat.isFile()) {
+      if (compressedStat.isFile() && compressedStat.mtimeMs >= stat.mtimeMs) {
         servedFile = compressedFile;
         stat = compressedStat;
       }
     } catch { /* The uncompressed runtime file remains the fallback. */ }
   }
-  const isConverterWasm = file.endsWith('/wasm/x2t/x2t.wasm');
+  const cacheable = !file.endsWith('.html') && !file.endsWith('.json');
   res.writeHead(200, {
     'Content-Type': officeMime(file),
     'Content-Length': stat.size,
-    'Cache-Control': isConverterWasm ? 'public, max-age=3600' : 'no-cache',
+    'Cache-Control': cacheable ? 'public, max-age=3600' : 'no-cache',
     'Vary': 'Accept-Encoding',
     ...(servedFile === compressedFile ? { 'Content-Encoding': 'br' } : {}),
   });

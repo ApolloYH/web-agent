@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "office:setup": "node scripts/setup-onlyoffice-runtime.mjs",
-    "build": "tsc -b && vite build && pnpm build:server",
+    "office:compress": "node scripts/precompress-assets.mjs",
+    "build": "tsc -b && vite build && node scripts/precompress-assets.mjs && pnpm build:server",
     "build:server": "tsc -p tsconfig.server.json",
     "start": "node server-dist/server/production.js",
     "preview": "vite preview --host 127.0.0.1"

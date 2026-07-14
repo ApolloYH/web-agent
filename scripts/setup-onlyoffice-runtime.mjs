@@ -31,6 +31,7 @@ if (!existsSync(path.join(fontTarget, 'onlyoffice-browser-font-assets.json'))) {
 }
 run('pnpm', ['fonts:verify', '--input', fontTarget], source);
 cpSync(fontTarget, target, { recursive: true });
+run(process.execPath, [path.join(root, 'scripts', 'precompress-assets.mjs')], root);
 console.log(`OnlyOffice 本地运行时已准备：${target}`);
 
 function run(command, args, cwd) {

@@ -59,14 +59,22 @@ async function serveStatic(rawUrl: string, method: string, res: import('node:htt
     res.writeHead(404).end('Not found');
     return;
   }
+  const compressed = `${file}.br`;
+  const compressedStat = /(?:^|,)\s*br\s*(?:;|,|$)/i.test(res.req.headers['accept-encoding'] || '')
+    ? await fs.stat(compressed).catch(() => null)
+    : null;
+  const servedFile = compressedStat?.isFile() && compressedStat.mtimeMs >= fileStat.mtimeMs ? compressed : file;
+  const servedStat = servedFile === compressed ? compressedStat : fileStat;
   const ext = path.extname(file).toLowerCase();
   res.writeHead(200, {
     'Content-Type': mime(ext),
-    'Content-Length': fileStat.size,
+    'Content-Length': servedStat!.size,
     'Cache-Control': file.includes(`${path.sep}assets${path.sep}`) ? 'public, max-age=31536000, immutable' : 'no-cache',
+    'Vary': 'Accept-Encoding',
+    ...(servedFile === compressed ? { 'Content-Encoding': 'br' } : {}),
   });
   if (method === 'HEAD') res.end();
-  else createReadStream(file).pipe(res);
+  else createReadStream(servedFile).pipe(res);
 }
 
 function mime(ext: string): string {
