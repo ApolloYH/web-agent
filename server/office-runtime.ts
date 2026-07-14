@@ -41,6 +41,7 @@ const WARM_ASSET_CACHE_FIRST = `  if (APOLLO_WARM_ASSETS.has(url.pathname)) {
 
 `;
 const EMPTY_SVG = '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
+const OFFICE_RUNTIME_PATCH = '20260714-save';
 const OFFICE_IMAGE_BRIDGE = `<script>(()=>{const app=window.APP=window.APP||{};app.AddImage=(done)=>{const input=document.createElement('input');input.type='file';input.accept='image/*';input.onchange=()=>{const file=input.files?.[0];if(!file)return;const reader=new FileReader();reader.onload=()=>{if(typeof reader.result==='string')done({url:reader.result})};reader.onerror=()=>console.error('OnlyOffice image could not be read');reader.readAsDataURL(file)};input.click()}})()</script>`;
 
 export function serveOfficeRuntime(
@@ -93,7 +94,9 @@ export function serveOfficeRuntime(
     return;
   }
   if (pathname === '/office-host.html') {
-    const body = readFileSync(file, 'utf8').replace('<script type="module"', `${OFFICE_IMAGE_BRIDGE}\n    <script type="module"`);
+    const body = readFileSync(file, 'utf8')
+      .replace(/src="(\.\/assets\/officeHost-[^"]+\.js)"/, `src="$1?apollo=${OFFICE_RUNTIME_PATCH}"`)
+      .replace('<script type="module"', `${OFFICE_IMAGE_BRIDGE}\n    <script type="module"`);
     res.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
       'Content-Length': Buffer.byteLength(body),
@@ -105,7 +108,8 @@ export function serveOfficeRuntime(
   if (/\/assets\/(?:converter|officeHost)-[^/]+\.js$/.test(pathname)) {
     const body = readFileSync(file, 'utf8')
       .replace('catch(e){console.warn(`Directory ${t} may already exist:`,e)}', 'catch{}')
-      .replace('spellcheck:this.options.spellcheck??!1,autosave:', 'autosave:');
+      .replace('spellcheck:this.options.spellcheck??!1,autosave:', 'autosave:')
+      .replace('web-apps/apps/api/documents/api.js', `web-apps/apps/api/documents/api.js?apollo=${OFFICE_RUNTIME_PATCH}`);
     res.writeHead(200, {
       'Content-Type': 'text/javascript; charset=utf-8',
       'Content-Length': Buffer.byteLength(body),
@@ -126,7 +130,7 @@ export function serveOfficeRuntime(
       }
     } catch { /* The uncompressed runtime file remains the fallback. */ }
   }
-  const cacheable = !file.endsWith('.html') && !file.endsWith('.json');
+  const cacheable = !file.endsWith('.html') && !file.endsWith('.json') && pathname !== '/web-apps/apps/api/documents/api.js';
   res.writeHead(200, {
     'Content-Type': officeMime(file),
     'Content-Length': stat.size,
