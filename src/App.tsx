@@ -90,6 +90,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   const [conversationTitle, setConversationTitle] = useState(ASSISTANT_CONVERSATION_TITLE);
   const [conversationGroup, setConversationGroup] = useState<'最近' | '已归档'>('最近');
   const [conversationList, setConversationList] = useState<ConversationSummary[]>([]);
+  const [deleteConversationId, setDeleteConversationId] = useState<string | null>(null);
   const [historyReady, setHistoryReady] = useState(false);
   const [activeView, setActiveView] = useState<'assistant' | 'chat' | 'library' | 'document'>(initialWorkspaceRef.current.view);
   const [storedArtifacts, setStoredArtifacts] = useState<StoredArtifact[]>([]);
@@ -717,14 +718,20 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
         }}
         onRenameChat={renameConversation}
         onMoveChat={moveConversation}
-        onDeleteChat={(id) => {
-          if (window.confirm('删除这个对话？已生成的文件不会被删除。')) {
-            void removeConversation(id).catch((error) => window.alert(error instanceof Error ? error.message : String(error)));
-          }
-        }}
+        onDeleteChat={setDeleteConversationId}
         username={user.username}
         onLogout={onLogout}
       />
+
+      {deleteConversationId && <DeleteConversationDialog
+        title={conversationList.find((item) => item.id === deleteConversationId)?.title || '这个对话'}
+        onCancel={() => setDeleteConversationId(null)}
+        onConfirm={() => {
+          const id = deleteConversationId;
+          setDeleteConversationId(null);
+          void removeConversation(id).catch((error) => window.alert(error instanceof Error ? error.message : String(error)));
+        }}
+      />}
 
       <main className="relative flex min-w-0 flex-1">
         <section className="relative flex min-w-0 flex-1 flex-col">
@@ -827,3 +834,27 @@ function WorkspaceBar({ label, onToggle }: { label: string; onToggle: () => void
 
 function WorkspaceFolderIcon() { return <svg viewBox="0 0 24 24" width="16" height="16" fill="none" className="shrink-0" aria-hidden="true"><path d="M3.5 6.5h6l2 2h9v9.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V6.5Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" /></svg>; }
 function ClosePanelIcon() { return <svg viewBox="0 0 24 24" width="17" height="17" fill="none" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>; }
+
+function DeleteConversationDialog({ title, onCancel, onConfirm }: { title: string; onCancel: () => void; onConfirm: () => void }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => { dialogRef.current?.showModal(); }, []);
+  return (
+    <dialog
+      ref={dialogRef}
+      aria-labelledby="delete-conversation-title"
+      onCancel={onCancel}
+      onClick={(event) => { if (event.target === event.currentTarget) onCancel(); }}
+      className="m-auto w-[min(440px,calc(100%-32px))] rounded-2xl border border-black/10 bg-white p-0 text-[#171717] shadow-[0_18px_60px_rgba(0,0,0,0.18)] backdrop:bg-black/35 backdrop:backdrop-blur-[1px]"
+    >
+      <div className="p-6">
+        <h2 id="delete-conversation-title" className="text-[17px] font-semibold">删除对话？</h2>
+        <p className="mt-5 text-[14px] text-[#303030]">这会删除“{title}”。</p>
+        <p className="mt-2 text-[12px] text-[#888]">已生成的文件不会被删除。</p>
+        <div className="mt-7 flex justify-end gap-2">
+          <button autoFocus type="button" onClick={onCancel} className="cursor-pointer rounded-full border border-black/15 px-4 py-2 text-[13px] font-medium transition-colors hover:bg-[#f5f5f5] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717]">取消</button>
+          <button type="button" onClick={onConfirm} className="cursor-pointer rounded-full bg-[#e02e2e] px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-[#c92525] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#e02e2e]">删除</button>
+        </div>
+      </div>
+    </dialog>
+  );
+}
