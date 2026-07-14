@@ -844,15 +844,15 @@ function DeleteConversationDialog({ title, onCancel, onConfirm }: { title: strin
       aria-labelledby="delete-conversation-title"
       onCancel={onCancel}
       onClick={(event) => { if (event.target === event.currentTarget) onCancel(); }}
-      className="m-auto w-[min(440px,calc(100%-32px))] rounded-2xl border border-black/10 bg-white p-0 text-[#171717] shadow-[0_18px_60px_rgba(0,0,0,0.18)] backdrop:bg-black/35 backdrop:backdrop-blur-[1px]"
+      className="m-auto w-[min(500px,calc(100%-32px))] rounded-[18px] border border-black/[0.08] bg-white p-0 text-[#171717] shadow-[0_20px_70px_rgba(0,0,0,0.16)] backdrop:bg-black/35 backdrop:backdrop-blur-[1px]"
     >
-      <div className="p-6">
-        <h2 id="delete-conversation-title" className="text-[17px] font-semibold">删除对话？</h2>
-        <p className="mt-5 text-[14px] text-[#303030]">这会删除“{title}”。</p>
-        <p className="mt-2 text-[12px] text-[#888]">已生成的文件不会被删除。</p>
-        <div className="mt-7 flex justify-end gap-2">
-          <button autoFocus type="button" onClick={onCancel} className="cursor-pointer rounded-full border border-black/15 px-4 py-2 text-[13px] font-medium transition-colors hover:bg-[#f5f5f5] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717]">取消</button>
-          <button type="button" onClick={onConfirm} className="cursor-pointer rounded-full bg-[#e02e2e] px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-[#c92525] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#e02e2e]">删除</button>
+      <div className="px-7 py-6">
+        <h2 id="delete-conversation-title" className="text-[16px] font-semibold tracking-[-0.01em]">删除对话？</h2>
+        <p className="mt-4 text-[13.5px] leading-6 text-[#303030]">这会删除“{title}”。</p>
+        <p className="mt-1 text-[12px] leading-5 text-[#888]">已生成的文件不会被删除。</p>
+        <div className="mt-6 flex justify-end gap-2.5">
+          <button autoFocus type="button" onClick={onCancel} className="cursor-pointer rounded-full border border-black/[0.14] px-4 py-[7px] text-[12.5px] font-medium transition-colors hover:bg-[#f5f5f5] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717]">取消</button>
+          <button type="button" onClick={onConfirm} className="cursor-pointer rounded-full bg-[#e52b2b] px-4 py-[7px] text-[12.5px] font-medium text-white transition-colors hover:bg-[#cb2424] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#e52b2b]">删除</button>
         </div>
       </div>
     </dialog>
