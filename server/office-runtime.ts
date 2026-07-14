@@ -41,7 +41,7 @@ const WARM_ASSET_CACHE_FIRST = `  if (APOLLO_WARM_ASSETS.has(url.pathname)) {
 
 `;
 const EMPTY_SVG = '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
-const OFFICE_RUNTIME_PATCH = '20260714-cdn-cache';
+const OFFICE_RUNTIME_PATCH = '20260714-save-cache';
 const OFFICE_IMAGE_BRIDGE = `<script>(()=>{const app=window.APP=window.APP||{};app.AddImage=(done)=>{const input=document.createElement('input');input.type='file';input.accept='image/*';input.onchange=()=>{const file=input.files?.[0];if(!file)return;const reader=new FileReader();reader.onload=()=>{if(typeof reader.result==='string')done({url:reader.result})};reader.onerror=()=>console.error('OnlyOffice image could not be read');reader.readAsDataURL(file)};input.click()}})()</script>`;
 
 export function serveOfficeRuntime(
@@ -119,16 +119,18 @@ export function serveOfficeRuntime(
     res.end(req.method === 'HEAD' ? undefined : body);
     return;
   }
+  const cacheable = !file.endsWith('.html') && !file.endsWith('.json') && pathname !== '/web-apps/apps/api/documents/api.js';
   const compressedFile = `${file}.br`;
   let servedFile = file;
-  try {
-    const compressedStat = statSync(compressedFile);
-    if (compressedStat.isFile() && compressedStat.mtimeMs >= stat.mtimeMs) {
-      servedFile = compressedFile;
-      stat = compressedStat;
-    }
-  } catch { /* The uncompressed runtime file remains the fallback. */ }
-  const cacheable = !file.endsWith('.html') && !file.endsWith('.json') && pathname !== '/web-apps/apps/api/documents/api.js';
+  if (cacheable) {
+    try {
+      const compressedStat = statSync(compressedFile);
+      if (compressedStat.isFile() && compressedStat.mtimeMs >= stat.mtimeMs) {
+        servedFile = compressedFile;
+        stat = compressedStat;
+      }
+    } catch { /* The uncompressed runtime file remains the fallback. */ }
+  }
   res.writeHead(200, {
     'Content-Type': officeMime(file),
     'Content-Length': stat.size,

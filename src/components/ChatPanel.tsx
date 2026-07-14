@@ -6,14 +6,14 @@ import { ArtifactBody } from './ArtifactPanel';
 import type { ApolloPermissionMode } from '@/lib/apolloAgent';
 
 const suggestions = [
-  { title: '查询电力工程标准', prompt: '查询一条电力工程标准' },
-  { title: '识别施工现场隐患', prompt: '识别施工现场安全隐患' },
-  { title: '生成管控一张卡', prompt: '生成一份管控一张卡' },
-  { title: '审查施工方案', prompt: '审查一份施工方案' },
-  { title: '生成监理通知单', prompt: '生成一份监理通知单' },
-  { title: '整理今日监理日志', prompt: '生成今天的监理日志' },
-  { title: '编制监理文书', prompt: '生成一份监理文书' },
-  { title: '对比改造前后单线图', prompt: '对比改造前后单线图' },
+  { title: '整理今日待办', prompt: '帮我整理今天的工作待办' },
+  { title: '总结项目资料', prompt: '帮我总结一份项目资料' },
+  { title: '起草正式邮件', prompt: '帮我起草一封正式工作邮件' },
+  { title: '制定本周计划', prompt: '帮我制定本周工作计划' },
+  { title: '优化文字表达', prompt: '帮我优化一段文字的表达' },
+  { title: '整理会议纪要', prompt: '帮我整理一份会议纪要' },
+  { title: '分析表格数据', prompt: '帮我分析一份表格数据' },
+  { title: '搜索行业动态', prompt: '帮我搜索最新行业动态' },
 ];
 const suggestionRows = [suggestions.slice(0, 3), suggestions.slice(3, 6), suggestions.slice(6)];
 const assistantSuggestions = [
