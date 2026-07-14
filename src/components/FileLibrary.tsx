@@ -1,34 +1,66 @@
 import { useDeferredValue, useMemo, useState } from 'react';
-import type { StoredArtifact } from '@/lib/apolloAgent';
+import type { LibraryFile } from '@/lib/documentFiles';
 
 const filters = [
   ['all', '全部'],
   ['word', 'Word'],
   ['pdf', 'PDF'],
   ['image', '图片'],
+  ['markdown', 'Markdown'],
+  ['json', 'JSON'],
 ] as const;
 
-export default function FileLibrary({ files, loading }: { files: StoredArtifact[]; loading: boolean }) {
+export default function FileLibrary({ files, localFiles, loading, localFolderName, source, onSourceChange, onOpen, onConnectFolder, onRefreshFolder }: {
+  files: LibraryFile[];
+  localFiles: LibraryFile[];
+  loading: boolean;
+  localFolderName: string;
+  source: 'server' | 'local';
+  onSourceChange: (source: 'server' | 'local') => void;
+  onOpen: (file: LibraryFile) => void;
+  onConnectFolder: () => void;
+  onRefreshFolder: () => void;
+}) {
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState<(typeof filters)[number][0]>('all');
   const deferredQuery = useDeferredValue(query);
+  const sourceFiles = source === 'server' ? files : localFiles;
   const visibleFiles = useMemo(() => {
     const normalized = deferredQuery.trim().toLowerCase();
-    return files.filter((file) =>
+    return sourceFiles.filter((file) =>
       (kind === 'all' || file.kind === kind) && (!normalized || file.title.toLowerCase().includes(normalized)),
     );
-  }, [deferredQuery, files, kind]);
+  }, [deferredQuery, sourceFiles, kind]);
 
   return (
     <section className="min-h-0 flex-1 overflow-y-auto bg-white px-5 pb-10 pt-8 md:px-10 md:pt-10">
       <div className="mx-auto w-full max-w-5xl">
         <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
-          <h1 className="text-[22px] font-semibold tracking-[-0.035em] text-[#171717]">文件库</h1>
+          <div>
+            <h1 className="text-[22px] font-semibold tracking-[-0.035em] text-[#171717]">文件库</h1>
+            <div className="mt-3 inline-flex rounded-xl bg-[#f2f2f2] p-0.5" aria-label="文件来源">
+              <button type="button" onClick={() => onSourceChange('server')} aria-pressed={source === 'server'} className={`rounded-[10px] px-3 py-1.5 text-[11px] transition-colors ${source === 'server' ? 'bg-white text-[#171717] shadow-sm' : 'text-[#666] hover:text-[#222]'}`}>网站文件</button>
+              <button type="button" onClick={() => onSourceChange('local')} aria-pressed={source === 'local'} className={`rounded-[10px] px-3 py-1.5 text-[11px] transition-colors ${source === 'local' ? 'bg-white text-[#171717] shadow-sm' : 'text-[#666] hover:text-[#222]'}`}>本地文件夹</button>
+            </div>
+          </div>
           <label className="flex h-9 w-full items-center gap-2 rounded-full bg-[#f4f4f4] px-3.5 sm:w-64">
             <SearchIcon />
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索文件" aria-label="搜索文件" className="min-w-0 flex-1 border-0 bg-transparent text-[12px] outline-none placeholder:text-[#999]" />
           </label>
         </div>
+
+        {source === 'local' && (
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#e8e8e8] bg-[#fafafa] px-4 py-3">
+            <div className="min-w-0">
+              <p className="truncate text-[11px] font-medium text-[#303030]">{localFolderName || '尚未连接本地文件夹'}</p>
+              <p className="mt-0.5 text-[10px] text-[#777]">Word、Markdown、JSON 会直接读写原文件，不上传。</p>
+            </div>
+            <div className="flex gap-2">
+              {localFolderName && <button type="button" onClick={onRefreshFolder} className="rounded-lg px-3 py-1.5 text-[11px] text-[#555] hover:bg-[#ededed] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717]">刷新</button>}
+              <button type="button" onClick={onConnectFolder} className="rounded-lg bg-[#171717] px-3 py-1.5 text-[11px] text-white hover:bg-[#303030] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717]">{localFolderName ? '重新连接' : '连接文件夹'}</button>
+            </div>
+          </div>
+        )}
 
         <div className="mt-8 flex flex-wrap gap-1.5">
           {filters.map(([value, label]) => (
@@ -44,8 +76,8 @@ export default function FileLibrary({ files, loading }: { files: StoredArtifact[
           </div>
           {loading ? (
             <div className="px-3 py-12 text-center text-[12px] text-[#999]">正在读取文件…</div>
-          ) : visibleFiles.length ? visibleFiles.map((file) => <FileRow key={file.id} file={file} />) : (
-            <div className="px-3 py-16 text-center text-[12px] text-[#999]">{files.length ? '没有匹配的文件' : '生成的文件会保存在这里'}</div>
+          ) : visibleFiles.length ? visibleFiles.map((file) => <FileRow key={file.id} file={file} onOpen={onOpen} />) : (
+            <div className="px-3 py-16 text-center text-[12px] text-[#777]">{sourceFiles.length ? '没有匹配的文件' : source === 'local' ? '连接文件夹后会显示可编辑文件' : '生成的文件会保存在这里'}</div>
           )}
         </div>
       </div>
@@ -53,24 +85,22 @@ export default function FileLibrary({ files, loading }: { files: StoredArtifact[
   );
 }
 
-function FileRow({ file }: { file: StoredArtifact }) {
-  const href = artifactUrl(file);
+function FileRow({ file, onOpen }: { file: LibraryFile; onOpen: (file: LibraryFile) => void }) {
   const content = (
     <>
       <span className="flex min-w-0 items-center gap-3">
         <span className="flex size-8 shrink-0 items-center justify-center rounded-[10px] bg-[#f4f4f4] text-[#555]"><FileTypeIcon /></span>
-        <span className="truncate text-[#303030]">{file.title}</span>
+        <span className="min-w-0">
+          <span className="block truncate text-[#303030]">{file.title}</span>
+          {file.relativePath && file.relativePath !== file.title && <span className="mt-0.5 block truncate text-[10px] text-[#888]">{file.relativePath}</span>}
+        </span>
       </span>
       <span className="text-[11px] text-[#888]">{formatDate(file.modifiedAt)}</span>
       <span className="hidden text-[11px] text-[#888] sm:block">{formatSize(file.size)}</span>
     </>
   );
   const className = 'grid min-h-14 grid-cols-[minmax(0,1fr)_100px] items-center gap-4 rounded-xl px-3 text-[12px] transition-colors hover:bg-[#f7f7f7] sm:grid-cols-[minmax(0,1fr)_120px_90px]';
-  return href ? <a href={href} target="_blank" rel="noreferrer" className={className}>{content}</a> : <div className={className}>{content}</div>;
-}
-
-function artifactUrl(file: StoredArtifact): string | undefined {
-  return file.url;
+  return <button type="button" onClick={() => onOpen(file)} className={`${className} w-full cursor-pointer text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717]`}>{content}</button>;
 }
 
 function formatSize(bytes: number): string {

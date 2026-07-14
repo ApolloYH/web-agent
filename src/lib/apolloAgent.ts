@@ -14,6 +14,7 @@ export type ApolloEvent =
     }
   | { type: 'status'; status: RuntimeStatus }
   | { type: 'done'; artifacts: Artifact[]; status: RuntimeStatus }
+  | { type: 'editor_request'; id: string; action: string; input: Record<string, unknown> }
   | { type: 'error'; message: string };
 
 export type ApolloChannel = 'assistant' | 'entry';
@@ -177,6 +178,7 @@ export interface StoredArtifact {
   modifiedAt: string;
   url?: string;
   content?: string;
+  version?: string;
 }
 
 export async function getStoredArtifacts(): Promise<StoredArtifact[]> {

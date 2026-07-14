@@ -41,11 +41,13 @@ export default function ChatPanel({
   onStop,
   onCommand,
   onRespond,
+  onOpenArtifact,
   runtimeMode,
   permissionMode,
   onPermissionChange,
   surface,
   canManagePermission,
+  embedded = false,
 }: {
   messages: ChatMessage[];
   streaming: boolean;
@@ -53,11 +55,13 @@ export default function ChatPanel({
   onStop: () => void;
   onCommand: (command: string) => void;
   onRespond: (messageId: string, stepId: string, answer: string) => Promise<void>;
+  onOpenArtifact: (artifact: Artifact) => void;
   runtimeMode: string;
   permissionMode: ApolloPermissionMode;
   onPermissionChange: (mode: ApolloPermissionMode) => void;
   surface: 'assistant' | 'entry';
   canManagePermission: boolean;
+  embedded?: boolean;
 }) {
   const [input, setInput] = useState('');
   const [files, setFiles] = useState<File[]>([]);
@@ -127,7 +131,7 @@ export default function ChatPanel({
     <div className="relative flex h-full min-h-0 flex-col bg-white text-[#0d0d0d]">
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto px-4 pb-40 pt-6 md:px-6 md:pb-44"
+        className={`flex-1 overflow-y-auto px-4 pt-6 md:px-6 ${embedded ? 'pb-8' : 'pb-40 md:pb-44'}`}
         aria-live="polite"
         aria-relevant="additions text"
       >
@@ -139,7 +143,7 @@ export default function ChatPanel({
             <p className="mt-2 text-[11px] leading-[17px] text-[#777]">
               {surface === 'assistant' ? '我会持续了解你的工作习惯，协助处理日常事务。' : '描述你的需求，我会匹配合适的智能体。'}
             </p>
-            <div className="mt-7 flex w-full max-w-3xl flex-col items-center gap-1.5">
+            {!embedded && <div className="mt-7 flex w-full max-w-3xl flex-col items-center gap-1.5">
               {(surface === 'assistant' ? [assistantSuggestions] : suggestionRows).map((row, rowIndex) => (
                 <div key={rowIndex} className="flex flex-wrap justify-center gap-2 sm:flex-nowrap">
                   {row.map((suggestion) => (
@@ -154,7 +158,7 @@ export default function ChatPanel({
                   ))}
                 </div>
               ))}
-            </div>
+            </div>}
           </div>
         ) : (
           <div className="mx-auto w-full max-w-3xl space-y-5">
@@ -184,7 +188,7 @@ export default function ChatPanel({
                     {message.artifacts && message.artifacts.length > 0 && (
                       <div className="mt-4 space-y-3">
                         {message.artifacts.map((artifact) => (
-                          <InlineArtifact key={artifact.id} artifact={artifact} />
+                          <InlineArtifact key={artifact.id} artifact={artifact} onOpen={() => onOpenArtifact(artifact)} />
                         ))}
                       </div>
                     )}
@@ -213,8 +217,8 @@ export default function ChatPanel({
         )}
       </div>
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-white via-white to-transparent px-[10px] pb-5 pt-8 md:px-6 md:pb-10">
-        <div className="pointer-events-auto relative mx-auto max-w-3xl rounded-[19px] border border-[#e5e5e5] bg-white p-2.5 shadow-[0_2px_12px_rgba(0,0,0,0.07)] transition-colors focus-within:border-[#b8b8b8]">
+      <div className={embedded ? 'shrink-0 border-t border-black/[0.07] bg-white px-4 py-3' : 'pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-white via-white to-transparent px-[10px] pb-5 pt-8 md:px-6 md:pb-10'}>
+        <div className={embedded ? 'relative mx-auto max-w-3xl bg-white' : 'pointer-events-auto relative mx-auto max-w-3xl rounded-[19px] border border-[#e5e5e5] bg-white p-2.5 shadow-[0_2px_12px_rgba(0,0,0,0.07)] transition-colors focus-within:border-[#b8b8b8]'}>
           {files.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-1.5 px-1">
               {files.map((file, index) => (
@@ -346,26 +350,32 @@ function CopyIcon() {
   return <svg viewBox="0 0 24 24" width="13" height="13" fill="none" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2" stroke="currentColor" strokeWidth="1.7" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" stroke="currentColor" strokeWidth="1.7" /></svg>;
 }
 
-function InlineArtifact({ artifact }: { artifact: Artifact }) {
+function InlineArtifact({ artifact, onOpen }: { artifact: Artifact; onOpen: () => void }) {
   const isDocument = artifact.kind === 'pdf' || artifact.kind === 'word';
   const downloadUrl = artifactDownloadUrl(artifact);
+  const editable = artifact.kind === 'word' || artifact.kind === 'markdown' || artifact.kind === 'json';
   return (
-    <section data-artifact-id={artifact.id} className="overflow-hidden rounded-xl border border-[#e5e5e5] bg-white" aria-label={`产出物：${artifact.title}`}>
-      <div className="flex items-center gap-2 border-b border-[#ececec] bg-[#fafafa] px-3 py-2 text-[11px]">
-        <span className="text-[#666]"><FileIcon /></span>
-        <span className="min-w-0 flex-1 truncate font-medium text-[#303030]">{artifact.title}</span>
-        {Boolean(artifact.meta?.path) && <span className="text-[10px] text-emerald-600" title={String(artifact.meta?.path)}>已保存</span>}
-        <span className="uppercase text-[#8f8f8f]">{artifact.kind}</span>
-        {downloadUrl && (
-          <a href={downloadUrl} download={artifact.title} className="text-[#555] underline-offset-2 hover:underline">下载</a>
-        )}
+    <section data-artifact-id={artifact.id} className="relative overflow-hidden rounded-[26px] border border-[#e5e5e5] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.02)]" aria-label={`产出物：${artifact.title}`}>
+      <div className="pointer-events-none absolute inset-x-3 top-3 z-10 flex h-9 items-center gap-1.5 text-[11px] sm:inset-x-4">
+        {editable && <button type="button" onClick={onOpen} className="pointer-events-auto inline-flex h-9 items-center gap-2 rounded-full border border-[#e5e5e5] bg-white/95 px-3 font-medium text-[#202020] shadow-sm backdrop-blur transition-colors hover:bg-[#f7f7f7] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717]"><EditIcon />编辑</button>}
+        {Boolean(artifact.meta?.path) && <span className="sr-only">已保存</span>}
+        <div className="pointer-events-auto ml-auto flex items-center gap-1">
+          {downloadUrl && (
+            <a href={downloadUrl} download={artifact.title} className="icon-button inline-flex bg-white/80 backdrop-blur" aria-label={`下载 ${artifact.title}`} title="下载"><DownloadArtifactIcon /></a>
+          )}
+          {editable && <button type="button" onClick={onOpen} className="icon-button inline-flex bg-white/80 backdrop-blur" aria-label={`全屏打开 ${artifact.title}`} title="全屏打开"><ExpandIcon /></button>}
+        </div>
       </div>
-      <div className={`h-[360px] max-h-[45vh] overflow-auto ${isDocument ? 'bg-[#f5f5f5]' : ''}`}>
+      <div className={`h-[min(520px,42vh)] overflow-auto pt-14 ${isDocument ? 'bg-[#f5f5f5]' : 'bg-white'}`}>
         <ArtifactBody artifact={artifact} />
       </div>
     </section>
   );
 }
+
+function EditIcon() { return <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path d="m4 20 4.2-1 10-10a2.1 2.1 0 0 0-3-3l-10 10L4 20Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" /><path d="m13.8 7.4 2.8 2.8" stroke="currentColor" strokeWidth="1.8" /></svg>; }
+function DownloadArtifactIcon() { return <svg viewBox="0 0 24 24" width="17" height="17" fill="none" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 20h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>; }
+function ExpandIcon() { return <svg viewBox="0 0 24 24" width="17" height="17" fill="none" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M8 21H3v-5m13 5h5v-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>; }
 
 function artifactDownloadUrl(artifact: Artifact): string | undefined {
   if (artifact.url) return artifact.url;

@@ -6,6 +6,8 @@ interface Props {
   url?: string;
   /** 通道 A：base64 内联的 docx 字节 */
   content?: string;
+  /** 已经在浏览器内取得的文件，避免再次 fetch */
+  file?: Blob;
   fileName: string;
 }
 
@@ -19,7 +21,7 @@ function b64ToBytes(b64: string): Uint8Array {
   return bytes;
 }
 
-export default function WordView({ url, content, fileName }: Props) {
+export default function WordView({ url, content, file, fileName }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [errMsg, setErrMsg] = useState('');
@@ -35,7 +37,9 @@ export default function WordView({ url, content, fileName }: Props) {
     (async () => {
       try {
         let data: Blob;
-        if (content) {
+        if (file) {
+          data = file;
+        } else if (content) {
           // 通道 A：内联 base64
           data = new Blob([b64ToBytes(content) as BlobPart], {
             type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
@@ -71,7 +75,7 @@ export default function WordView({ url, content, fileName }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [url, content, fileName]);
+  }, [url, content, file, fileName]);
 
   return (
     <div className="relative h-full w-full overflow-auto bg-gray-100">

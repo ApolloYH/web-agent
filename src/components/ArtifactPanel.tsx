@@ -1,11 +1,15 @@
+import { useEffect, useState } from 'react';
 import type { Artifact } from '@/types';
 import PdfView from './PdfView';
 import WordView from './WordView';
+import MarkdownView from './MarkdownView';
 
 const KIND_LABEL: Record<Artifact['kind'], string> = {
   word: 'Word',
   pdf: 'PDF',
   image: '图片',
+  markdown: 'Markdown',
+  json: 'JSON',
 };
 
 function download(artifact: Artifact) {
@@ -107,9 +111,39 @@ export function ArtifactBody({ artifact }: { artifact: Artifact }) {
       );
     case 'image':
       return artifact.url ? <img src={artifact.url} alt={artifact.title} className="h-full w-full object-contain" /> : <Empty text="图片缺少 url" />;
+    case 'markdown':
+      return <TextArtifact artifact={artifact} markdown />;
+    case 'json':
+      return <TextArtifact artifact={artifact} />;
     default:
       return <Empty text="未知产出物类型" />;
   }
+}
+
+function TextArtifact({ artifact, markdown = false }: { artifact: Artifact; markdown?: boolean }) {
+  const [content, setContent] = useState(typeof artifact.content === 'string' ? artifact.content : '');
+  const [error, setError] = useState('');
+  useEffect(() => {
+    if (typeof artifact.content === 'string' || !artifact.url) return;
+    let cancelled = false;
+    void fetch(artifact.url).then((response) => {
+      if (!response.ok) throw new Error(`读取文件失败 ${response.status}`);
+      return response.text();
+    }).then((value) => !cancelled && setContent(value)).catch((caught) => !cancelled && setError(caught instanceof Error ? caught.message : String(caught)));
+    return () => { cancelled = true; };
+  }, [artifact.content, artifact.url]);
+  useEffect(() => {
+    const onSaved = (event: Event) => {
+      const detail = (event as CustomEvent<{ id: string; name: string; file: File }>).detail;
+      if (!detail || (detail.id !== artifact.id && detail.name !== artifact.title)) return;
+      void detail.file.text().then(setContent);
+    };
+    window.addEventListener('apollo:document-saved', onSaved);
+    return () => window.removeEventListener('apollo:document-saved', onSaved);
+  }, [artifact.id, artifact.title]);
+  if (error) return <Empty text={error} />;
+  if (markdown) return <div className="h-full overflow-auto bg-white p-6"><MarkdownView content={content} /></div>;
+  return <pre className="h-full overflow-auto bg-white p-6 font-mono text-[12px] leading-5 text-[#202020]">{content}</pre>;
 }
 
 function FileIcon() {

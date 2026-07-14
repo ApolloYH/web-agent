@@ -2,9 +2,11 @@
   "name": "web-agent",
   "private": true,
   "version": "0.1.0",
+  "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "office:setup": "node scripts/setup-onlyoffice-runtime.mjs",
     "build": "tsc -b && vite build && pnpm build:server",
     "build:server": "tsc -p tsconfig.server.json",
     "start": "node server-dist/server/production.js",
@@ -14,8 +16,10 @@
     "node": ">=20.19.0"
   },
   "dependencies": {
+    "@agentbridges-ai/onlyoffice-browser": "0.3.27",
     "@apolloyh/apollo-agent": "workspace:*",
     "docx-preview": "^0.4.0",
+    "fflate": "0.8.2",
     "highlight.js": "^11.10.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

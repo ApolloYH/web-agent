@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { resolve } from 'node:path';
 import { createApolloMiddleware } from './server/apollo-middleware';
+import { serveOfficeRuntime, startOfficeRuntimeServer } from './server/office-runtime';
 
 // 对话入口 + Word、PDF、图片产出物只读预览。
 export default defineConfig(({ mode }) => {
@@ -36,11 +37,17 @@ export default defineConfig(({ mode }) => {
       {
         name: 'apollo-api',
         configureServer(server) {
+          const officeServer = startOfficeRuntimeServer(Number(env.VITE_OFFICE_HOST_PORT || 5174));
+          server.middlewares.use(serveOfficeRuntime);
           server.middlewares.use(apollo.handle);
+          server.httpServer?.once('close', () => officeServer?.close());
           server.httpServer?.once('close', apollo.close);
         },
         configurePreviewServer(server) {
+          const officeServer = startOfficeRuntimeServer(Number(env.VITE_OFFICE_HOST_PORT || 5174));
+          server.middlewares.use(serveOfficeRuntime);
           server.middlewares.use(apollo.handle);
+          server.httpServer?.once('close', () => officeServer?.close());
           server.httpServer?.once('close', apollo.close);
         },
       },
@@ -54,8 +61,9 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       host: '127.0.0.1',
+      allowedHosts: ['.localhost'],
       watch: { ignored: ['**/agent/dist/**'] },
     },
-    preview: { host: '127.0.0.1' },
+    preview: { host: '127.0.0.1', allowedHosts: ['.localhost'] },
   };
 });

@@ -1,7 +1,7 @@
 // 产出物（agent 的产出）类型定义
 // 通道 A：agent 在流式消息里返回一个 JSON 字段描述产出物
 // 通道 B：产出物同时带一个后台可下载的 url
-export type ArtifactKind = 'word' | 'pdf' | 'image';
+export type ArtifactKind = 'word' | 'pdf' | 'image' | 'markdown' | 'json';
 
 export interface Artifact {
   /** 稳定 id，用于面板选中 / 去重 */

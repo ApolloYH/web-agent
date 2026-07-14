@@ -34,9 +34,17 @@ import RuntimeStatusBar from '@/components/RuntimeStatusBar';
 import { MenuIcon } from '@/components/Icons';
 import LoginScreen from '@/components/LoginScreen';
 import { getCurrentUser, logout, type AuthUser } from '@/lib/auth';
+import DocumentWorkspace, { type DocumentWorkspaceHandle } from '@/components/DocumentWorkspace';
+import { openArtifact, openLibraryFile, type LibraryFile, type OpenDocument } from '@/lib/documentFiles';
+import { chooseLocalFolder, ensureFolderPermission, listLocalFiles, restoreLocalFolder, type DirectoryHandle } from '@/lib/localFolder';
 
 let idSeq = 0;
 const nextId = (p: string) => `${p}-${Date.now()}-${idSeq++}`;
+const documentConversationId = (value: string) => {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
+  return `document-${(hash >>> 0).toString(36)}`;
+};
 
 export default function App() {
   const [auth, setAuth] = useState<{ loading: boolean; user: AuthUser | null; hasUsers: boolean; registrationEnabled: boolean }>({ loading: true, user: null, hasUsers: false, registrationEnabled: false });
@@ -57,15 +65,39 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   const [conversationGroup, setConversationGroup] = useState<'最近' | '已归档'>('最近');
   const [conversationList, setConversationList] = useState<ConversationSummary[]>([]);
   const [historyReady, setHistoryReady] = useState(false);
-  const [activeView, setActiveView] = useState<'assistant' | 'chat' | 'library'>('assistant');
+  const [activeView, setActiveView] = useState<'assistant' | 'chat' | 'library' | 'document'>('assistant');
   const [storedArtifacts, setStoredArtifacts] = useState<StoredArtifact[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
+  const [localFolder, setLocalFolder] = useState<DirectoryHandle | null>(null);
+  const [localFiles, setLocalFiles] = useState<LibraryFile[]>([]);
+  const [librarySource, setLibrarySource] = useState<'server' | 'local'>('server');
+  const [activeDocument, setActiveDocument] = useState<OpenDocument | null>(null);
+  const [documentApolloOpen, setDocumentApolloOpen] = useState(false);
+  const documentOriginViewRef = useRef<'assistant' | 'chat' | 'library'>('library');
+  const documentChannelRef = useRef<'assistant' | 'entry'>('entry');
+  const documentPreviousConversationRef = useRef<{
+    id: string;
+    title: string;
+    group: '最近' | '已归档';
+    messages: ChatMessage[];
+  } | null>(null);
+  const documentWorkspaceRef = useRef<DocumentWorkspaceHandle>(null);
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1024);
   const abortRefs = useRef(new Map<string, AbortController>());
   const messageCache = useRef(new Map<string, ChatMessage[]>());
   const activeConversationIdRef = useRef(conversationId);
+  const skipNextAutoSaveRef = useRef(false);
   const titleGeneratedRef = useRef(false);
   const streaming = runningConversationIds.has(conversationId);
+
+  useEffect(() => {
+    void restoreLocalFolder().then(async (folder) => {
+      if (!folder) return;
+      setLocalFolder(folder);
+      setLocalFiles(await listLocalFiles(folder));
+      setLibrarySource('local');
+    }).catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     activeConversationIdRef.current = conversationId;
@@ -89,7 +121,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   }, []);
 
   useEffect(() => {
-    const channel = activeView === 'assistant' ? 'assistant' : 'entry';
+    const channel = activeView === 'assistant' || (activeView === 'document' && documentChannelRef.current === 'assistant') ? 'assistant' : 'entry';
     getApolloPermission(channel)
       .then(channel === 'assistant' ? setPermissionMode : setEntryPermissionMode)
       .catch(() => channel === 'assistant' ? setPermissionMode('ask') : setEntryPermissionMode('ask'));
@@ -121,7 +153,12 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   }, []);
 
   useEffect(() => {
-    if (!historyReady || (!messages.length && !conversationTitle)) return;
+    if (!historyReady) return;
+    if (skipNextAutoSaveRef.current) {
+      skipNextAutoSaveRef.current = false;
+      return;
+    }
+    if (!messages.length) return;
     const timer = window.setTimeout(() => {
       void saveConversation({ id: conversationId, title: conversationTitle, group: conversationGroup, messages })
         .then(rememberConversation)
@@ -154,7 +191,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
 
   const handleSend = useCallback(
     async (text: string, inputFiles: File[] = []) => {
-      const assistantSurface = activeView === 'assistant';
+      const assistantSurface = activeView === 'assistant' || (activeView === 'document' && documentChannelRef.current === 'assistant');
       const targetConversationId = conversationId;
       if (abortRefs.current.has(targetConversationId)) return;
       const generateTitle = !assistantSurface && !titleGeneratedRef.current;
@@ -240,13 +277,24 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
         if (attachments.length) {
           updateRunMessages(targetConversationId, (current) => current.map((message) => message.id === userMsg.id ? { ...message, attachments } : message));
         }
-        const executionText = attachments.length
+        let executionText = attachments.length
           ? `${text}\n\n已上传文件：\n${attachments.map((file) => `- ${file.path}`).join('\n')}`
           : text;
+        if (activeDocument) {
+          executionText += `\n\n当前 Web 编辑工作台已打开文档：${activeDocument.name}（${activeDocument.kind}，${activeDocument.source}）。如果用户要求读取或修改“当前文档”，请使用 document_get_context、document_replace_text、document_append_text 或 document_set_content 工具，不要使用服务器文件工具绕过当前编辑器。`;
+        }
         const artifacts = await streamApollo(
           executionText,
           (event) => {
             if (event.type === 'trace' && event.event.type === 'assistant_delta') onDelta(event.event.text);
+            if (event.type === 'editor_request') {
+              void (async () => {
+                const result = documentWorkspaceRef.current
+                  ? await documentWorkspaceRef.current.execute(event.action, event.input)
+                  : { ok: false, error: '当前页面没有打开可编辑文档' };
+                await respondApollo(event.id, JSON.stringify(result));
+              })().catch((error) => respondApollo(event.id, JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })));
+            }
             if (assistantSurface && (event.type === 'status' || event.type === 'done')) setRuntimeStatus(event.status);
             if (event.type === 'trace' || event.type === 'interaction') {
               updateRunMessages(targetConversationId, (prev) =>
@@ -308,7 +356,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
         }
       }
     },
-    [activeView, conversationGroup, conversationId, conversationTitle, finishRun, rememberConversation, updateRunMessages],
+    [activeDocument, activeView, conversationGroup, conversationId, conversationTitle, finishRun, rememberConversation, updateRunMessages],
   );
 
   const handleStop = useCallback(() => {
@@ -337,6 +385,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
     setHistoryReady(false);
     try {
       const conversation = await getConversationIfExists(ASSISTANT_CONVERSATION_ID);
+      skipNextAutoSaveRef.current = true;
       activeConversationIdRef.current = ASSISTANT_CONVERSATION_ID;
       setConversationId(ASSISTANT_CONVERSATION_ID);
       setConversationTitle(ASSISTANT_CONVERSATION_TITLE);
@@ -359,6 +408,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
     setHistoryReady(false);
     try {
       const conversation = await getConversation(id);
+      skipNextAutoSaveRef.current = true;
       activeConversationIdRef.current = conversation.id;
       setConversationId(conversation.id);
       setConversationTitle(conversation.title);
@@ -408,7 +458,51 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
     titleGeneratedRef.current = false;
   }, [conversationId]);
 
+  const activateDocumentConversation = useCallback(async (key: string, name: string) => {
+    if (activeView !== 'document') {
+      documentPreviousConversationRef.current = {
+        id: conversationId,
+        title: conversationTitle,
+        group: conversationGroup,
+        messages,
+      };
+    }
+    const id = documentConversationId(key);
+    const stored = messageCache.current.get(id) ? null : await getConversationIfExists(id);
+    const nextMessages = messageCache.current.get(id) ?? stored?.messages ?? [];
+    skipNextAutoSaveRef.current = true;
+    messageCache.current.set(id, nextMessages);
+    activeConversationIdRef.current = id;
+    setConversationId(id);
+    setConversationTitle(stored?.title || `关于 ${name}`);
+    setConversationGroup(stored?.group ?? '最近');
+    setMessages(nextMessages);
+    titleGeneratedRef.current = true;
+    documentChannelRef.current = 'entry';
+  }, [activeView, conversationGroup, conversationId, conversationTitle, messages]);
+
+  const closeDocument = useCallback(() => {
+    const previous = documentPreviousConversationRef.current;
+    setActiveView(documentOriginViewRef.current);
+    setActiveDocument(null);
+    setDocumentApolloOpen(false);
+    if (previous) {
+      const previousMessages = messageCache.current.get(previous.id) ?? previous.messages;
+      skipNextAutoSaveRef.current = true;
+      activeConversationIdRef.current = previous.id;
+      messageCache.current.set(previous.id, previousMessages);
+      setConversationId(previous.id);
+      setConversationTitle(previous.title);
+      setConversationGroup(previous.group);
+      setMessages(previousMessages);
+      titleGeneratedRef.current = Boolean(previous.title || previousMessages.length);
+    }
+    documentPreviousConversationRef.current = null;
+  }, []);
+
   const openLibrary = useCallback(async () => {
+    if (activeView === 'assistant') documentChannelRef.current = 'assistant';
+    else if (activeView === 'chat') documentChannelRef.current = 'entry';
     setActiveView('library');
     setLibraryLoading(true);
     try {
@@ -418,10 +512,64 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
     } finally {
       setLibraryLoading(false);
     }
+  }, [activeView]);
+
+  const openDocument = useCallback(async (file: LibraryFile) => {
+    try {
+      documentOriginViewRef.current = activeView === 'document' ? documentOriginViewRef.current : activeView;
+      const opened = await openLibraryFile(file);
+      await activateDocumentConversation(file.id, file.title);
+      setLibrarySource(file.source);
+      setActiveDocument(opened);
+      setDocumentApolloOpen(false);
+      setActiveView('document');
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error));
+    }
+  }, [activateDocumentConversation, activeView]);
+
+  const openArtifactDocument = useCallback(async (artifact: import('@/types').Artifact) => {
+    try {
+      if (activeView !== 'document') {
+        documentOriginViewRef.current = activeView === 'assistant' ? 'assistant' : 'chat';
+      }
+      const opened = await openArtifact(artifact);
+      await activateDocumentConversation(artifact.id, artifact.title);
+      setActiveDocument(opened);
+      setDocumentApolloOpen(false);
+      setActiveView('document');
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : String(error));
+    }
+  }, [activateDocumentConversation, activeView]);
+
+  const connectLocalFolder = useCallback(async () => {
+    try {
+      const folder = await chooseLocalFolder();
+      setLocalFolder(folder);
+      setLocalFiles(await listLocalFiles(folder));
+      setLibrarySource('local');
+    } catch (error) {
+      if ((error as { name?: string })?.name !== 'AbortError') window.alert(error instanceof Error ? error.message : String(error));
+    }
   }, []);
 
+  const workspaceLabel = librarySource === 'local' ? localFolder?.name || '本地' : '远端';
+
+  const toggleWorkspace = useCallback(() => {
+    if (librarySource === 'local') return setLibrarySource('server');
+    if (localFolder) return setLibrarySource('local');
+    void connectLocalFolder();
+  }, [connectLocalFolder, librarySource, localFolder]);
+
+  const refreshLocalFolder = useCallback(async () => {
+    if (!localFolder) return;
+    if (!await ensureFolderPermission(localFolder)) return window.alert('需要重新授予本地文件夹读写权限');
+    setLocalFiles(await listLocalFiles(localFolder));
+  }, [localFolder]);
+
   const handleCommand = useCallback(async (command: string) => {
-    const assistantSurface = activeView === 'assistant';
+    const assistantSurface = activeView === 'assistant' || (activeView === 'document' && documentChannelRef.current === 'assistant');
     if (streaming) return;
     const targetConversationId = conversationId;
     const controller = new AbortController();
@@ -501,7 +649,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
         conversations={conversationList}
         runningConversationIds={runningConversationIds}
         activeConversationId={conversationId}
-        activeView={activeView}
+        activeView={activeView === 'document' ? documentOriginViewRef.current : activeView}
         onOpenChat={(id) => {
           void openConversation(id);
           if (window.innerWidth < 1024) setSidebarOpen(false);
@@ -523,21 +671,70 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
 
       <main className="relative flex min-w-0 flex-1">
         <section className="relative flex min-w-0 flex-1 flex-col">
-          <button
+          {activeView !== 'document' && <button
             type="button"
             aria-label="打开侧栏"
             onClick={() => setSidebarOpen(true)}
             className="icon-button absolute left-2.5 top-2.5 z-20 inline-flex lg:hidden"
           >
             <MenuIcon />
-          </button>
-          {activeView === 'assistant' && <SettingsBar
+          </button>}
+          {activeView === 'assistant' ? <SettingsBar
               apolloPermissionMode={permissionMode}
               canManageConfig={user.admin}
-            />}
+              workspaceLabel={workspaceLabel}
+              onWorkspaceToggle={toggleWorkspace}
+            /> : activeView !== 'document' && <WorkspaceBar label={workspaceLabel} onToggle={toggleWorkspace} />}
           {activeView === 'assistant' && <RuntimeStatusBar status={runtimeStatus} />}
           {activeView === 'library' ? (
-            <FileLibrary files={storedArtifacts} loading={libraryLoading} />
+            <FileLibrary
+              files={storedArtifacts.map((file) => ({ ...file, source: 'server' as const }))}
+              localFiles={localFiles}
+              loading={libraryLoading}
+              localFolderName={localFolder?.name ?? ''}
+              source={librarySource}
+              onSourceChange={setLibrarySource}
+              onOpen={(file) => { void openDocument(file); }}
+              onConnectFolder={() => { void connectLocalFolder(); }}
+              onRefreshFolder={() => { void refreshLocalFolder(); }}
+            />
+          ) : activeView === 'document' && activeDocument ? (
+            <div className="relative flex min-h-0 flex-1">
+              <DocumentWorkspace
+                ref={documentWorkspaceRef}
+                document={activeDocument}
+                workspaceLabel={workspaceLabel}
+                onWorkspaceToggle={toggleWorkspace}
+                onOpenChat={() => setDocumentApolloOpen(true)}
+                onChange={setActiveDocument}
+                onBack={closeDocument}
+              />
+              {documentApolloOpen && (
+                <aside className="relative z-30 flex w-[360px] shrink-0 flex-col border-l border-black/[0.07] bg-white max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:w-[min(360px,100%)] max-lg:shadow-[-12px_0_40px_rgba(0,0,0,0.12)]" aria-label="Apollo 对话">
+                  <header className="flex h-12 shrink-0 items-center justify-between border-b border-black/[0.06] px-4">
+                    <span className="text-[12px] font-medium text-[#303030]">关于此文件</span>
+                    <button type="button" onClick={() => setDocumentApolloOpen(false)} className="icon-button inline-flex" aria-label="关闭 Apollo"><ClosePanelIcon /></button>
+                  </header>
+                  <div className="min-h-0 flex-1">
+                    <ChatPanel
+                      messages={messages}
+                      streaming={streaming}
+                      onSend={handleSend}
+                      onStop={handleStop}
+                      onCommand={handleCommand}
+                      onRespond={handleRespond}
+                      onOpenArtifact={(artifact) => { void openArtifactDocument(artifact); }}
+                      runtimeMode={runtimeStatus?.mode ?? 'normal'}
+                      permissionMode={documentChannelRef.current === 'assistant' ? permissionMode : entryPermissionMode}
+                      onPermissionChange={documentChannelRef.current === 'assistant' ? changePermissionMode : changeEntryPermissionMode}
+                      canManagePermission={documentChannelRef.current === 'assistant' ? true : user.admin}
+                      surface={documentChannelRef.current}
+                      embedded
+                    />
+                  </div>
+                </aside>
+              )}
+            </div>
           ) : (
             <ChatPanel
               messages={messages}
@@ -546,6 +743,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
               onStop={handleStop}
               onCommand={handleCommand}
               onRespond={handleRespond}
+              onOpenArtifact={(artifact) => { void openArtifactDocument(artifact); }}
               runtimeMode={runtimeStatus?.mode ?? 'normal'}
               permissionMode={activeView === 'assistant' ? permissionMode : entryPermissionMode}
               onPermissionChange={activeView === 'assistant' ? changePermissionMode : changeEntryPermissionMode}
@@ -558,3 +756,17 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
     </div>
   );
 }
+
+function WorkspaceBar({ label, onToggle }: { label: string; onToggle: () => void }) {
+  return (
+    <header className="flex h-12 shrink-0 items-center border-b border-black/[0.04] bg-white pl-12 pr-3 lg:px-3">
+      <div className="flex min-w-0 items-center gap-2 text-[#555]" title={`Agent 工作目录：${label}`}>
+        <button type="button" onClick={onToggle} className="icon-button inline-flex size-7" aria-label={`切换工作目录，当前：${label}`} title="切换远端/本地目录"><WorkspaceFolderIcon /></button>
+        <span className="max-w-48 truncate text-[12px] font-medium text-[#303030]">{label}</span>
+      </div>
+    </header>
+  );
+}
+
+function WorkspaceFolderIcon() { return <svg viewBox="0 0 24 24" width="16" height="16" fill="none" className="shrink-0" aria-hidden="true"><path d="M3.5 6.5h6l2 2h9v9.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V6.5Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" /></svg>; }
+function ClosePanelIcon() { return <svg viewBox="0 0 24 24" width="17" height="17" fill="none" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>; }

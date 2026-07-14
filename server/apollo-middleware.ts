@@ -15,8 +15,9 @@ import {
 } from '@apolloyh/apollo-agent';
 import type { Artifact, RuntimeStatus } from '../src/types/index.js';
 import { createEntryTools } from './entry-tools.js';
+import { createDocumentTools } from './document-tools.js';
 
-const ARTIFACT_EXTENSIONS = new Set(['.docx', '.pdf', '.jpg', '.jpeg', '.png', '.webp']);
+const ARTIFACT_EXTENSIONS = new Set(['.docx', '.pdf', '.jpg', '.jpeg', '.png', '.webp', '.md', '.markdown', '.json']);
 const SKIP_DIRECTORIES = new Set(['.git', '.apollo', 'node_modules', 'dist']);
 const MAX_ARTIFACT_BYTES = 25 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
@@ -77,6 +78,21 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     return new Promise((resolve) => interactions.set(id, { resolve, fallback }));
   };
 
+  const requestEditorTool = async (runKey: string, action: string, input: Record<string, unknown>): Promise<Record<string, unknown>> => {
+    const run = runs.get(runKey);
+    if (!run) return { ok: false, error: '当前没有可用的浏览器编辑会话' };
+    const id = `editor-${interactionSequence++}`;
+    run.interactionIds.add(id);
+    run.send({ type: 'editor_request', id, action, input });
+    const answer = await new Promise<string>((resolve) => interactions.set(id, { resolve, fallback: JSON.stringify({ ok: false, error: '编辑请求已取消' }) }));
+    try {
+      const parsed = JSON.parse(answer) as unknown;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : { ok: false, error: '编辑器返回格式无效' };
+    } catch {
+      return { ok: false, error: answer || '编辑器没有返回结果' };
+    }
+  };
+
   const approvalProvider = (runKey: string): ApprovalProvider => async (request) => {
     const run = runs.get(runKey);
     if (allowUnrestricted && run?.permissionMode === 'unrestricted') return true;
@@ -117,6 +133,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
         '(no answer)',
       ),
     onEvent: (event) => runs.get(runKey)?.sink(event),
+    extraTools: createDocumentTools((action, input) => requestEditorTool(runKey, action, input)),
   });
 
   const getEngine = async (channel: 'assistant' | 'entry' = 'entry', conversationId = '') => {
@@ -142,16 +159,19 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       askUser: (question, options) => requestInteraction(runKey, { type: 'interaction', kind: 'question', title: question, options }, '(no answer)'),
       onEvent: (event) => runs.get(runKey)?.sink(event),
       memoryEnabled: false,
-      extraTools: createEntryTools({
-        workspaceRoot: activeWorkspaceRoot,
-        conversationId,
-        langcoreApiKey: entry.langcoreApiKey,
-        langhubApiKey: entry.langhubApiKey,
-        langhubBaseUrl: entry.langhubBaseUrl,
-        automationMode: () => runs.get(runKey)?.permissionMode === 'unrestricted' ? 'auto' : 'ask',
-        projects: entry.projects,
-        turnState,
-      }),
+      extraTools: [
+        ...createEntryTools({
+          workspaceRoot: activeWorkspaceRoot,
+          conversationId,
+          langcoreApiKey: entry.langcoreApiKey,
+          langhubApiKey: entry.langhubApiKey,
+          langhubBaseUrl: entry.langhubBaseUrl,
+          automationMode: () => runs.get(runKey)?.permissionMode === 'unrestricted' ? 'auto' : 'ask',
+          projects: entry.projects,
+          turnState,
+        }),
+        ...createDocumentTools((action, input) => requestEditorTool(runKey, action, input)),
+      ],
     });
     entryEngines.set(conversationId, runtime);
     return runtime;
@@ -244,12 +264,12 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       const filesystemArtifacts = await listStoredArtifacts(userArtifactRoot);
       const conversationArtifacts = listConversationArtifacts(database, user.id);
       const artifacts = [...filesystemArtifacts, ...conversationArtifacts]
-        .filter((artifact, index, items) => items.findIndex((item) => item.id === artifact.id) === index)
+        .filter((artifact, index, items) => items.findIndex((item) => (item.url ?? item.id) === (artifact.url ?? artifact.id)) === index)
         .sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
       return json(res, 200, { artifacts });
     }
-    if (req.url.startsWith('/apollo-api/artifact?') && req.method === 'GET') {
-      return sendStoredArtifact(req, res, userArtifactRoot);
+    if (req.url.startsWith('/apollo-api/artifact?') && (req.method === 'GET' || req.method === 'PUT')) {
+      return handleStoredArtifact(req, res, userArtifactRoot);
     }
     if (req.url === '/apollo-api/title') {
       if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
@@ -805,7 +825,7 @@ function listConversationArtifacts(database: DatabaseSync, userId: string) {
 }
 
 function isArtifactKind(value: unknown): value is Artifact['kind'] {
-  return value === 'word' || value === 'pdf' || value === 'image';
+  return value === 'word' || value === 'pdf' || value === 'image' || value === 'markdown' || value === 'json';
 }
 
 async function handleConversation(req: IncomingMessage, res: ServerResponse, database: DatabaseSync, userId: string): Promise<void> {
@@ -1208,7 +1228,7 @@ async function listStoredArtifacts(root: string) {
   return items.filter((item): item is NonNullable<typeof item> => item !== null).sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt));
 }
 
-async function sendStoredArtifact(req: IncomingMessage, res: ServerResponse, root: string): Promise<void> {
+async function handleStoredArtifact(req: IncomingMessage, res: ServerResponse, root: string): Promise<void> {
   try {
     const relative = new URL(req.url!, 'http://localhost').searchParams.get('path');
     if (!relative) return jsonError(res, 400, 'path 必填');
@@ -1221,12 +1241,37 @@ async function sendStoredArtifact(req: IncomingMessage, res: ServerResponse, roo
     if (!safeFile) return jsonError(res, 403, '无权访问该文件');
     const stat = await fs.stat(safeFile);
     if (!stat.isFile() || stat.size > MAX_ARTIFACT_BYTES) return jsonError(res, 404, '文件不存在或过大');
+    const current = await fs.readFile(safeFile);
+    const currentTag = fileEtag(current);
+    if (req.method === 'PUT') {
+      const expected = req.headers['if-match'];
+      if (typeof expected === 'string' && expected !== currentTag) {
+        res.writeHead(412, { 'Content-Type': 'application/json; charset=utf-8', ETag: currentTag });
+        res.end(JSON.stringify({ error: '文件已被其他位置修改' }));
+        return;
+      }
+      const bytes = await readBytes(req, MAX_ARTIFACT_BYTES);
+      if (!bytes.length) return jsonError(res, 400, '文件内容不能为空');
+      if ((ext === '.json') && !isJson(bytes)) return jsonError(res, 400, 'JSON 格式无效');
+      const temporary = path.join(path.dirname(safeFile), `.${path.basename(safeFile)}.${randomUUID()}.tmp`);
+      try {
+        await fs.writeFile(temporary, bytes);
+        await fs.rename(temporary, safeFile);
+      } finally {
+        await fs.rm(temporary, { force: true }).catch(() => undefined);
+      }
+      const tag = fileEtag(bytes);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', ETag: tag });
+      res.end(JSON.stringify({ ok: true, size: bytes.length, modifiedAt: new Date().toISOString() }));
+      return;
+    }
     res.writeHead(200, {
       'Content-Type': artifactMime(ext),
       'Content-Length': stat.size,
       'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(path.basename(file))}`,
+      ETag: currentTag,
     });
-    res.end(await fs.readFile(safeFile));
+    res.end(current);
   } catch {
     jsonError(res, 404, '文件不存在');
   }
@@ -1246,13 +1291,30 @@ async function confinedRealFile(root: string, file: string): Promise<string | nu
 function artifactKind(ext: string): Artifact['kind'] {
   if (ext === '.docx') return 'word';
   if (ext === '.pdf') return 'pdf';
+  if (ext === '.md' || ext === '.markdown') return 'markdown';
+  if (ext === '.json') return 'json';
   return 'image';
 }
 
 function artifactMime(ext: string): string {
   if (ext === '.docx') return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   if (ext === '.pdf') return 'application/pdf';
+  if (ext === '.md' || ext === '.markdown') return 'text/markdown; charset=utf-8';
+  if (ext === '.json') return 'application/json; charset=utf-8';
   if (ext === '.png') return 'image/png';
   if (ext === '.webp') return 'image/webp';
   return 'image/jpeg';
+}
+
+function fileEtag(bytes: Uint8Array): string {
+  return `"${createHash('sha256').update(bytes).digest('hex')}"`;
+}
+
+function isJson(bytes: Uint8Array): boolean {
+  try {
+    JSON.parse(Buffer.from(bytes).toString('utf8'));
+    return true;
+  } catch {
+    return false;
+  }
 }

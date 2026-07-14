@@ -21,23 +21,28 @@ body,
   margin: 0;
 }
 
-#root {
-  width: calc(100% / 1.21);
-  height: calc(100% / 1.21);
-  zoom: 1.21;
-}
-
-#root .h-dvh { height: calc(100dvh / 1.21); }
-#root .min-h-dvh { min-height: calc(100dvh / 1.21); }
+#root { width: 100%; }
 
 body {
   font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
     'Microsoft YaHei', sans-serif;
   color: var(--app-text);
-  background: #fff;
+  background: #f7f7f7;
+  font-size: 110%;
   -webkit-font-smoothing: antialiased;
 }
+
+/* Increase the established readable type scale by 10% without scaling the layout. */
+#root .text-\[9px\] { font-size: 11px; }
+#root .text-\[10px\] { font-size: 12.1px; }
+#root .text-\[11px\] { font-size: 13.2px; }
+#root .text-\[12px\] { font-size: 14.3px; }
+#root .text-\[13px\] { font-size: 15.4px; }
+#root .text-\[14px\] { font-size: 16.5px; }
+#root .text-\[16px\] { font-size: 18.7px; }
+#root .text-\[22px\] { font-size: 26.4px; }
+#root .text-\[24px\] { font-size: 28.6px; }
 
 button,
 summary,
@@ -72,7 +77,7 @@ summary:focus-visible {
   border-radius: 8px;
   padding: 5px 8px;
   text-align: left;
-  font-size: 12px;
+  font-size: 13.2px;
   color: #303030;
   transition: background-color 160ms ease;
 }
@@ -92,9 +97,9 @@ summary:focus-visible {
 }
 
 /* markdown 正文排版 */
-.prose-chat h1 { font-size: 18px; line-height: 24px; font-weight: 700; margin: 0.55em 0 0.25em; }
-.prose-chat h2 { font-size: 16px; line-height: 22px; font-weight: 700; margin: 0.55em 0 0.25em; }
-.prose-chat h3 { font-size: 14px; line-height: 20px; font-weight: 600; margin: 0.45em 0 0.25em; }
+.prose-chat h1 { font-size: 19.8px; line-height: 26.4px; font-weight: 700; margin: 0.55em 0 0.25em; }
+.prose-chat h2 { font-size: 17.6px; line-height: 24.2px; font-weight: 700; margin: 0.55em 0 0.25em; }
+.prose-chat h3 { font-size: 15.4px; line-height: 22px; font-weight: 600; margin: 0.45em 0 0.25em; }
 .prose-chat p { margin: 0.35em 0; line-height: 1.55; }
 .prose-chat ul { list-style: disc; padding-left: 1.4em; margin: 0.4em 0; }
 .prose-chat ol { list-style: decimal; padding-left: 1.4em; margin: 0.4em 0; }

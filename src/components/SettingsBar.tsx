@@ -12,21 +12,19 @@ import { useDismissDetails } from '@/lib/useDismissDetails';
 export default function SettingsBar({
   apolloPermissionMode,
   canManageConfig = true,
+  workspaceLabel,
+  onWorkspaceToggle,
 }: {
   apolloPermissionMode: ApolloPermissionMode;
   canManageConfig?: boolean;
+  workspaceLabel: string;
+  onWorkspaceToggle: () => void;
 }) {
   const detailsRef = useDismissDetails();
 
   return (
     <header className="relative flex h-12 shrink-0 items-center justify-between bg-white pl-12 pr-3 lg:px-3">
-      <div className="flex min-w-0 items-center gap-2.5">
-        <span className="text-[12px] font-semibold tracking-tight text-gray-900">Apollo</span>
-        <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-gray-500">
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" aria-hidden="true" />
-          <span className="truncate">个人超级助手</span>
-        </span>
-      </div>
+      <WorkspaceLocation label={workspaceLabel} onToggle={onWorkspaceToggle} />
 
       <details ref={detailsRef} className="group relative z-30">
         <summary
@@ -44,6 +42,17 @@ export default function SettingsBar({
           </div>
       </details>
     </header>
+  );
+}
+
+function WorkspaceLocation({ label, onToggle }: { label: string; onToggle: () => void }) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 text-[#555]" title={`Agent 工作目录：${label}`}>
+      <button type="button" onClick={onToggle} className="icon-button inline-flex size-7" aria-label={`切换工作目录，当前：${label}`} title="切换远端/本地目录">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path d="M3.5 6.5h6l2 2h9v9.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V6.5Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" /></svg>
+      </button>
+      <span className="max-w-40 truncate text-[12px] font-medium text-[#303030]">{label}</span>
+    </div>
   );
 }
 

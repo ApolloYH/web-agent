@@ -3,10 +3,12 @@ import fs from 'node:fs/promises';
 import { createServer } from 'node:http';
 import path from 'node:path';
 import { createApolloMiddleware } from './apollo-middleware.js';
+import { startOfficeRuntimeServer } from './office-runtime.js';
 
 const root = process.cwd();
 const dist = path.join(root, 'dist');
 const port = Number(process.env.PORT || 9130);
+const officeServer = startOfficeRuntimeServer(Number(process.env.OFFICE_HOST_PORT || 5174));
 const apollo = createApolloMiddleware({
   workspaceRoot: root,
   envPath: path.join(root, '.env'),
@@ -36,7 +38,10 @@ const server = createServer((req, res) => {
 server.listen(port, '127.0.0.1', () => console.info(`[Apollo] 生产服务已启动：http://127.0.0.1:${port}`));
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(signal, () => server.close(() => { void apollo.close().finally(() => process.exit(0)); }));
+  process.on(signal, () => server.close(() => {
+    officeServer?.close();
+    void apollo.close().finally(() => process.exit(0));
+  }));
 }
 
 async function serveStatic(rawUrl: string, method: string, res: import('node:http').ServerResponse): Promise<void> {

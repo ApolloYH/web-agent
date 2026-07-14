@@ -16,7 +16,7 @@ export default function LoginScreen({ hasUsers, registrationEnabled, onAuthentic
     finally { setLoading(false); }
   };
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-[#f7f7f7] px-5">
+    <main className="flex min-h-dvh w-full items-center justify-center bg-[#f7f7f7] px-5">
       <form onSubmit={submit} className="w-full max-w-[340px] rounded-2xl border border-black/[0.07] bg-white p-7 shadow-[0_18px_50px_rgba(0,0,0,0.08)]">
         <div className="mb-7 flex items-center gap-2.5"><img src="./apollo-avatar.jpg" alt="Apollo" className="size-8 rounded-full object-cover" /><div><h1 className="text-[16px] font-semibold text-[#202123]">Apollo</h1><p className="text-[10px] text-[#888]">个人超级助手</p></div></div>
         <h2 className="text-[14px] font-medium text-[#202123]">{mode === 'login' ? '登录账号' : '创建本地账号'}</h2>
