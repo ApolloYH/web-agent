@@ -45,6 +45,15 @@ const documentConversationId = (value: string) => {
   for (let index = 0; index < value.length; index += 1) hash = Math.imul(hash ^ value.charCodeAt(index), 16777619);
   return `document-${(hash >>> 0).toString(36)}`;
 };
+const LAST_WORKSPACE_KEY = 'apollo:last-workspace';
+const initialWorkspace = (): { view: 'assistant' | 'chat' | 'library'; conversationId?: string } => {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(LAST_WORKSPACE_KEY) || '{}');
+    if (saved.view === 'chat' && typeof saved.conversationId === 'string') return saved;
+    if (saved.view === 'library') return { view: 'library' };
+  } catch { /* Ignore stale browser state. */ }
+  return { view: 'assistant' };
+};
 
 export default function App() {
   const [auth, setAuth] = useState<{ loading: boolean; user: AuthUser | null; hasUsers: boolean; registrationEnabled: boolean }>({ loading: true, user: null, hasUsers: false, registrationEnabled: false });
@@ -71,6 +80,7 @@ export default function App() {
 }
 
 function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
+  const initialWorkspaceRef = useRef(initialWorkspace());
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [runningConversationIds, setRunningConversationIds] = useState<Set<string>>(() => new Set());
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
@@ -81,7 +91,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   const [conversationGroup, setConversationGroup] = useState<'最近' | '已归档'>('最近');
   const [conversationList, setConversationList] = useState<ConversationSummary[]>([]);
   const [historyReady, setHistoryReady] = useState(false);
-  const [activeView, setActiveView] = useState<'assistant' | 'chat' | 'library' | 'document'>('assistant');
+  const [activeView, setActiveView] = useState<'assistant' | 'chat' | 'library' | 'document'>(initialWorkspaceRef.current.view);
   const [storedArtifacts, setStoredArtifacts] = useState<StoredArtifact[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [localFolder, setLocalFolder] = useState<DirectoryHandle | null>(null);
@@ -120,6 +130,14 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
     messageCache.current.set(conversationId, messages);
   }, [conversationId, messages]);
 
+  useEffect(() => {
+    if (!historyReady || activeView === 'document') return;
+    sessionStorage.setItem(LAST_WORKSPACE_KEY, JSON.stringify({
+      view: activeView,
+      ...(activeView === 'chat' ? { conversationId } : {}),
+    }));
+  }, [activeView, conversationId, historyReady]);
+
   const updateRunMessages = useCallback((id: string, update: (current: ChatMessage[]) => ChatMessage[]) => {
     const next = update(messageCache.current.get(id) ?? []);
     messageCache.current.set(id, next);
@@ -155,12 +173,17 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
       .then(async (items) => {
         if (cancelled) return;
         setConversationList(items.filter((item) => item.id !== ASSISTANT_CONVERSATION_ID));
-        const conversation = await getConversationIfExists(ASSISTANT_CONVERSATION_ID);
+        const saved = initialWorkspaceRef.current;
+        const savedConversation = saved.view === 'chat' && saved.conversationId
+          ? await getConversationIfExists(saved.conversationId)
+          : null;
+        const conversation = savedConversation ?? await getConversationIfExists(ASSISTANT_CONVERSATION_ID);
         if (cancelled) return;
-        setConversationId(ASSISTANT_CONVERSATION_ID);
-        setConversationTitle(ASSISTANT_CONVERSATION_TITLE);
-        setConversationGroup('最近');
+        setConversationId(conversation?.id ?? ASSISTANT_CONVERSATION_ID);
+        setConversationTitle(conversation?.title ?? ASSISTANT_CONVERSATION_TITLE);
+        setConversationGroup(conversation?.group ?? '最近');
         setMessages(conversation?.messages ?? []);
+        if (saved.view === 'chat' && !savedConversation) setActiveView('assistant');
         titleGeneratedRef.current = true;
       })
       .catch((error) => window.alert(error instanceof Error ? error.message : String(error)))
@@ -518,18 +541,21 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
     documentPreviousConversationRef.current = null;
   }, []);
 
-  const openLibrary = useCallback(async () => {
+  const openLibrary = useCallback(() => {
     if (activeView === 'assistant') documentChannelRef.current = 'assistant';
     else if (activeView === 'chat') documentChannelRef.current = 'entry';
     setActiveView('library');
+  }, [activeView]);
+
+  useEffect(() => {
+    if (activeView !== 'library') return;
+    let cancelled = false;
     setLibraryLoading(true);
-    try {
-      setStoredArtifacts(await getStoredArtifacts());
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : String(error));
-    } finally {
-      setLibraryLoading(false);
-    }
+    void getStoredArtifacts()
+      .then((files) => { if (!cancelled) setStoredArtifacts(files); })
+      .catch((error) => { if (!cancelled) window.alert(error instanceof Error ? error.message : String(error)); })
+      .finally(() => { if (!cancelled) setLibraryLoading(false); });
+    return () => { cancelled = true; };
   }, [activeView]);
 
   const openDocument = useCallback(async (file: LibraryFile) => {
