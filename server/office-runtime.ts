@@ -25,14 +25,22 @@ const WARM_ASSET_CACHE_FIRST = `  if (APOLLO_WARM_ASSETS.has(url.pathname)) {
     event.respondWith(caches.open(CACHE_NAME).then(async (cache) => {
       const cached = await cache.match(event.request);
       if (cached) return cached;
-      const response = await fetch(event.request);
-      if (response.ok) await cache.put(event.request, response.clone());
-      return response;
+      try {
+        const response = await fetch(event.request);
+        if (response.ok) await cache.put(event.request, response.clone());
+        return response;
+      } catch {
+        return new Response('', { status: 503 });
+      }
     }));
     return;
   }
 
+  // Browser HTTP caching handles the rest. The worker only owns warm assets and print PDFs.
+  return;
+
 `;
+const EMPTY_SVG = '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
 
 export function serveOfficeRuntime(
   req: import('node:http').IncomingMessage,
@@ -50,6 +58,15 @@ export function serveOfficeRuntime(
       'Cache-Control': 'no-store',
     });
     res.end(req.method === 'HEAD' ? undefined : OFFICE_WARMUP_HTML);
+    return;
+  }
+  if (pathname === '/web-apps/apps/common/main/resources/img/doc-formats/formats@2.5x.svg') {
+    res.writeHead(200, {
+      'Content-Type': 'image/svg+xml',
+      'Content-Length': Buffer.byteLength(EMPTY_SVG),
+      'Cache-Control': 'public, max-age=31536000, immutable',
+    });
+    res.end(req.method === 'HEAD' ? undefined : EMPTY_SVG);
     return;
   }
   const root = resolve(process.cwd(), '.apollo', 'onlyoffice-runtime');
@@ -70,6 +87,18 @@ export function serveOfficeRuntime(
       'Content-Length': Buffer.byteLength(body),
       'Cache-Control': 'no-cache',
       'Service-Worker-Allowed': '/',
+    });
+    res.end(req.method === 'HEAD' ? undefined : body);
+    return;
+  }
+  if (/\/assets\/(?:converter|officeHost)-[^/]+\.js$/.test(pathname)) {
+    const body = readFileSync(file, 'utf8')
+      .replace('catch(e){console.warn(`Directory ${t} may already exist:`,e)}', 'catch{}')
+      .replace('spellcheck:this.options.spellcheck??!1,autosave:', 'autosave:');
+    res.writeHead(200, {
+      'Content-Type': 'text/javascript; charset=utf-8',
+      'Content-Length': Buffer.byteLength(body),
+      'Cache-Control': 'no-cache',
     });
     res.end(req.method === 'HEAD' ? undefined : body);
     return;
