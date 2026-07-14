@@ -5,6 +5,13 @@ type RequestEditor = (action: string, input: JsonObject) => Promise<JsonObject>;
 export function createDocumentTools(requestEditor: RequestEditor): ToolDefinition[] {
   return [
     {
+      name: 'local_folder_list_files',
+      description: '列出用户当前在 Web 顶部选中的本地文件夹内容。用户询问“我的文件夹”“本地目录”或当前本地工作区时使用；不要用服务器文件工具代替。',
+      risk: 'low',
+      input_schema: { type: 'object', properties: {} },
+      execute: async () => result(await requestEditor('list_local_files', {})),
+    },
+    {
       name: 'document_get_context',
       description: '读取用户当前在 Web 编辑工作台中打开的 Word、Markdown 或 JSON 文档内容。编辑当前文档前先调用。',
       risk: 'low',

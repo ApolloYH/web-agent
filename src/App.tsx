@@ -321,6 +321,8 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
           : text;
         if (activeDocument) {
           executionText += `\n\n当前 Web 编辑工作台已打开文档：${activeDocument.name}（${activeDocument.kind}，${activeDocument.source}）。如果用户要求读取或修改“当前文档”，请使用 document_get_context、document_replace_text、document_append_text 或 document_set_content 工具，不要使用服务器文件工具绕过当前编辑器。`;
+        } else if (librarySource === 'local' && localFolder) {
+          executionText += `\n\n当前 Web 工作区是用户浏览器中的本地文件夹“${localFolder.name}”。如果用户询问该文件夹内容，请使用 local_folder_list_files，不要使用服务器文件工具。`;
         }
         const artifacts = await streamApollo(
           executionText,
@@ -328,9 +330,20 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
             if (event.type === 'trace' && event.event.type === 'assistant_delta') onDelta(event.event.text);
             if (event.type === 'editor_request') {
               void (async () => {
-                const result = documentWorkspaceRef.current
-                  ? await documentWorkspaceRef.current.execute(event.action, event.input)
-                  : { ok: false, error: '当前页面没有打开可编辑文档' };
+                let result: Record<string, unknown>;
+                if (event.action === 'list_local_files') {
+                  if (librarySource !== 'local' || !localFolder) result = { ok: false, error: '当前 Web 工作区不是本地文件夹' };
+                  else if (!await ensureFolderPermission(localFolder)) result = { ok: false, error: '本地文件夹授权已失效，请用户重新连接' };
+                  else {
+                    const files = await listLocalFiles(localFolder);
+                    setLocalFiles(files);
+                    result = { ok: true, folder: localFolder.name, files: files.map(({ relativePath, kind, size, modifiedAt }) => ({ path: relativePath, kind, size, modifiedAt })) };
+                  }
+                } else {
+                  result = documentWorkspaceRef.current
+                    ? await documentWorkspaceRef.current.execute(event.action, event.input)
+                    : { ok: false, error: '当前页面没有打开可编辑文档' };
+                }
                 await respondApollo(event.id, JSON.stringify(result));
               })().catch((error) => respondApollo(event.id, JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })));
             }
@@ -395,7 +408,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
         }
       }
     },
-    [activeDocument, activeView, conversationGroup, conversationId, conversationTitle, finishRun, rememberConversation, updateRunMessages],
+    [activeDocument, activeView, conversationGroup, conversationId, conversationTitle, finishRun, librarySource, localFolder, rememberConversation, updateRunMessages],
   );
 
   const handleStop = useCallback(() => {
