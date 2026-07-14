@@ -468,7 +468,9 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
       };
     }
     const id = documentConversationId(key);
-    const stored = messageCache.current.get(id) ? null : await getConversationIfExists(id);
+    const stored = messageCache.current.get(id) || !conversationList.some((item) => item.id === id)
+      ? null
+      : await getConversationIfExists(id);
     const nextMessages = messageCache.current.get(id) ?? stored?.messages ?? [];
     skipNextAutoSaveRef.current = true;
     messageCache.current.set(id, nextMessages);
@@ -479,7 +481,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
     setMessages(nextMessages);
     titleGeneratedRef.current = true;
     documentChannelRef.current = 'entry';
-  }, [activeView, conversationGroup, conversationId, conversationTitle, messages]);
+  }, [activeView, conversationGroup, conversationId, conversationList, conversationTitle, messages]);
 
   const closeDocument = useCallback(() => {
     const previous = documentPreviousConversationRef.current;

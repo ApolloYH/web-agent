@@ -367,7 +367,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       else if (body.channel !== undefined && body.channel !== 'entry') throw new Error('channel 无效');
       if (typeof message !== 'string' || !message.trim()) throw new Error('message 不能为空');
       if (channel === 'entry') {
-        if (typeof body.conversationId !== 'string' || !/^chat-[A-Za-z0-9-]{1,80}$/.test(body.conversationId)) throw new Error('conversationId 无效');
+        if (typeof body.conversationId !== 'string' || !/^(?:chat|document)-[A-Za-z0-9-]{1,80}$/.test(body.conversationId)) throw new Error('conversationId 无效');
         conversationId = body.conversationId;
       }
     } catch (error) {
