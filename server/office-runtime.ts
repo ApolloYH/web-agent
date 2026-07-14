@@ -41,7 +41,7 @@ const WARM_ASSET_CACHE_FIRST = `  if (APOLLO_WARM_ASSETS.has(url.pathname)) {
 
 `;
 const EMPTY_SVG = '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
-const OFFICE_RUNTIME_PATCH = '20260714-save';
+const OFFICE_RUNTIME_PATCH = '20260714-cdn-cache';
 const OFFICE_IMAGE_BRIDGE = `<script>(()=>{const app=window.APP=window.APP||{};app.AddImage=(done)=>{const input=document.createElement('input');input.type='file';input.accept='image/*';input.onchange=()=>{const file=input.files?.[0];if(!file)return;const reader=new FileReader();reader.onload=()=>{if(typeof reader.result==='string')done({url:reader.result})};reader.onerror=()=>console.error('OnlyOffice image could not be read');reader.readAsDataURL(file)};input.click()}})()</script>`;
 
 export function serveOfficeRuntime(
@@ -109,6 +109,7 @@ export function serveOfficeRuntime(
     const body = readFileSync(file, 'utf8')
       .replace('catch(e){console.warn(`Directory ${t} may already exist:`,e)}', 'catch{}')
       .replace('spellcheck:this.options.spellcheck??!1,autosave:', 'autosave:')
+      .replaceAll('cache:`no-cache`', 'cache:`default`')
       .replace('web-apps/apps/api/documents/api.js', `web-apps/apps/api/documents/api.js?apollo=${OFFICE_RUNTIME_PATCH}`);
     res.writeHead(200, {
       'Content-Type': 'text/javascript; charset=utf-8',
@@ -119,23 +120,19 @@ export function serveOfficeRuntime(
     return;
   }
   const compressedFile = `${file}.br`;
-  const acceptsBrotli = /(?:^|,)\s*br\s*(?:;|,|$)/i.test(req.headers['accept-encoding'] || '');
   let servedFile = file;
-  if (acceptsBrotli) {
-    try {
-      const compressedStat = statSync(compressedFile);
-      if (compressedStat.isFile() && compressedStat.mtimeMs >= stat.mtimeMs) {
-        servedFile = compressedFile;
-        stat = compressedStat;
-      }
-    } catch { /* The uncompressed runtime file remains the fallback. */ }
-  }
+  try {
+    const compressedStat = statSync(compressedFile);
+    if (compressedStat.isFile() && compressedStat.mtimeMs >= stat.mtimeMs) {
+      servedFile = compressedFile;
+      stat = compressedStat;
+    }
+  } catch { /* The uncompressed runtime file remains the fallback. */ }
   const cacheable = !file.endsWith('.html') && !file.endsWith('.json') && pathname !== '/web-apps/apps/api/documents/api.js';
   res.writeHead(200, {
     'Content-Type': officeMime(file),
     'Content-Length': stat.size,
-    'Cache-Control': cacheable ? 'public, max-age=3600' : 'no-cache',
-    'Vary': 'Accept-Encoding',
+    'Cache-Control': cacheable ? 'public, max-age=2592000, immutable' : 'no-cache',
     ...(servedFile === compressedFile ? { 'Content-Encoding': 'br' } : {}),
   });
   if (req.method === 'HEAD') res.end();

@@ -385,7 +385,7 @@ function WordEditor({ document, editorRef, onSave, onStatus, onError }: {
 export function officeHostUrl(): string {
   const configured = import.meta.env.VITE_OFFICE_HOST_URL as string | undefined;
   if (configured) return configured;
-  if (window.location.hostname === 'apollo.yh521.top') return 'https://office.yh521.top/office-host.html';
+  if (window.location.hostname === 'apollo.yh521.top') return 'https://office-cdn.yh521.top/office-host.html';
   return `http://127.0.0.1:${import.meta.env.VITE_OFFICE_HOST_PORT || '5174'}/office-host.html`;
 }
 
