@@ -21,7 +21,7 @@ export function serveOfficeRuntime(
   const compressedFile = `${file}.br`;
   const acceptsBrotli = /(?:^|,)\s*br\s*(?:;|,|$)/i.test(req.headers['accept-encoding'] || '');
   let servedFile = file;
-  if (acceptsBrotli) {
+  if (acceptsBrotli && file.endsWith('/wasm/x2t/x2t.wasm')) {
     try {
       const compressedStat = statSync(compressedFile);
       if (compressedStat.isFile()) {
