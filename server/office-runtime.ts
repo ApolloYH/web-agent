@@ -41,6 +41,7 @@ const WARM_ASSET_CACHE_FIRST = `  if (APOLLO_WARM_ASSETS.has(url.pathname)) {
 
 `;
 const EMPTY_SVG = '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
+const OFFICE_IMAGE_BRIDGE = `<script>(()=>{const app=window.APP=window.APP||{};app.AddImage=(done)=>{const input=document.createElement('input');input.type='file';input.accept='image/*';input.onchange=()=>{const file=input.files?.[0];if(!file)return;const reader=new FileReader();reader.onload=()=>{if(typeof reader.result==='string')done({url:reader.result})};reader.onerror=()=>console.error('OnlyOffice image could not be read');reader.readAsDataURL(file)};input.click()}})()</script>`;
 
 export function serveOfficeRuntime(
   req: import('node:http').IncomingMessage,
@@ -76,8 +77,8 @@ export function serveOfficeRuntime(
   let stat;
   try { stat = statSync(file); } catch { return next(); }
   if (!stat.isFile()) return next();
-  if (pathname === '/sw.js') {
-    const source = readFileSync(file, 'utf8');
+  if (pathname === '/sw.js' || pathname === '/document_editor_service_worker.js') {
+    const source = readFileSync(resolve(root, './sw.js'), 'utf8');
     const body = source
       .replace(SERVICE_WORKER_GLOBAL_MARKER, `${WARM_ASSET_SET}${SERVICE_WORKER_GLOBAL_MARKER}`)
       .replace(SERVICE_WORKER_EVICTION_MARKER, WARM_ASSET_SAFE_EVICTION)
@@ -87,6 +88,16 @@ export function serveOfficeRuntime(
       'Content-Length': Buffer.byteLength(body),
       'Cache-Control': 'no-cache',
       'Service-Worker-Allowed': '/',
+    });
+    res.end(req.method === 'HEAD' ? undefined : body);
+    return;
+  }
+  if (pathname === '/office-host.html') {
+    const body = readFileSync(file, 'utf8').replace('<script type="module"', `${OFFICE_IMAGE_BRIDGE}\n    <script type="module"`);
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Length': Buffer.byteLength(body),
+      'Cache-Control': 'no-cache',
     });
     res.end(req.method === 'HEAD' ? undefined : body);
     return;
