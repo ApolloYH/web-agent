@@ -29,20 +29,20 @@ body {
     'Microsoft YaHei', sans-serif;
   color: var(--app-text);
   background: #f7f7f7;
-  font-size: 110%;
+  font-size: 121%;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Increase the established readable type scale by 10% without scaling the layout. */
-#root .text-\[9px\] { font-size: 11px; }
-#root .text-\[10px\] { font-size: 12.1px; }
-#root .text-\[11px\] { font-size: 13.2px; }
-#root .text-\[12px\] { font-size: 14.3px; }
-#root .text-\[13px\] { font-size: 15.4px; }
-#root .text-\[14px\] { font-size: 16.5px; }
-#root .text-\[16px\] { font-size: 18.7px; }
-#root .text-\[22px\] { font-size: 26.4px; }
-#root .text-\[24px\] { font-size: 28.6px; }
+/* Increase the established readable type scale by another 10% without scaling the layout. */
+#root .text-\[9px\] { font-size: 12.1px; }
+#root .text-\[10px\] { font-size: 13.3px; }
+#root .text-\[11px\] { font-size: 14.5px; }
+#root .text-\[12px\] { font-size: 15.7px; }
+#root .text-\[13px\] { font-size: 16.9px; }
+#root .text-\[14px\] { font-size: 18.2px; }
+#root .text-\[16px\] { font-size: 20.6px; }
+#root .text-\[22px\] { font-size: 29px; }
+#root .text-\[24px\] { font-size: 31.5px; }
 
 button,
 summary,
@@ -67,6 +67,7 @@ summary:focus-visible {
 }
 
 .icon-button:hover { background: #ececec; color: #171717; }
+.icon-button svg { height: 22px; width: 22px; }
 
 .sidebar-item {
   display: flex;
@@ -77,12 +78,12 @@ summary:focus-visible {
   border-radius: 8px;
   padding: 5px 8px;
   text-align: left;
-  font-size: 13.2px;
+  font-size: 14.5px;
   color: #303030;
   transition: background-color 160ms ease;
 }
 
-.sidebar-item svg { height: 16px; width: 16px; flex: none; }
+.sidebar-item svg { height: 18px; width: 18px; flex: none; }
 .sidebar-item:hover { background: #ececec; }
 
 * { scrollbar-width: thin; scrollbar-color: #d4d4d4 transparent; }
@@ -97,9 +98,9 @@ summary:focus-visible {
 }
 
 /* markdown 正文排版 */
-.prose-chat h1 { font-size: 19.8px; line-height: 26.4px; font-weight: 700; margin: 0.55em 0 0.25em; }
-.prose-chat h2 { font-size: 17.6px; line-height: 24.2px; font-weight: 700; margin: 0.55em 0 0.25em; }
-.prose-chat h3 { font-size: 15.4px; line-height: 22px; font-weight: 600; margin: 0.45em 0 0.25em; }
+.prose-chat h1 { font-size: 21.8px; line-height: 29px; font-weight: 700; margin: 0.55em 0 0.25em; }
+.prose-chat h2 { font-size: 19.4px; line-height: 26.6px; font-weight: 700; margin: 0.55em 0 0.25em; }
+.prose-chat h3 { font-size: 16.9px; line-height: 24.2px; font-weight: 600; margin: 0.45em 0 0.25em; }
 .prose-chat p { margin: 0.35em 0; line-height: 1.55; }
 .prose-chat ul { list-style: disc; padding-left: 1.4em; margin: 0.4em 0; }
 .prose-chat ol { list-style: decimal; padding-left: 1.4em; margin: 0.4em 0; }
