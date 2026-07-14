@@ -572,8 +572,10 @@ async function ensureUserWorkspace(userRoot: string, sharedEntrySkillsPath: stri
   const entrySkillsLink = path.join(userRoot, 'entry-skills');
   const currentTarget = await fs.readlink(entrySkillsLink).catch(() => '');
   if (path.resolve(path.dirname(entrySkillsLink), currentTarget) !== path.resolve(sharedEntrySkillsPath)) {
-    if (currentTarget) await fs.unlink(entrySkillsLink);
-    await fs.symlink(sharedEntrySkillsPath, entrySkillsLink, 'dir').catch(() => undefined);
+    if (currentTarget) await fs.rm(entrySkillsLink, { force: true });
+    await fs.symlink(sharedEntrySkillsPath, entrySkillsLink, 'dir').catch((error: NodeJS.ErrnoException) => {
+      if (error.code !== 'EEXIST') throw error;
+    });
   }
   const assistantConfigPath = path.join(userRoot, '.apollo', 'assistant-config.json');
   try { await fs.access(assistantConfigPath); } catch { await fs.copyFile(assistantConfigTemplatePath, assistantConfigPath); }
