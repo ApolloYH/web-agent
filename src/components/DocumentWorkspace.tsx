@@ -298,9 +298,6 @@ function WordEditor({ document, editorRef, onSave, onStatus, onError }: {
     onStatus('ready');
     const hostUrl = officeHostUrl();
     void (async () => {
-      const fonts = await fetch('/onlyoffice-browser-font-assets.json', { cache: 'no-cache' });
-      const fontManifest = await fonts.json().catch(() => null) as { version?: unknown } | null;
-      if (!fonts.ok || fontManifest?.version !== 1) throw new Error('本地 Word 编辑字体资源尚未准备');
       if (disposed) return null;
       return createOfficeEditor(container, {
         hostUrl,
