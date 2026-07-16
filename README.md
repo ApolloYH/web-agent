@@ -28,6 +28,8 @@ pnpm build
 pnpm start
 ```
 
+生产 systemd 基线见 `ops/web-agent.service`，包含自动重启、停机期限、内存/任务/文件描述符上限和系统级沙箱。
+
 ## 配置与隔离
 
 - `config/web-entry-apollo.json`：统一入口公共业务配置模板，默认权限为 `ask`。
