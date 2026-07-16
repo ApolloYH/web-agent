@@ -28,12 +28,20 @@ const DocumentWorkspace = forwardRef<DocumentWorkspaceHandle, Props>(function Do
   const editorRef = useRef<OfficeEditorInstance | null>(null);
   const textRef = useRef('');
   const saveTimerRef = useRef<number | null>(null);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const statusRef = useRef<SaveStatus>('ready');
+  const closingRef = useRef(false);
   const [text, setText] = useState('');
   const [textReady, setTextReady] = useState(false);
   const [status, setStatus] = useState<SaveStatus>('ready');
   const [error, setError] = useState('');
   const [editorRevision, setEditorRevision] = useState(0);
   const [editingText, setEditingText] = useState(false);
+
+  const updateStatus = useCallback((next: SaveStatus) => {
+    statusRef.current = next;
+    setStatus(next);
+  }, []);
 
   useEffect(() => { documentRef.current = document; }, [document]);
 
@@ -46,41 +54,52 @@ const DocumentWorkspace = forwardRef<DocumentWorkspaceHandle, Props>(function Do
       textRef.current = value;
       setText(value);
       setTextReady(true);
-      setStatus('ready');
+      updateStatus('ready');
       setError('');
     });
     return () => { cancelled = true; };
-  }, [document.id, document.kind]);
+  }, [document.id, document.kind, updateStatus]);
 
   const persist = useCallback(async (file: File) => {
-    setStatus('saving');
+    updateStatus('saving');
     setError('');
     try {
       const saved = await saveDocument(documentRef.current, file);
       documentRef.current = saved;
       onChange(saved);
       window.dispatchEvent(new CustomEvent('apollo:document-saved', { detail: { id: saved.id, name: saved.name, file: saved.file } }));
-      setStatus('saved');
+      updateStatus('saved');
       return saved;
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : String(caught);
       setError(message);
-      setStatus('error');
+      updateStatus('error');
       throw caught;
     }
-  }, [onChange]);
+  }, [onChange, updateStatus]);
 
-  const saveText = useCallback(async (content = textRef.current) => {
-    if (documentRef.current.kind === 'json') JSON.parse(content);
-    const type = documentRef.current.kind === 'json' ? 'application/json' : 'text/markdown';
-    const file = new File([content], documentRef.current.name, { type, lastModified: Date.now() });
-    await persist(file);
-  }, [persist]);
+  const saveText = useCallback((content = textRef.current) => {
+    const save = saveQueueRef.current.then(async () => {
+      try {
+        if (documentRef.current.kind === 'json') JSON.parse(content);
+        const type = documentRef.current.kind === 'json' ? 'application/json' : 'text/markdown';
+        const file = new File([content], documentRef.current.name, { type, lastModified: Date.now() });
+        await persist(file);
+        if (content !== textRef.current) updateStatus('dirty');
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : String(caught));
+        updateStatus('error');
+        throw caught;
+      }
+    });
+    saveQueueRef.current = save.catch(() => undefined);
+    return save;
+  }, [persist, updateStatus]);
 
   const changeText = (value: string) => {
     textRef.current = value;
     setText(value);
-    setStatus('dirty');
+    updateStatus('dirty');
     setError('');
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
     if (documentRef.current.source === 'temporary') return;
@@ -93,37 +112,111 @@ const DocumentWorkspace = forwardRef<DocumentWorkspaceHandle, Props>(function Do
     if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
   }, []);
 
+  useEffect(() => {
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (statusRef.current !== 'dirty' && statusRef.current !== 'saving') return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warnBeforeUnload);
+    return () => window.removeEventListener('beforeunload', warnBeforeUnload);
+  }, []);
+
   const currentWordFile = useCallback(async () => {
     const editor = editorRef.current;
     if (!editor) return documentRef.current.file;
     return editor.save('DOCX');
   }, []);
 
+  const currentDocumentText = useCallback(async () => documentRef.current.kind === 'word'
+    ? extractDocxText(await currentWordFile())
+    : textRef.current, [currentWordFile]);
+
+  const closeDocument = useCallback(async () => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    if (saveTimerRef.current) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    try {
+      if (statusRef.current === 'dirty' || statusRef.current === 'saving' || statusRef.current === 'error') {
+        if (documentRef.current.kind === 'word') await currentWordFile();
+        else if (documentRef.current.kind === 'markdown' || documentRef.current.kind === 'json') await saveText(textRef.current);
+      }
+      await saveQueueRef.current;
+      onBack();
+    } catch {
+      // persist/saveText already exposes the actionable error in the document header.
+      closingRef.current = false;
+    }
+  }, [currentWordFile, onBack, saveText]);
+
   useImperativeHandle(ref, () => ({
     async execute(action, input) {
       try {
-        if (documentRef.current.kind === 'pdf' || documentRef.current.kind === 'image') {
+        if (documentRef.current.kind === 'image') {
           if (action === 'get_context') return {
             ok: true,
             name: documentRef.current.name,
-            kind: documentRef.current.kind,
+            kind: 'image',
             source: documentRef.current.source,
             readOnly: true,
-            content: '',
+            ...await imageMetadata(documentRef.current.file),
           };
-          throw new Error('PDF 和图片当前仅支持预览，不能执行文本编辑');
+          throw new Error('图片当前支持预览和基础信息读取，不能执行文字编辑');
+        }
+        if (documentRef.current.kind === 'pdf') {
+          const pdf = await import('@/lib/pdfText').then(({ extractPdfText }) => extractPdfText(documentRef.current.file));
+          if (action === 'get_context') return {
+            ok: true,
+            name: documentRef.current.name,
+            kind: 'pdf',
+            source: documentRef.current.source,
+            readOnly: true,
+            content: pdf.content.slice(0, 40_000),
+            totalCharacters: pdf.content.length,
+            pages: pdf.pages,
+            pagesRead: pdf.pagesRead,
+            truncated: pdf.truncated || pdf.content.length > 40_000,
+          };
+          if (action === 'search_text') {
+            const query = typeof input.query === 'string' ? input.query.trim() : '';
+            if (!query) throw new Error('query 不能为空');
+            const requestedLimit = typeof input.max_results === 'number' ? Math.trunc(input.max_results) : 10;
+            return {
+              ok: true,
+              query,
+              pages: pdf.pages,
+              matches: searchText(pdf.content, query, Math.min(Math.max(requestedLimit, 1), 20)),
+              extractionTruncated: pdf.truncated,
+            };
+          }
+          throw new Error('PDF 当前支持预览、文本读取和全文搜索，不能执行编辑');
         }
         if (action === 'get_context') {
-          const content = documentRef.current.kind === 'word'
-            ? await extractDocxText(await currentWordFile())
-            : textRef.current;
+          const content = await currentDocumentText();
           return {
             ok: true,
             name: documentRef.current.name,
             kind: documentRef.current.kind,
             source: documentRef.current.source,
             content: content.slice(0, 40_000),
+            totalCharacters: content.length,
             truncated: content.length > 40_000,
+          };
+        }
+
+        if (action === 'search_text') {
+          const query = typeof input.query === 'string' ? input.query.trim() : '';
+          if (!query) throw new Error('query 不能为空');
+          const requestedLimit = typeof input.max_results === 'number' ? Math.trunc(input.max_results) : 10;
+          const content = await currentDocumentText();
+          return {
+            ok: true,
+            query,
+            totalCharacters: content.length,
+            matches: searchText(content, query, Math.min(Math.max(requestedLimit, 1), 20)),
           };
         }
 
@@ -177,24 +270,24 @@ const DocumentWorkspace = forwardRef<DocumentWorkspaceHandle, Props>(function Do
       } catch (caught) {
         const message = caught instanceof Error ? caught.message : String(caught);
         setError(message);
-        setStatus('error');
+        updateStatus('error');
         return { ok: false, error: message };
       }
     },
-  }), [currentWordFile, persist, saveText]);
+  }), [currentDocumentText, currentWordFile, persist, saveText, updateStatus]);
 
   const jsonError = document.kind === 'json' && textReady ? validateJson(text) : '';
   const editableText = document.kind === 'markdown' || document.kind === 'json';
   const readOnlyPreview = document.kind === 'pdf' || document.kind === 'image';
   const handleWordError = useCallback((message: string) => {
     setError(message);
-    setStatus('error');
-  }, []);
+    updateStatus('error');
+  }, [updateStatus]);
 
   return (
     <section className="flex h-full min-w-0 flex-1 flex-col bg-white" aria-label={`${readOnlyPreview ? '预览' : '编辑'} ${document.name}`}>
       <header className="flex h-12 shrink-0 items-center gap-1.5 border-b border-black/[0.06] bg-white px-3 sm:px-5">
-        <button type="button" onClick={onBack} className="icon-button" aria-label="返回"><CloseIcon /></button>
+        <button type="button" onClick={() => { void closeDocument(); }} className="icon-button" aria-label="保存并返回"><CloseIcon /></button>
         <button type="button" onClick={onWorkspaceToggle} className="icon-button hidden sm:inline-flex" aria-label={`切换工作目录，当前：${workspaceLabel}`} title="切换远端/本地目录"><FolderIcon /></button>
         <span className="hidden max-w-32 truncate text-[10px] font-medium text-[#555] sm:inline" title={`Agent 工作目录：${workspaceLabel}`}>{workspaceLabel}</span>
         <span className="hidden text-[11px] text-[#8b8b8b] sm:inline">文件库</span>
@@ -221,7 +314,7 @@ const DocumentWorkspace = forwardRef<DocumentWorkspaceHandle, Props>(function Do
               document={documentRef.current}
               editorRef={editorRef}
               onSave={persist}
-              onStatus={setStatus}
+              onStatus={updateStatus}
               onError={handleWordError}
             />
           </div>
@@ -364,7 +457,7 @@ function WordEditor({ document, editorRef, onSave, onStatus, onError }: {
       <div className="relative h-full">
         <WordView file={document.file} fileName={document.name} />
         <div className="absolute inset-x-4 bottom-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] leading-5 text-amber-900 shadow-sm">
-          Word 在线编辑暂时未连接，当前已切换为只读预览：{failed}
+          {wordFailureMessage(failed)}
         </div>
       </div>
     );
@@ -407,12 +500,49 @@ function validateJson(value: string): string {
   catch (error) { return error instanceof Error ? error.message : 'JSON 格式无效'; }
 }
 
+function searchText(content: string, query: string, limit: number) {
+  const matches: Array<{ index: number; context: string }> = [];
+  const normalizedContent = content.toLocaleLowerCase();
+  const normalizedQuery = query.toLocaleLowerCase();
+  for (
+    let index = normalizedContent.indexOf(normalizedQuery);
+    index >= 0 && matches.length < limit;
+    index = normalizedContent.indexOf(normalizedQuery, index + normalizedQuery.length)
+  ) {
+    const start = Math.max(0, index - 80);
+    const end = Math.min(content.length, index + query.length + 120);
+    matches.push({ index, context: `${start ? '…' : ''}${content.slice(start, end)}${end < content.length ? '…' : ''}` });
+  }
+  return matches;
+}
+
+async function imageMetadata(file: File) {
+  const bitmap = await createImageBitmap(file);
+  const metadata = {
+    content: `图片：${file.name}，${bitmap.width} × ${bitmap.height} 像素，${file.type || '未知格式'}，${file.size} 字节。当前文档工具不执行图片内容识别。`,
+    width: bitmap.width,
+    height: bitmap.height,
+    mediaType: file.type,
+    size: file.size,
+    visualAnalysisAvailable: false,
+  };
+  bitmap.close();
+  return metadata;
+}
+
 function statusLabel(status: SaveStatus): string {
   if (status === 'dirty') return '未保存';
   if (status === 'saving') return '保存中…';
   if (status === 'saved') return '已保存';
   if (status === 'error') return '保存失败';
   return '已打开';
+}
+
+function wordFailureMessage(error: string): string {
+  if (/memory access out of bounds/i.test(error)) {
+    return '该 Word 的复杂版式或嵌入对象超出浏览器转换器兼容范围，已安全切换为只读预览，原文件没有被修改。可先用桌面 Word 另存为标准 DOCX 后重试编辑。';
+  }
+  return `Word 在线编辑暂时未连接，当前已切换为只读预览：${error}`;
 }
 
 function CloseIcon() { return <svg viewBox="0 0 24 24" width="17" height="17" fill="none" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>; }

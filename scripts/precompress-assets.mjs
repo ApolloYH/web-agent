@@ -18,7 +18,7 @@ const assets = [
 const distAssets = path.join(process.cwd(), 'dist', 'assets');
 if (existsSync(distAssets)) {
   assets.push(...readdirSync(distAssets)
-    .filter((name) => name.endsWith('.js') || name.endsWith('.css'))
+    .filter((name) => name.endsWith('.js') || name.endsWith('.mjs') || name.endsWith('.css'))
     .map((name) => path.join(distAssets, name)));
 }
 

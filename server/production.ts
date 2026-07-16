@@ -17,6 +17,9 @@ const apollo = createApolloMiddleware({
   allowUnrestricted: process.env.WEB_ALLOW_UNRESTRICTED === 'true',
   maxConcurrentRuns: Number(process.env.WEB_MAX_CONCURRENT_RUNS || 8),
   maxRunsPerUser: Number(process.env.WEB_MAX_RUNS_PER_USER || 3),
+  minFreeDiskBytes: Number(process.env.WEB_MIN_FREE_DISK_BYTES || 536870912),
+  userStorageQuotaBytes: Number(process.env.WEB_USER_STORAGE_QUOTA_BYTES || 2147483648),
+  uploadRetentionDays: Number(process.env.WEB_UPLOAD_RETENTION_DAYS || 7),
   entry: {
     langcoreApiKey: process.env.LANGCORE_API_KEY || '',
     langhubApiKey: process.env.NOUMI_API_KEY || '',
@@ -34,8 +37,19 @@ const apollo = createApolloMiddleware({
 });
 
 const server = createServer((req, res) => {
+  if (req.url === '/livez' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ alive: true, uptimeSeconds: Math.round(process.uptime()) }));
+    return;
+  }
   if (req.url === '/healthz' && req.method === 'GET') {
-    const health = apollo.health();
+    const health = {
+      ...apollo.health(),
+      officeReady: Boolean(officeServer),
+      uptimeSeconds: Math.round(process.uptime()),
+      memoryRssBytes: process.memoryUsage().rss,
+    };
+    health.ready = health.ready && health.officeReady;
     res.writeHead(health.ready ? 200 : 503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify(health));
     return;
@@ -124,7 +138,7 @@ async function serveStatic(rawUrl: string, method: string, res: import('node:htt
 
 function mime(ext: string): string {
   if (ext === '.html') return 'text/html; charset=utf-8';
-  if (ext === '.js') return 'text/javascript; charset=utf-8';
+  if (ext === '.js' || ext === '.mjs') return 'text/javascript; charset=utf-8';
   if (ext === '.css') return 'text/css; charset=utf-8';
   if (ext === '.svg') return 'image/svg+xml';
   if (ext === '.png') return 'image/png';

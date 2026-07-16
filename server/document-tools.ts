@@ -13,10 +13,24 @@ export function createDocumentTools(requestEditor: RequestEditor): ToolDefinitio
     },
     {
       name: 'document_get_context',
-      description: '读取用户当前在 Web 编辑工作台中打开的 Word、Markdown 或 JSON 文档内容。编辑当前文档前先调用。',
+      description: '读取用户当前在 Web 工作台中打开的 Word、Markdown、JSON、PDF 文本或图片基础信息。长文档只返回前段内容；编辑前先调用。',
       risk: 'low',
       input_schema: { type: 'object', properties: {} },
       execute: async () => result(await requestEditor('get_context', {})),
+    },
+    {
+      name: 'document_search_text',
+      description: '在当前打开的 Word、Markdown、JSON 或 PDF 全文中搜索文字并返回命中上下文。长文档定位内容时优先使用。',
+      risk: 'low',
+      input_schema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: '要搜索的文字' },
+          max_results: { type: 'number', description: '最多返回的命中数，默认 10，最大 20' },
+        },
+        required: ['query'],
+      },
+      execute: async (input) => result(await requestEditor('search_text', input)),
     },
     {
       name: 'document_replace_text',

@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import type { JsonObject, ToolArtifact, ToolDefinition } from '@apolloyh/apollo-agent';
 
 type EntryToolConfig = {
@@ -11,10 +12,12 @@ type EntryToolConfig = {
   automationMode: () => 'ask' | 'auto';
   projects: Record<string, string>;
   turnState: { standardsQuery?: Promise<string> };
+  assertStorageCapacity: (incomingBytes: number) => Promise<void>;
 };
 
 type TreeItem = { path: string; name: string; isDirectory: boolean; hasChildren?: boolean; size?: number; modifiedAt?: string };
 const langHubProjectLocks = new Map<string, Promise<void>>();
+const MAX_LANGHUB_ARTIFACT_BYTES = 25 * 1024 * 1024;
 
 const TASKS = [
   'risk_card',
@@ -138,7 +141,7 @@ async function runLangHubTask(config: EntryToolConfig, task: typeof TASKS[number
     : '';
   const fresh = await waitForFreshArtifacts(baseUrl, config.langhubApiKey, projectId, before, inputCopies);
   const saved: string[] = [];
-  for (const item of fresh) saved.push(await downloadArtifact(config.workspaceRoot, config.conversationId, baseUrl, config.langhubApiKey, projectId, item));
+  for (const item of fresh) saved.push(await downloadArtifact(config, baseUrl, projectId, item));
   const artifacts = await Promise.all(saved.map(async (file) => ({
     path: file,
     title: path.basename(file).replace(/^\d+-/, ''),
@@ -247,14 +250,44 @@ async function listFiles(baseUrl: string, apiKey: string, projectId: string, dir
   return output;
 }
 
-async function downloadArtifact(workspaceRoot: string, conversationId: string, baseUrl: string, apiKey: string, projectId: string, item: TreeItem): Promise<string> {
-  const response = await fetch(`${baseUrl}/projects/${enc(projectId)}/workspace/download?path=${enc(item.path)}`, { headers: auth(apiKey), signal: AbortSignal.timeout(120_000) });
+async function downloadArtifact(config: EntryToolConfig, baseUrl: string, projectId: string, item: TreeItem): Promise<string> {
+  if ((item.size ?? 0) > MAX_LANGHUB_ARTIFACT_BYTES) throw new Error(`LangHub 文件超过 25MB：${item.name}`);
+  const response = await fetch(`${baseUrl}/projects/${enc(projectId)}/workspace/download?path=${enc(item.path)}`, { headers: auth(config.langhubApiKey), signal: AbortSignal.timeout(120_000) });
   if (!response.ok) throw new Error(`LangHub 文件下载失败：${item.name} (${response.status})`);
-  const artifactRoot = path.join(workspaceRoot, 'artifacts', conversationId);
+  const bytes = await readLimitedResponse(response, MAX_LANGHUB_ARTIFACT_BYTES);
+  await config.assertStorageCapacity(bytes.length);
+  const artifactRoot = path.join(config.workspaceRoot, 'artifacts', config.conversationId);
   await fs.mkdir(artifactRoot, { recursive: true });
   const target = path.join(artifactRoot, `${Date.now()}-${safeName(item.name)}`);
-  await fs.writeFile(target, Buffer.from(await response.arrayBuffer()));
-  return path.relative(workspaceRoot, target);
+  const temporary = `${target}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(temporary, bytes);
+    await fs.rename(temporary, target);
+  } catch (error) {
+    await fs.rm(temporary, { force: true });
+    throw error;
+  }
+  return path.relative(config.workspaceRoot, target);
+}
+
+async function readLimitedResponse(response: Response, limit: number): Promise<Buffer> {
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > limit) throw new Error('LangHub 文件超过 25MB');
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > limit) {
+      await reader.cancel();
+      throw new Error('LangHub 文件超过 25MB');
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks, total);
 }
 
 async function resolveWorkspaceFiles(workspaceRoot: string, files: string[]): Promise<string[]> {

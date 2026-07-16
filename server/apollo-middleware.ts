@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, statfsSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
@@ -22,18 +22,34 @@ const ARTIFACT_EXTENSIONS = new Set(['.docx', '.pdf', '.jpg', '.jpeg', '.png', '
 const SKIP_DIRECTORIES = new Set(['.git', '.apollo', 'node_modules', 'dist']);
 const MAX_ARTIFACT_BYTES = 25 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+const MAX_UPLOAD_REQUEST_BYTES = 64 * 1024 * 1024;
 const UPLOAD_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt', '.md', '.json']);
 const INTERACTION_TIMEOUT_MS = 5 * 60_000;
 const AUTH_IP_RATE_LIMIT = 60;
 const AUTH_IDENTITY_RATE_LIMIT = 10;
 const AUTH_RATE_WINDOW_MS = 60_000;
 const MAX_CONCURRENT_FILE_TRANSFERS = 2;
+const WEB_BLOCKED_TOOLS = new Set([
+  'shell_exec',
+  'workspace_boundary',
+  'sensitive_file_read',
+  'skill_install',
+  'mcp_list_tools',
+  'mcp_call_tool',
+]);
+
+export function isWebToolAllowed(toolName: string): boolean {
+  return !WEB_BLOCKED_TOOLS.has(toolName);
+}
 
 type Send = (event: object) => void;
 type PendingInteraction = { userId: string; resolve: (answer: string) => void; fallback: string; timer: NodeJS.Timeout };
 type AuthUser = { id: string; username: string; admin: boolean };
+class StorageQuotaError extends Error {}
 type RunContext = {
+  id: string;
   userId: string;
+  channel: 'assistant' | 'entry';
   send: Send;
   sink: (event: TraceEvent) => void;
   permissionMode: 'ask' | 'unrestricted';
@@ -60,12 +76,15 @@ type EntryConfig = {
   projects: Record<string, string>;
 };
 
-export function createApolloMiddleware({ workspaceRoot, envPath, registrationInvite, adminUsername, allowUnrestricted = false, maxConcurrentRuns = 8, maxRunsPerUser = 3, entry }: { workspaceRoot: string; envPath: string; registrationInvite: string; adminUsername: string; allowUnrestricted?: boolean; maxConcurrentRuns?: number; maxRunsPerUser?: number; entry: EntryConfig }) {
+export function createApolloMiddleware({ workspaceRoot, envPath, registrationInvite, adminUsername, allowUnrestricted = false, maxConcurrentRuns = 8, maxRunsPerUser = 3, minFreeDiskBytes = 512 * 1024 * 1024, userStorageQuotaBytes = 2 * 1024 * 1024 * 1024, uploadRetentionDays = 7, entry }: { workspaceRoot: string; envPath: string; registrationInvite: string; adminUsername: string; allowUnrestricted?: boolean; maxConcurrentRuns?: number; maxRunsPerUser?: number; minFreeDiskBytes?: number; userStorageQuotaBytes?: number; uploadRetentionDays?: number; entry: EntryConfig }) {
+  minFreeDiskBytes = Number.isFinite(minFreeDiskBytes) && minFreeDiskBytes >= 0 ? minFreeDiskBytes : 512 * 1024 * 1024;
+  userStorageQuotaBytes = Number.isFinite(userStorageQuotaBytes) && userStorageQuotaBytes >= 0 ? userStorageQuotaBytes : 2 * 1024 * 1024 * 1024;
+  uploadRetentionDays = Number.isFinite(uploadRetentionDays) && uploadRetentionDays >= 1 ? uploadRetentionDays : 7;
   const entryConfigTemplatePath = path.join(workspaceRoot, 'config', 'web-entry-apollo.json');
   const entryConfigPath = path.join(workspaceRoot, '.apollo', 'web-entry-config.json');
   const assistantConfigTemplatePath = path.join(workspaceRoot, 'config', 'web-assistant-apollo.json');
   const databasePath = path.join(workspaceRoot, '.apollo', 'web-agent.sqlite');
-  let database: DatabaseSync | undefined;
+  const database = openConversationDatabase(databasePath);
   const runs = new Map<string, RunContext>();
   const interactions = new Map<string, PendingInteraction>();
   const userContexts = new Map<string, UserRuntimeContext>();
@@ -78,13 +97,15 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
   let activeFileTransfers = 0;
   const fileTransfersByUser = new Map<string, number>();
   let closing = false;
+  let lastMaintenanceAt = 0;
   const entryTemplate = JSON.parse(readFileSync(entryConfigTemplatePath, 'utf8')) as Record<string, unknown>;
   let entryRuntime: Record<string, unknown> = {};
   try { entryRuntime = JSON.parse(readFileSync(entryConfigPath, 'utf8')) as Record<string, unknown>; } catch { /* first start */ }
   mkdirSync(path.dirname(entryConfigPath), { recursive: true });
   writeFileSync(entryConfigPath, `${JSON.stringify({ ...entryTemplate, permissions: entryRuntime.permissions ?? entryTemplate.permissions }, null, 2)}\n`, 'utf8');
 
-  const getUserContext = async (userId: string): Promise<UserRuntimeContext> => {
+  const getUserContext = async (user: AuthUser): Promise<UserRuntimeContext> => {
+    const userId = user.id;
     let context = userContexts.get(userId);
     if (!context) {
       const userRoot = path.join(workspaceRoot, '.apollo', 'users', userId, 'workspace');
@@ -95,7 +116,8 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
         assistantSessionPath: path.join(userRoot, '.apollo', 'web-assistant-session'),
         entryEngines: new Map(),
         entryTurnStates: new Map(),
-        ready: ensureUserWorkspace(userRoot, path.join(workspaceRoot, 'entry-skills'), assistantConfigTemplatePath),
+        ready: ensureUserWorkspace(userRoot, path.join(workspaceRoot, 'entry-skills'), assistantConfigTemplatePath)
+          .then(() => user.admin ? undefined : enforceTenantSafeConfig(path.join(userRoot, '.apollo', 'assistant-config.json'))),
         lastUsedAt: Date.now(),
       };
       userContexts.set(userId, context);
@@ -159,6 +181,16 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
 
   const approvalProvider = (runKey: string): ApprovalProvider => async (request) => {
     const run = runs.get(runKey);
+    if (!isWebToolAllowed(request.toolName)) {
+      run?.sink({
+        type: 'approval_required',
+        tool: request.toolName,
+        risk: request.risk,
+        reason: 'Web 多租户部署禁止系统命令、工作区越界和外部工具调用',
+      });
+      run?.sink({ type: 'approval_result', tool: request.toolName, approved: false });
+      return false;
+    }
     if (allowUnrestricted && run?.permissionMode === 'unrestricted') return true;
     if (request.risk === 'low') return true;
     run?.sink({
@@ -246,6 +278,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
           automationMode: () => runs.get(runKey)?.permissionMode === 'unrestricted' ? 'auto' : 'ask',
           projects: entry.projects,
           turnState,
+          assertStorageCapacity: (incomingBytes) => assertWorkspaceCapacity(context.workspaceRoot, userStorageQuotaBytes, incomingBytes),
         }),
         ...createDocumentTools((action, input) => requestEditorTool(runKey, action, input)),
       ],
@@ -289,7 +322,6 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     if (closing) return jsonError(res, 503, '服务正在重启，请稍后重试');
     if (isHttps(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     if (!isSameOriginMutation(req)) return jsonError(res, 403, '跨站请求已拒绝');
-    database ??= openConversationDatabase(databasePath);
     if (req.url.startsWith('/apollo-api/auth/')) {
       const authRoute = req.url.split('?', 1)[0];
       if (req.method === 'POST' && (authRoute === '/apollo-api/auth/login' || authRoute === '/apollo-api/auth/register')) {
@@ -303,12 +335,14 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     }
     const user = authenticatedUser(req, database);
     if (!user) return jsonError(res, 401, '请先登录');
-    const context = await getUserContext(user.id);
+    const context = await getUserContext(user);
     const userWorkspaceRoot = context.workspaceRoot;
     const userArtifactRoot = path.join(userWorkspaceRoot, 'artifacts');
 
     if (req.url === '/apollo-api/respond') return handleResponse(req, res, user.id, interactions);
     if (req.url === '/apollo-api/uploads' || req.url === '/apollo-api/artifacts/import') {
+      const expectedBytes = req.url === '/apollo-api/uploads' ? MAX_UPLOAD_REQUEST_BYTES : 40 * 1024 * 1024;
+      if (!hasDiskCapacity(workspaceRoot, minFreeDiskBytes + expectedBytes)) return jsonError(res, 507, '服务器存储空间不足，请联系管理员清理后重试');
       const userTransfers = fileTransfersByUser.get(user.id) ?? 0;
       if (activeFileTransfers >= MAX_CONCURRENT_FILE_TRANSFERS || userTransfers >= 1) {
         res.setHeader('Retry-After', '3');
@@ -318,8 +352,8 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       fileTransfersByUser.set(user.id, userTransfers + 1);
       try {
         return req.url === '/apollo-api/uploads'
-          ? await handleUploads(req, res, userWorkspaceRoot)
-          : await importArtifacts(req, res, userArtifactRoot);
+          ? await handleUploads(req, res, userWorkspaceRoot, userStorageQuotaBytes)
+          : await importArtifacts(req, res, userArtifactRoot, userStorageQuotaBytes);
       } finally {
         activeFileTransfers -= 1;
         const remaining = (fileTransfersByUser.get(user.id) ?? 1) - 1;
@@ -426,11 +460,15 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       const permissionConfigPath = requestedChannel === 'entry' ? entryConfigPath : context.assistantConfigPath;
       if (req.method === 'GET') return json(res, 200, { mode: allowUnrestricted ? await permissionMode(permissionConfigPath) : 'ask' });
       if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
-      if (runs.size) return jsonError(res, 409, '智能体正在运行，请稍后切换模式');
       try {
         const { mode, channel } = JSON.parse(await readBody(req)) as { mode?: unknown; channel?: unknown };
         if (mode !== 'ask' && mode !== 'unrestricted') throw new Error('无效的权限模式');
+        if (channel !== 'entry' && channel !== 'assistant') throw new Error('无效的智能体通道');
         if (channel === 'entry' && !user.admin) throw new Error('只有管理员可以修改统一入口权限');
+        const busy = [...runs.values()].some((run) => channel === 'entry'
+          ? run.channel === 'entry'
+          : run.channel === 'assistant' && run.userId === user.id);
+        if (busy) return jsonError(res, 409, '相关智能体正在运行，请稍后切换模式');
         const targetConfigPath = channel === 'entry' ? entryConfigPath : context.assistantConfigPath;
         if (mode === 'unrestricted' && !allowUnrestricted) throw new Error('当前部署未启用全自动权限；请先使用沙箱并设置 WEB_ALLOW_UNRESTRICTED=true');
         const config = await readConfig(targetConfigPath);
@@ -448,12 +486,15 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       }
     }
     if (req.url === '/apollo-api/config') {
+      if (!user.admin) return jsonError(res, 403, '只有管理员可以管理智能体运行配置');
       if (req.method === 'GET') {
         const config = await fs.readFile(context.assistantConfigPath, 'utf8').catch(() => '{}');
         return json(res, 200, { path: '当前用户/.apollo/assistant-config.json', config });
       }
       if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
-      if (runs.size) return jsonError(res, 409, '智能体正在运行，请稍后再保存配置');
+      if ([...runs.values()].some((run) => run.channel === 'assistant' && run.userId === user.id)) {
+        return jsonError(res, 409, '当前助理正在运行，请稍后再保存配置');
+      }
       try {
         const { config } = JSON.parse(await readBody(req)) as { config?: unknown };
         if (typeof config !== 'string') throw new Error('config 必须是 JSON 文本');
@@ -506,6 +547,11 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     console.info(`[Apollo] 开始调用：Apollo Agent｜通道：${channel === 'assistant' ? '助理' : '统一入口'}｜输入：${logPreview(message as string)}`);
 
     const startedAt = Date.now();
+    const runId = randomUUID();
+    database.prepare(`
+      INSERT INTO agent_runs (id, user_id, channel, conversation_id, status, started_at)
+      VALUES (?, ?, ?, ?, 'running', ?)
+    `).run(runId, user.id, channel, conversationId, new Date(startedAt).toISOString());
     const changedPaths = new Set<string>();
     const reportedArtifacts = new Map<string, NonNullable<Extract<TraceEvent, { type: 'tool_result' }>['artifacts']>[number]>();
     let closed = false;
@@ -514,6 +560,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       'Cache-Control': 'no-cache, no-transform',
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
+      'X-Apollo-Run-ID': runId,
     });
     res.flushHeaders();
     const send: Send = (event) => {
@@ -529,7 +576,9 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     };
     const configPath = channel === 'assistant' ? context.assistantConfigPath : entryConfigPath;
     const run: RunContext = {
+      id: runId,
       userId: user.id,
+      channel,
       send,
       sink,
       permissionMode: 'ask',
@@ -544,6 +593,8 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       for (const id of run?.interactionIds ?? []) settleInteraction(id);
     });
 
+    let runStatus: 'succeeded' | 'failed' | 'cancelled' = 'failed';
+    let runError = '';
     try {
       if (allowUnrestricted) run.permissionMode = await permissionMode(configPath);
       if (channel === 'entry') {
@@ -567,8 +618,11 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       const artifacts = await collectArtifacts(context.workspaceRoot, startedAt, changedPaths, artifactScope, reportedArtifacts);
       console.info(`[Apollo] 调用完成：Apollo Agent｜耗时：${Date.now() - startedAt}ms｜产出文件：${artifacts.length}个`);
       send({ type: 'done', artifacts, status: runtimeStatus(runtime) });
+      runStatus = 'succeeded';
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      runError = message.slice(0, 2_000);
+      runStatus = closed ? 'cancelled' : 'failed';
       const artifactScope = channel === 'entry' ? path.join('artifacts', conversationId) : undefined;
       const artifacts = await collectArtifacts(context.workspaceRoot, startedAt, changedPaths, artifactScope, reportedArtifacts);
       console.error(`[Apollo] 调用失败：Apollo Agent｜错误：${logPreview(message)}｜已恢复文件：${artifacts.length}个`);
@@ -580,6 +634,8 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       const run = runs.get(runKey);
       for (const id of run?.interactionIds ?? []) settleInteraction(id);
       runs.delete(runKey);
+      database.prepare('UPDATE agent_runs SET status = ?, finished_at = ?, error = ? WHERE id = ?')
+        .run(runStatus, new Date().toISOString(), runError, runId);
       if (channel === 'entry') void pruneEntryEngines(context);
       if (!closed) res.end();
     }
@@ -598,12 +654,21 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       void closeUserEngines(context);
     }
     pruneExpiredWindows(authRateLimits, now);
+    if (now - lastMaintenanceAt >= 60 * 60_000) {
+      lastMaintenanceAt = now;
+      database.prepare('DELETE FROM auth_sessions WHERE expires_at <= ?').run(new Date(now).toISOString());
+      database.prepare('DELETE FROM agent_runs WHERE finished_at IS NOT NULL AND finished_at < ?').run(new Date(now - 90 * 24 * 60 * 60_000).toISOString());
+      const retentionMs = Math.max(1, uploadRetentionDays) * 24 * 60 * 60_000;
+      void cleanupExpiredUploads(path.join(workspaceRoot, '.apollo', 'users'), now - retentionMs);
+    }
   }, 60_000);
   idleContextSweep.unref();
 
   const handle = (req: IncomingMessage, res: ServerResponse, next: () => void): void => {
+    const requestId = randomUUID();
+    res.setHeader('X-Request-ID', requestId);
     void handleRequest(req, res, next).catch((error) => {
-      console.error(`[Apollo] 请求处理失败：${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+      console.error(`[Apollo] 请求处理失败｜requestId=${requestId}：${error instanceof Error ? error.stack ?? error.message : String(error)}`);
       if (!res.headersSent) jsonError(res, 500, '服务暂时不可用，请稍后重试');
       else if (!res.writableEnded) res.end();
     });
@@ -611,14 +676,26 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
 
   return {
     handle,
-    health: () => ({
-      ready: !closing,
-      activeRuns: runs.size,
-      activeJobs: runs.size + auxiliaryJobs,
-      activeFileTransfers,
-      runtimeUsers: userContexts.size,
-      limits: { global: globalRunLimit, perUser: perUserRunLimit, fileTransfers: MAX_CONCURRENT_FILE_TRANSFERS },
-    }),
+    health: () => {
+      let databaseReady = false;
+      try {
+        database.prepare('SELECT 1').get();
+        databaseReady = true;
+      } catch { /* reported below */ }
+      const diskFreeBytes = freeDiskBytes(workspaceRoot);
+      return {
+        ready: !closing && databaseReady && diskFreeBytes >= minFreeDiskBytes,
+        databaseReady,
+        diskFreeBytes,
+        minFreeDiskBytes,
+        userStorageQuotaBytes,
+        activeRuns: runs.size,
+        activeJobs: runs.size + auxiliaryJobs,
+        activeFileTransfers,
+        runtimeUsers: userContexts.size,
+        limits: { global: globalRunLimit, perUser: perUserRunLimit, fileTransfers: MAX_CONCURRENT_FILE_TRANSFERS },
+      };
+    },
     close: async () => {
       if (closing) return;
       closing = true;
@@ -627,8 +704,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       for (const id of [...interactions.keys()]) settleInteraction(id);
       await Promise.all([...userContexts.values()].map(closeUserEngines));
       userContexts.clear();
-      database?.close();
-      database = undefined;
+      database.close();
     },
   };
 }
@@ -637,10 +713,65 @@ function positiveInteger(value: number, fallback: number): number {
   return Number.isInteger(value) && value > 0 ? value : fallback;
 }
 
-async function handleUploads(req: IncomingMessage, res: ServerResponse, userWorkspaceRoot: string): Promise<void> {
+function formatBytes(value: number): string {
+  if (value < 1024 * 1024) return `${Math.ceil(value / 1024)}KB`;
+  if (value < 1024 * 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)}MB`;
+  return `${(value / 1024 / 1024 / 1024).toFixed(1)}GB`;
+}
+
+function freeDiskBytes(root: string): number {
+  try {
+    const stat = statfsSync(root);
+    return Number(stat.bavail) * Number(stat.bsize);
+  } catch {
+    return 0;
+  }
+}
+
+function hasDiskCapacity(root: string, requiredBytes: number): boolean {
+  return freeDiskBytes(root) >= requiredBytes;
+}
+
+async function cleanupExpiredUploads(usersRoot: string, cutoff: number): Promise<void> {
+  const users = await fs.readdir(usersRoot, { withFileTypes: true }).catch(() => []);
+  await Promise.all(users.filter((entry) => entry.isDirectory()).map(async (entry) => {
+    const uploads = path.join(usersRoot, entry.name, 'workspace', 'uploads');
+    const files = await fs.readdir(uploads, { withFileTypes: true }).catch(() => []);
+    await Promise.all(files.filter((file) => file.isFile()).map(async (file) => {
+      const target = path.join(uploads, file.name);
+      const stat = await fs.stat(target).catch(() => null);
+      if (stat && stat.mtimeMs < cutoff) await fs.rm(target, { force: true });
+    }));
+  }));
+}
+
+async function workspaceUsageBytes(root: string): Promise<number> {
+  const pending = [root];
+  let total = 0;
+  while (pending.length) {
+    const current = pending.pop()!;
+    const entries = await fs.readdir(current, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const target = path.join(current, entry.name);
+      if (entry.isDirectory()) pending.push(target);
+      else if (entry.isFile()) total += (await fs.stat(target).catch(() => null))?.size ?? 0;
+    }
+  }
+  return total;
+}
+
+async function assertWorkspaceCapacity(root: string, quotaBytes: number, incomingBytes: number): Promise<void> {
+  if (!quotaBytes) return;
+  const usedBytes = await workspaceUsageBytes(root);
+  if (usedBytes + incomingBytes > quotaBytes) {
+    throw new StorageQuotaError(`用户存储配额不足（已使用 ${formatBytes(usedBytes)}，上限 ${formatBytes(quotaBytes)}）`);
+  }
+}
+
+async function handleUploads(req: IncomingMessage, res: ServerResponse, userWorkspaceRoot: string, quotaBytes: number): Promise<void> {
   if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
   try {
-    const requestLimit = 8 * MAX_UPLOAD_BYTES + 1024 * 1024;
+    const requestLimit = MAX_UPLOAD_REQUEST_BYTES;
     const declared = Number(req.headers['content-length']);
     if (Number.isFinite(declared) && declared > requestLimit) throw new Error('上传内容过大');
     const body = await readBytes(req, requestLimit);
@@ -651,6 +782,8 @@ async function handleUploads(req: IncomingMessage, res: ServerResponse, userWork
     });
     const entries = (await request.formData()).getAll('files');
     if (!entries.length || entries.length > 8) throw new Error('每次请选择 1–8 个文件');
+    const incomingBytes = entries.reduce((total, entry) => total + (typeof entry === 'string' ? 0 : entry.size), 0);
+    await assertWorkspaceCapacity(userWorkspaceRoot, quotaBytes, incomingBytes);
     const directory = path.join(userWorkspaceRoot, 'uploads');
     await fs.mkdir(directory, { recursive: true });
     const files = [];
@@ -667,11 +800,11 @@ async function handleUploads(req: IncomingMessage, res: ServerResponse, userWork
     }
     return json(res, 200, { files });
   } catch (error) {
-    return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+    return jsonError(res, error instanceof StorageQuotaError ? 507 : 400, error instanceof Error ? error.message : String(error));
   }
 }
 
-async function importArtifacts(req: IncomingMessage, res: ServerResponse, root: string): Promise<void> {
+async function importArtifacts(req: IncomingMessage, res: ServerResponse, root: string, quotaBytes: number): Promise<void> {
   if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
   try {
     const body = JSON.parse(await readBody(req, 40 * 1024 * 1024)) as { artifacts?: unknown };
@@ -696,6 +829,7 @@ async function importArtifacts(req: IncomingMessage, res: ServerResponse, root: 
         bytes = Buffer.from(artifact.content, 'base64');
       }
       if (!bytes.length || bytes.length > MAX_ARTIFACT_BYTES) throw new Error(`${name} 文件为空或超过 25MB`);
+      await assertWorkspaceCapacity(path.dirname(root), quotaBytes, bytes.length);
       const file = await availableArtifactPath(root, name);
       await fs.writeFile(file, bytes);
       console.info(`[Apollo] 文件已保存：LangHub → 用户文件库｜文件：${path.basename(file)}｜大小：${bytes.length}字节`);
@@ -711,7 +845,7 @@ async function importArtifacts(req: IncomingMessage, res: ServerResponse, root: 
     }
     return json(res, 200, { artifacts });
   } catch (error) {
-    return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+    return jsonError(res, error instanceof StorageQuotaError ? 507 : 400, error instanceof Error ? error.message : String(error));
   }
 }
 
@@ -744,6 +878,23 @@ async function ensureUserWorkspace(userRoot: string, sharedEntrySkillsPath: stri
     await writeConfig(assistantConfigPath, { ...current, systemPrompt: template.systemPrompt });
     await fs.writeFile(migrationMarker, '2\n', 'utf8');
   }
+}
+
+async function enforceTenantSafeConfig(configPath: string): Promise<void> {
+  const config = await readConfig(configPath);
+  const skills = config.skills && typeof config.skills === 'object' && !Array.isArray(config.skills)
+    ? config.skills as Record<string, unknown>
+    : {};
+  const directories = Array.isArray(skills.directories) ? skills.directories : [];
+  const safeDirectories = directories.length === 1 && directories[0] === './assistant-skills';
+  const hasMcpServers = config.mcpServers && typeof config.mcpServers === 'object'
+    && Object.keys(config.mcpServers as Record<string, unknown>).length > 0;
+  if (safeDirectories && !hasMcpServers) return;
+  await writeConfig(configPath, {
+    ...config,
+    skills: { ...skills, directories: ['./assistant-skills'] },
+    mcpServers: {},
+  });
 }
 
 async function handleAuth(req: IncomingMessage, res: ServerResponse, database: DatabaseSync, workspaceRoot: string, registrationInvite: string, adminUsername: string, rateLimits: Map<string, RateLimitWindow>): Promise<void> {
@@ -907,7 +1058,24 @@ function openConversationDatabase(databasePath: string): DatabaseSync {
       expires_at TEXT NOT NULL,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS agent_runs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      conversation_id TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      error TEXT NOT NULL DEFAULT '',
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS agent_runs_user_started ON agent_runs(user_id, started_at DESC);
   `);
+  database.prepare(`
+    UPDATE agent_runs
+    SET status = 'interrupted', finished_at = ?, error = '服务重启导致任务中断，请重新提交'
+    WHERE status = 'running'
+  `).run(new Date().toISOString());
   migrateExplicitAdmin(database);
   migrateApolloSessions(database, path.join(path.dirname(databasePath), 'sessions'));
   return database;

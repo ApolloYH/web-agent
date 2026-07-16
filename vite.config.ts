@@ -8,7 +8,7 @@ import { serveOfficeRuntime, startOfficeRuntimeServer } from './server/office-ru
 // 对话入口 + Word、PDF、图片产出物只读预览。
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const apollo = createApolloMiddleware({
+  const createApollo = () => createApolloMiddleware({
     workspaceRoot: process.cwd(),
     envPath: resolve(process.cwd(), '.env'),
     registrationInvite: env.WEB_REGISTRATION_INVITE || '',
@@ -16,6 +16,9 @@ export default defineConfig(({ mode }) => {
     allowUnrestricted: env.WEB_ALLOW_UNRESTRICTED === 'true',
     maxConcurrentRuns: Number(env.WEB_MAX_CONCURRENT_RUNS || 8),
     maxRunsPerUser: Number(env.WEB_MAX_RUNS_PER_USER || 3),
+    minFreeDiskBytes: Number(env.WEB_MIN_FREE_DISK_BYTES || 536870912),
+    userStorageQuotaBytes: Number(env.WEB_USER_STORAGE_QUOTA_BYTES || 2147483648),
+    uploadRetentionDays: Number(env.WEB_UPLOAD_RETENTION_DAYS || 7),
     entry: {
       langcoreApiKey: env.LANGCORE_API_KEY || '',
       langhubApiKey: env.NOUMI_API_KEY || '',
@@ -39,6 +42,7 @@ export default defineConfig(({ mode }) => {
       {
         name: 'apollo-api',
         configureServer(server) {
+          const apollo = createApollo();
           const officeServer = startOfficeRuntimeServer(Number(env.VITE_OFFICE_HOST_PORT || 5174));
           server.middlewares.use(serveOfficeRuntime);
           server.middlewares.use(apollo.handle);
@@ -46,6 +50,7 @@ export default defineConfig(({ mode }) => {
           server.httpServer?.once('close', apollo.close);
         },
         configurePreviewServer(server) {
+          const apollo = createApollo();
           const officeServer = startOfficeRuntimeServer(Number(env.VITE_OFFICE_HOST_PORT || 5174));
           server.middlewares.use(serveOfficeRuntime);
           server.middlewares.use(apollo.handle);

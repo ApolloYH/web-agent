@@ -19,15 +19,63 @@ export async function replaceDocxText(file: File, find: string, replacement: str
     if (!nodes.length) continue;
     const text = nodes.map((node) => node.textContent ?? '').join('');
     if (!text.includes(find)) continue;
-    const next = replaceAll ? text.split(find).join(replacement) : text.replace(find, replacement);
-    const matches = replaceAll ? text.split(find).length - 1 : 1;
-    nodes[0]!.textContent = next;
-    for (const node of nodes.slice(1)) node.textContent = '';
-    count += matches;
+    const matches = matchOffsets(text, find, replaceAll);
+    const ranges = textNodeRanges(nodes);
+    for (const start of [...matches].reverse()) replaceAcrossRuns(ranges, start, start + find.length, replacement);
+    count += matches.length;
     if (!replaceAll) break;
   }
   if (!count) throw new Error(`文档中没有找到“${find}”`);
   return { file: writeDocument(file, archive, document), count };
+}
+
+function matchOffsets(text: string, find: string, replaceAll: boolean): number[] {
+  const matches: number[] = [];
+  for (let start = text.indexOf(find); start >= 0; start = text.indexOf(find, start + find.length)) {
+    matches.push(start);
+    if (!replaceAll) break;
+  }
+  return matches;
+}
+
+function textNodeRanges(nodes: Element[]): Array<{ node: Element; start: number; end: number }> {
+  let offset = 0;
+  return nodes.map((node) => {
+    const start = offset;
+    offset += (node.textContent ?? '').length;
+    return { node, start, end: offset };
+  });
+}
+
+function replaceAcrossRuns(
+  ranges: Array<{ node: Element; start: number; end: number }>,
+  start: number,
+  end: number,
+  replacement: string,
+): void {
+  const startIndex = ranges.findIndex((range) => start >= range.start && start < range.end);
+  const endIndex = ranges.findIndex((range) => end > range.start && end <= range.end);
+  if (startIndex < 0 || endIndex < 0) throw new Error('DOCX 文本结构与查找内容不一致');
+  const startRange = ranges[startIndex]!;
+  const endRange = ranges[endIndex]!;
+  const startText = startRange.node.textContent ?? '';
+  const endText = endRange.node.textContent ?? '';
+  const prefix = startText.slice(0, start - startRange.start);
+  const suffix = endText.slice(end - endRange.start);
+  if (startIndex === endIndex) {
+    setWordText(startRange.node, `${prefix}${replacement}${suffix}`);
+    return;
+  }
+  setWordText(startRange.node, `${prefix}${replacement}`);
+  for (let index = startIndex + 1; index < endIndex; index += 1) setWordText(ranges[index]!.node, '');
+  setWordText(endRange.node, suffix);
+}
+
+function setWordText(node: Element, value: string): void {
+  node.textContent = value;
+  const namespace = 'http://www.w3.org/XML/1998/namespace';
+  if (/^\s|\s$/.test(value)) node.setAttributeNS(namespace, 'xml:space', 'preserve');
+  else node.removeAttributeNS(namespace, 'space');
 }
 
 export async function appendDocxText(file: File, text: string): Promise<File> {
