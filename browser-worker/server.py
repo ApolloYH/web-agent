@@ -8,7 +8,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 HOST = os.environ.get("BROWSER_WORKER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("BROWSER_WORKER_PORT", "9140"))
 TOKEN = os.environ.get("APOLLO_BROWSER_WORKER_TOKEN", "")
-MODEL = os.environ.get("BROWSER_USE_MODEL", "bu-2-0")
+MODEL = os.environ.get("BROWSER_WORKER_MODEL", os.environ.get("ANTHROPIC_DEFAULT_HAIKU_MODEL", "glm-5.2"))
+ANTHROPIC_AUTH_TOKEN = os.environ.get("ANTHROPIC_AUTH_TOKEN", "")
+ANTHROPIC_BASE_URL = os.environ.get("ANTHROPIC_BASE_URL", "")
 RUN_SLOT = threading.BoundedSemaphore(1)
 
 
@@ -76,13 +78,14 @@ class Handler(BaseHTTPRequestHandler):
 
 
 async def run_browser(task, allowed_domains, max_steps):
-    from browser_use import Agent, BrowserProfile, ChatBrowserUse
+    from browser_use import Agent, BrowserProfile, ChatAnthropic
 
     profile_options = {"headless": True}
     if allowed_domains:
         profile_options["allowed_domains"] = allowed_domains
     profile = BrowserProfile(**profile_options)
-    agent = Agent(task=task, llm=ChatBrowserUse(model=MODEL), browser_profile=profile, enable_signal_handler=False)
+    llm = ChatAnthropic(model=MODEL, auth_token=ANTHROPIC_AUTH_TOKEN, base_url=ANTHROPIC_BASE_URL)
+    agent = Agent(task=task, llm=llm, browser_profile=profile, enable_signal_handler=False)
     history = await agent.run(max_steps=max_steps)
     return {
         "ok": bool(history.is_successful()),
@@ -95,5 +98,7 @@ async def run_browser(task, allowed_domains, max_steps):
 if __name__ == "__main__":
     if not TOKEN:
         raise SystemExit("APOLLO_BROWSER_WORKER_TOKEN is required")
+    if not ANTHROPIC_AUTH_TOKEN or not ANTHROPIC_BASE_URL:
+        raise SystemExit("ANTHROPIC_AUTH_TOKEN and ANTHROPIC_BASE_URL are required")
     print(f"[Apollo Browser Worker] listening on http://{HOST}:{PORT}")
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

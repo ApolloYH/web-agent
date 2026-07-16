@@ -8,7 +8,9 @@ python3.12 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/browser-use install
 APOLLO_BROWSER_WORKER_TOKEN=replace-with-random-token \
-BROWSER_USE_API_KEY=replace-with-browser-use-key \
+ANTHROPIC_AUTH_TOKEN=replace-with-anthropic-token \
+ANTHROPIC_BASE_URL=https://api.anthropic.com \
+BROWSER_WORKER_MODEL=claude-haiku-4-5 \
 .venv/bin/python server.py
 ```
 
@@ -28,4 +30,4 @@ sudo systemctl enable --now apollo-browser-worker.service
 curl -fsS http://127.0.0.1:9140/healthz
 ```
 
-共享 `.env` 需设置 `BROWSER_USE_API_KEY`、随机的 `APOLLO_BROWSER_WORKER_TOKEN`，以及供 Web 使用的 `APOLLO_BROWSER_WORKER_URL=http://127.0.0.1:9140`。可用 `BROWSER_USE_MODEL` 覆盖默认模型 `bu-2-0`。
+共享 `.env` 需设置 `ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`、随机的 `APOLLO_BROWSER_WORKER_TOKEN`，以及供 Web 使用的 `APOLLO_BROWSER_WORKER_URL=http://127.0.0.1:9140`。Worker 默认读取 `ANTHROPIC_DEFAULT_HAIKU_MODEL`，也可用 `BROWSER_WORKER_MODEL` 单独覆盖。
