@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { ToolDefinition } from '@apolloyh/apollo-agent';
 
-export function createManagedBrowserTools(config?: { url: string; token: string; allowed?: () => boolean; onSession?: (sessionId: string) => void }): ToolDefinition[] {
+export function createManagedBrowserTools(config?: { url: string; token: string; onSession?: (sessionId: string) => void }): ToolDefinition[] {
   if (!config?.url) return [];
   return [{
     name: 'browser_managed_task',
-    description: '默认浏览器工具。在 Apollo 自托管的隔离浏览器中执行完整网页任务。除非用户在当前请求中明确要求使用自己的浏览器，否则必须使用本工具；它不包含用户本地 Chrome 的登录状态。',
+    description: '默认浏览器工具。在 Apollo 自托管的隔离浏览器中执行完整网页任务。除非用户要求使用自己的浏览器，或对话上下文明显表明当前正在继续用户浏览器任务，否则使用本工具；它不包含用户本地 Chrome 的登录状态。',
     risk: 'high',
     input_schema: {
       type: 'object',
@@ -17,7 +17,6 @@ export function createManagedBrowserTools(config?: { url: string; token: string;
       required: ['task'],
     },
     execute: async (input, context) => {
-      if (config.allowed?.() === false) return { content: '用户已明确要求使用自己的浏览器，请改用 browser_* 工具。', isError: true };
       if (typeof input.task !== 'string' || !input.task.trim() || input.task.length > 10_000) {
         return { content: '托管浏览器 task 无效或过长', isError: true };
       }

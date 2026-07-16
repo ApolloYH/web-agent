@@ -31,9 +31,18 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse): 
 });
 
 async function handlePageAction(action: string, input: Record<string, unknown>): Promise<BrowserResponse> {
-  const controller = pageController ??= new PageController({ enableMask: false, viewportExpansion: 400, keepSemanticTags: true });
+  const controller = pageController ??= new PageController({
+    enableMask: false,
+    viewportExpansion: 400,
+    keepSemanticTags: true,
+    highlightOpacity: 0,
+    highlightLabelOpacity: 0,
+  });
   if (action === 'get_state') {
-    const state = await withIndicator('正在查看页面', undefined, () => controller.getBrowserState());
+    const state = await withIndicator('正在查看页面', undefined, async () => {
+      try { return await controller.getBrowserState(); }
+      finally { await controller.cleanUpHighlights(); }
+    });
     return {
       ok: true,
       ...state,
@@ -87,7 +96,7 @@ function createControlIndicator(): ControlIndicator {
   const root = host.attachShadow({ mode: 'closed' });
   root.innerHTML = `
     <style>
-      .control { position: absolute; inset: 0; opacity: 0; transition: opacity 180ms ease-in; }
+      .control { position: absolute; inset: 0; opacity: 0; transition: opacity 200ms ease-in; }
       .control.active { opacity: 1; transition-timing-function: ease-out; }
       .edge { position: absolute; inset: 3px; border-radius: 15px;
         box-shadow: inset 0 0 24px rgba(96, 115, 255, .18), 0 0 20px rgba(123, 92, 255, .58);
@@ -102,23 +111,23 @@ function createControlIndicator(): ControlIndicator {
         font: 600 12px/16px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         letter-spacing: .01em; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
       .dot { width: 7px; height: 7px; border-radius: 50%; background: #62e6ff; box-shadow: 0 0 10px #62e6ff; }
-      .cursor { position: absolute; left: 0; top: 0; width: 54px; height: 54px;
-        transform: translate3d(calc(64vw - 8px), calc(50vh - 5px), 0);
-        transition: transform 260ms cubic-bezier(.2,.75,.25,1); will-change: transform;
+      .cursor { position: absolute; left: 0; top: 0; width: 75px; height: 75px;
+        transform: translate3d(calc(64vw - 11px), calc(50vh - 6px), 0);
+        will-change: transform;
         filter: drop-shadow(0 5px 8px rgba(24, 31, 70, .35)); }
       .ripple { position: absolute; left: 0; top: 0; width: 38px; height: 38px; border: 3px solid #64d9ff;
         border-radius: 50%; opacity: 0; transform: translate3d(calc(64vw - 19px), calc(50vh - 19px), 0); scale: .25; }
-      .ripple.click { animation: apollo-click 420ms ease-out; }
+      .ripple.click { animation: apollo-click 300ms ease-out; }
       @keyframes apollo-edge-pulse {
         0%, 100% { opacity: .58; }
         50% { opacity: 1; }
       }
       @keyframes apollo-click {
-        0% { opacity: .95; scale: .35; }
-        100% { opacity: 0; scale: 1.7; }
+        0% { opacity: .95; scale: 0; }
+        100% { opacity: 0; scale: 2; }
       }
       @media (prefers-reduced-motion: reduce) {
-        .control, .cursor { transition: none; }
+        .control { transition: none; }
         .edge, .ripple.click { animation: none; }
         .edge { opacity: 1; }
       }
@@ -128,7 +137,8 @@ function createControlIndicator(): ControlIndicator {
       <div class="status"><span class="dot"></span><span class="label">Apollo 正在操作</span></div>
       <div class="ripple"></div>
       <svg class="cursor" viewBox="0 0 54 54" aria-hidden="true">
-        <path d="M8 4.5v35.2l9.1-8.2 7 15.8 8-3.6-7-15.4 12.1-.8L8 4.5Z" fill="#fff" stroke="#5368ff" stroke-width="4" stroke-linejoin="round"/>
+        <defs><linearGradient id="apollo-cursor-gradient" x1="8" y1="5" x2="32" y2="47" gradientUnits="userSpaceOnUse"><stop stop-color="#42d7ff"/><stop offset=".5" stop-color="#5b6cff"/><stop offset="1" stop-color="#e265ff"/></linearGradient></defs>
+        <path d="M8 4.5v35.2l9.1-8.2 7 15.8 8-3.6-7-15.4 12.1-.8L8 4.5Z" fill="#fff" stroke="url(#apollo-cursor-gradient)" stroke-width="4" stroke-linejoin="round"/>
       </svg>
     </div>`;
   document.documentElement.appendChild(host);
@@ -139,13 +149,40 @@ function createControlIndicator(): ControlIndicator {
   const ripple = root.querySelector<HTMLElement>('.ripple')!;
   let x = window.innerWidth * .64;
   let y = window.innerHeight * .5;
+  let targetX = x;
+  let targetY = y;
+  let animationFrame = 0;
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const moveTo = (nextX: number, nextY: number) => {
-    x = Math.max(10, Math.min(window.innerWidth - 10, nextX));
-    y = Math.max(10, Math.min(window.innerHeight - 10, nextY));
-    cursor.style.transform = `translate3d(${x - 8}px, ${y - 5}px, 0)`;
+  const renderPosition = () => {
+    cursor.style.transform = `translate3d(${x - 11}px, ${y - 6}px, 0)`;
     ripple.style.transform = `translate3d(${x - 19}px, ${y - 19}px, 0)`;
+  };
+  const animatePointer = () => {
+    animationFrame = 0;
+    const deltaX = targetX - x;
+    const deltaY = targetY - y;
+    if (Math.abs(deltaX) < 2 && Math.abs(deltaY) < 2) {
+      x = targetX;
+      y = targetY;
+      renderPosition();
+      return;
+    }
+    x += deltaX * .2;
+    y += deltaY * .2;
+    renderPosition();
+    animationFrame = requestAnimationFrame(animatePointer);
+  };
+  const moveTo = (nextX: number, nextY: number) => {
+    targetX = Math.max(10, Math.min(window.innerWidth - 10, nextX));
+    targetY = Math.max(10, Math.min(window.innerHeight - 10, nextY));
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      x = targetX;
+      y = targetY;
+      renderPosition();
+    } else if (!animationFrame) {
+      animationFrame = requestAnimationFrame(animatePointer);
+    }
   };
   const click = () => {
     ripple.classList.remove('click');
@@ -158,7 +195,7 @@ function createControlIndicator(): ControlIndicator {
     if (isRecord(detail) && typeof detail.x === 'number' && typeof detail.y === 'number') moveTo(detail.x, detail.y);
   });
   window.addEventListener('PageAgent::ClickPointer', click);
-  moveTo(x, y);
+  renderPosition();
 
   return {
     show(text) {
@@ -169,7 +206,7 @@ function createControlIndicator(): ControlIndicator {
     moveTo,
     hideSoon() {
       if (hideTimer) clearTimeout(hideTimer);
-      hideTimer = setTimeout(() => control.classList.remove('active'), 650);
+      hideTimer = setTimeout(() => control.classList.remove('active'), 420);
     },
   };
 }

@@ -4,7 +4,10 @@ import { createManagedBrowserTools } from './managed-browser-tools.js';
 
 test('managed browser tool is registered only when worker is configured', () => {
   assert.deepEqual(createManagedBrowserTools(), []);
-  assert.equal(createManagedBrowserTools({ url: 'http://127.0.0.1:9140', token: 'test' })[0]?.risk, 'high');
+  const tool = createManagedBrowserTools({ url: 'http://127.0.0.1:9140', token: 'test' })[0]!;
+  assert.equal(tool.risk, 'high');
+  assert.match(tool.description, /默认浏览器工具/);
+  assert.match(tool.description, /对话上下文/);
 });
 
 test('managed browser tool binds a view session before starting the worker', async () => {
@@ -24,23 +27,6 @@ test('managed browser tool binds a view session before starting the worker', asy
     await tool.execute({ task: 'test' }, { workspaceRoot: '.', emit: () => undefined, requestApproval: async () => true });
     assert.match(sessionId, /^[0-9a-f-]{36}$/);
     assert.equal(requestBody.session_id, sessionId);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test('managed browser yields when the current turn explicitly chose the user browser', async () => {
-  let fetched = false;
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => {
-    fetched = true;
-    return new Response('{}');
-  };
-  try {
-    const tool = createManagedBrowserTools({ url: 'http://127.0.0.1:9140', token: 'test', allowed: () => false })[0]!;
-    const result = await tool.execute({ task: 'test' }, { workspaceRoot: '.', emit: () => undefined, requestApproval: async () => true });
-    assert.equal(result.isError, true);
-    assert.equal(fetched, false);
   } finally {
     globalThis.fetch = originalFetch;
   }
