@@ -41,7 +41,7 @@ const WARM_ASSET_CACHE_FIRST = `  if (APOLLO_WARM_ASSETS.has(url.pathname)) {
 
 `;
 const EMPTY_SVG = '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
-const OFFICE_RUNTIME_PATCH = '20260714-save-cache';
+const OFFICE_RUNTIME_PATCH = '20260716-persistent-cache';
 const OFFICE_IMAGE_BRIDGE = `<script>(()=>{const app=window.APP=window.APP||{};app.AddImage=(done)=>{const input=document.createElement('input');input.type='file';input.accept='image/*';input.onchange=()=>{const file=input.files?.[0];if(!file)return;const reader=new FileReader();reader.onload=()=>{if(typeof reader.result==='string')done({url:reader.result})};reader.onerror=()=>console.error('OnlyOffice image could not be read');reader.readAsDataURL(file)};input.click()}})()</script>`;
 
 export function serveOfficeRuntime(
@@ -110,6 +110,7 @@ export function serveOfficeRuntime(
       .replace('catch(e){console.warn(`Directory ${t} may already exist:`,e)}', 'catch{}')
       .replace('spellcheck:this.options.spellcheck??!1,autosave:', 'autosave:')
       .replaceAll('cache:`no-cache`', 'cache:`default`')
+      .replace('J=null,await An(),On.cleanup(),await Nn(),fn.replaceChildren()', 'J=null,await An(),On.cleanup(),fn.replaceChildren()')
       .replace('web-apps/apps/api/documents/api.js', `web-apps/apps/api/documents/api.js?apollo=${OFFICE_RUNTIME_PATCH}`);
     res.writeHead(200, {
       'Content-Type': 'text/javascript; charset=utf-8',

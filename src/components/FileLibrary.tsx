@@ -9,6 +9,8 @@ const filters = [
   ['markdown', 'Markdown'],
   ['json', 'JSON'],
 ] as const;
+const FILTER_STORAGE_KEY = 'apollo:library-filter';
+type FilterKind = (typeof filters)[number][0];
 
 export default function FileLibrary({ files, localFiles, loading, localFolderName, source, onSourceChange, onOpen, onConnectFolder, onRefreshFolder }: {
   files: LibraryFile[];
@@ -22,7 +24,7 @@ export default function FileLibrary({ files, localFiles, loading, localFolderNam
   onRefreshFolder: () => void;
 }) {
   const [query, setQuery] = useState('');
-  const [kind, setKind] = useState<(typeof filters)[number][0]>('all');
+  const [kind, setKind] = useState<FilterKind>(readStoredFilter);
   const deferredQuery = useDeferredValue(query);
   const sourceFiles = source === 'server' ? files : localFiles;
   const visibleFiles = useMemo(() => {
@@ -64,7 +66,7 @@ export default function FileLibrary({ files, localFiles, loading, localFolderNam
 
         <div className="mt-8 flex flex-wrap gap-1.5">
           {filters.map(([value, label]) => (
-            <button key={value} type="button" onClick={() => setKind(value)} className={`rounded-full px-3.5 py-1.5 text-[11px] transition-colors ${kind === value ? 'bg-[#171717] text-white' : 'bg-[#f4f4f4] text-[#666] hover:bg-[#e9e9e9]'}`}>
+            <button key={value} type="button" onClick={() => { setKind(value); sessionStorage.setItem(FILTER_STORAGE_KEY, value); }} className={`rounded-full px-3.5 py-1.5 text-[11px] transition-colors ${kind === value ? 'bg-[#171717] text-white' : 'bg-[#f4f4f4] text-[#666] hover:bg-[#e9e9e9]'}`}>
               {label}
             </button>
           ))}
@@ -83,6 +85,11 @@ export default function FileLibrary({ files, localFiles, loading, localFolderNam
       </div>
     </section>
   );
+}
+
+function readStoredFilter(): FilterKind {
+  const stored = sessionStorage.getItem(FILTER_STORAGE_KEY);
+  return filters.some(([value]) => value === stored) ? stored as FilterKind : 'all';
 }
 
 function FileRow({ file, onOpen }: { file: LibraryFile; onOpen: (file: LibraryFile) => void }) {
