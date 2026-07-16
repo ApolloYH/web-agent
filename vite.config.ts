@@ -14,6 +14,8 @@ export default defineConfig(({ mode }) => {
     registrationInvite: env.WEB_REGISTRATION_INVITE || '',
     adminUsername: env.WEB_ADMIN_USERNAME || '',
     allowUnrestricted: env.WEB_ALLOW_UNRESTRICTED === 'true',
+    maxConcurrentRuns: Number(env.WEB_MAX_CONCURRENT_RUNS || 8),
+    maxRunsPerUser: Number(env.WEB_MAX_RUNS_PER_USER || 3),
     entry: {
       langcoreApiKey: env.LANGCORE_API_KEY || '',
       langhubApiKey: env.NOUMI_API_KEY || '',

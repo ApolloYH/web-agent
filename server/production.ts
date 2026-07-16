@@ -15,6 +15,8 @@ const apollo = createApolloMiddleware({
   registrationInvite: process.env.WEB_REGISTRATION_INVITE || '',
   adminUsername: process.env.WEB_ADMIN_USERNAME || '',
   allowUnrestricted: process.env.WEB_ALLOW_UNRESTRICTED === 'true',
+  maxConcurrentRuns: Number(process.env.WEB_MAX_CONCURRENT_RUNS || 8),
+  maxRunsPerUser: Number(process.env.WEB_MAX_RUNS_PER_USER || 3),
   entry: {
     langcoreApiKey: process.env.LANGCORE_API_KEY || '',
     langhubApiKey: process.env.NOUMI_API_KEY || '',
@@ -32,16 +34,51 @@ const apollo = createApolloMiddleware({
 });
 
 const server = createServer((req, res) => {
-  void apollo.handle(req, res, () => { void serveStatic(req.url || '/', req.method || 'GET', res); });
+  if (req.url === '/healthz' && req.method === 'GET') {
+    const health = apollo.health();
+    res.writeHead(health.ready ? 200 : 503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify(health));
+    return;
+  }
+  apollo.handle(req, res, () => {
+    void serveStatic(req.url || '/', req.method || 'GET', res).catch((error) => {
+      console.error(`[Apollo] 静态资源处理失败：${error instanceof Error ? error.message : String(error)}`);
+      if (!res.headersSent) res.writeHead(500).end('Internal server error');
+      else if (!res.writableEnded) res.end();
+    });
+  });
+});
+
+server.headersTimeout = 15_000;
+server.requestTimeout = 5 * 60_000;
+server.keepAliveTimeout = 5_000;
+server.maxRequestsPerSocket = 1_000;
+server.on('clientError', (_error, socket) => {
+  if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
 });
 
 server.listen(port, '127.0.0.1', () => console.info(`[Apollo] 生产服务已启动：http://127.0.0.1:${port}`));
 
+let shuttingDown = false;
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-  process.on(signal, () => server.close(() => {
+  process.on(signal, () => { void shutdown(signal); });
+}
+
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.info(`[Apollo] 收到 ${signal}，开始优雅停机`);
+  server.close();
+  const forceClose = setTimeout(() => server.closeAllConnections(), 15_000);
+  forceClose.unref();
+  try {
+    await apollo.close();
+  } finally {
+    server.closeAllConnections();
     officeServer?.close();
-    void apollo.close().finally(() => process.exit(0));
-  }));
+    clearTimeout(forceClose);
+    process.exitCode = 0;
+  }
 }
 
 async function serveStatic(rawUrl: string, method: string, res: import('node:http').ServerResponse): Promise<void> {

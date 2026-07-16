@@ -3,7 +3,7 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { createHash, randomBytes, scryptSync, timingSafeEqual, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, scrypt, timingSafeEqual, randomUUID } from 'node:crypto';
 import {
   PRODUCT,
   createQueryEngine,
@@ -16,6 +16,7 @@ import {
 import type { Artifact, RuntimeStatus } from '../src/types/index.js';
 import { createEntryTools } from './entry-tools.js';
 import { createDocumentTools } from './document-tools.js';
+import { agentRunKey, capacityReason } from './concurrency.js';
 
 const ARTIFACT_EXTENSIONS = new Set(['.docx', '.pdf', '.jpg', '.jpeg', '.png', '.webp', '.md', '.markdown', '.json']);
 const SKIP_DIRECTORIES = new Set(['.git', '.apollo', 'node_modules', 'dist']);
@@ -24,14 +25,27 @@ const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const UPLOAD_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt', '.md', '.json']);
 
 type Send = (event: object) => void;
-type PendingInteraction = { resolve: (answer: string) => void; fallback: string };
+type PendingInteraction = { userId: string; resolve: (answer: string) => void; fallback: string };
 type AuthUser = { id: string; username: string; admin: boolean };
 type RunContext = {
+  userId: string;
   send: Send;
   sink: (event: TraceEvent) => void;
   permissionMode: 'ask' | 'unrestricted';
   interactionIds: Set<string>;
   runtime?: QueryEngine;
+};
+
+type UserRuntimeContext = {
+  userId: string;
+  workspaceRoot: string;
+  assistantConfigPath: string;
+  assistantSessionPath: string;
+  assistantEngine?: Promise<QueryEngine>;
+  entryEngines: Map<string, Promise<QueryEngine>>;
+  entryTurnStates: Map<string, { standardsQuery?: Promise<string> }>;
+  ready: Promise<void>;
+  lastUsedAt: number;
 };
 
 type EntryConfig = {
@@ -41,29 +55,48 @@ type EntryConfig = {
   projects: Record<string, string>;
 };
 
-export function createApolloMiddleware({ workspaceRoot, envPath, registrationInvite, adminUsername, allowUnrestricted = false, entry }: { workspaceRoot: string; envPath: string; registrationInvite: string; adminUsername: string; allowUnrestricted?: boolean; entry: EntryConfig }) {
+export function createApolloMiddleware({ workspaceRoot, envPath, registrationInvite, adminUsername, allowUnrestricted = false, maxConcurrentRuns = 8, maxRunsPerUser = 3, entry }: { workspaceRoot: string; envPath: string; registrationInvite: string; adminUsername: string; allowUnrestricted?: boolean; maxConcurrentRuns?: number; maxRunsPerUser?: number; entry: EntryConfig }) {
   const entryConfigTemplatePath = path.join(workspaceRoot, 'config', 'web-entry-apollo.json');
   const entryConfigPath = path.join(workspaceRoot, '.apollo', 'web-entry-config.json');
   const assistantConfigTemplatePath = path.join(workspaceRoot, 'config', 'web-assistant-apollo.json');
   const databasePath = path.join(workspaceRoot, '.apollo', 'web-agent.sqlite');
-  let activeWorkspaceRoot = workspaceRoot;
-  let activeAssistantConfigPath = assistantConfigTemplatePath;
-  let assistantSessionPath = path.join(workspaceRoot, '.apollo', 'web-assistant-session');
-  // ponytail: 同一用户的会话可并行；启用多用户并发时再把引擎与路径状态改为 per-user map。
-  let activeUserId = '';
-  let userActivation: Promise<void> | undefined;
   let database: DatabaseSync | undefined;
-  const entryEngines = new Map<string, QueryEngine>();
-  let assistantEngine: QueryEngine | undefined;
   const runs = new Map<string, RunContext>();
-  let interactionSequence = 0;
   const interactions = new Map<string, PendingInteraction>();
-  const entryTurnStates = new Map<string, { standardsQuery?: Promise<string> }>();
+  const userContexts = new Map<string, UserRuntimeContext>();
+  const globalRunLimit = positiveInteger(maxConcurrentRuns, 8);
+  const perUserRunLimit = Math.min(positiveInteger(maxRunsPerUser, 3), globalRunLimit);
+  let auxiliaryJobs = 0;
+  let closing = false;
   const entryTemplate = JSON.parse(readFileSync(entryConfigTemplatePath, 'utf8')) as Record<string, unknown>;
   let entryRuntime: Record<string, unknown> = {};
   try { entryRuntime = JSON.parse(readFileSync(entryConfigPath, 'utf8')) as Record<string, unknown>; } catch { /* first start */ }
   mkdirSync(path.dirname(entryConfigPath), { recursive: true });
   writeFileSync(entryConfigPath, `${JSON.stringify({ ...entryTemplate, permissions: entryRuntime.permissions ?? entryTemplate.permissions }, null, 2)}\n`, 'utf8');
+
+  const getUserContext = async (userId: string): Promise<UserRuntimeContext> => {
+    let context = userContexts.get(userId);
+    if (!context) {
+      const userRoot = path.join(workspaceRoot, '.apollo', 'users', userId, 'workspace');
+      context = {
+        userId,
+        workspaceRoot: userRoot,
+        assistantConfigPath: path.join(userRoot, '.apollo', 'assistant-config.json'),
+        assistantSessionPath: path.join(userRoot, '.apollo', 'web-assistant-session'),
+        entryEngines: new Map(),
+        entryTurnStates: new Map(),
+        ready: ensureUserWorkspace(userRoot, path.join(workspaceRoot, 'entry-skills'), assistantConfigTemplatePath),
+        lastUsedAt: Date.now(),
+      };
+      userContexts.set(userId, context);
+      context.ready.catch(() => {
+        if (userContexts.get(userId) === context) userContexts.delete(userId);
+      });
+    }
+    context.lastUsedAt = Date.now();
+    await context.ready;
+    return context;
+  };
 
   const requestInteraction = (
     runKey: string,
@@ -72,19 +105,19 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
   ): Promise<string> => {
     const run = runs.get(runKey);
     if (!run) return Promise.resolve(fallback);
-    const id = `interaction-${interactionSequence++}`;
+    const id = `interaction-${randomUUID()}`;
     run.interactionIds.add(id);
     run.send({ ...payload, id });
-    return new Promise((resolve) => interactions.set(id, { resolve, fallback }));
+    return new Promise((resolve) => interactions.set(id, { userId: run.userId, resolve, fallback }));
   };
 
   const requestEditorTool = async (runKey: string, action: string, input: Record<string, unknown>): Promise<Record<string, unknown>> => {
     const run = runs.get(runKey);
     if (!run) return { ok: false, error: '当前没有可用的浏览器编辑会话' };
-    const id = `editor-${interactionSequence++}`;
+    const id = `editor-${randomUUID()}`;
     run.interactionIds.add(id);
     run.send({ type: 'editor_request', id, action, input });
-    const answer = await new Promise<string>((resolve) => interactions.set(id, { resolve, fallback: JSON.stringify({ ok: false, error: '编辑请求已取消' }) }));
+    const answer = await new Promise<string>((resolve) => interactions.set(id, { userId: run.userId, resolve, fallback: JSON.stringify({ ok: false, error: '编辑请求已取消' }) }));
     try {
       const parsed = JSON.parse(answer) as unknown;
       return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : { ok: false, error: '编辑器返回格式无效' };
@@ -119,10 +152,10 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     return approved;
   };
 
-  const createAssistantEngine = async (runKey: string, sessionId?: string) => createQueryEngine({
-    configPath: activeAssistantConfigPath,
+  const createAssistantEngine = async (context: UserRuntimeContext, runKey: string, sessionId?: string) => createQueryEngine({
+    configPath: context.assistantConfigPath,
     configMode: 'isolated',
-    workspaceRoot: activeWorkspaceRoot,
+    workspaceRoot: context.workspaceRoot,
     envPath,
     sessionId,
     approvalProvider: approvalProvider(runKey),
@@ -136,23 +169,32 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     extraTools: createDocumentTools((action, input) => requestEditorTool(runKey, action, input)),
   });
 
-  const getEngine = async (channel: 'assistant' | 'entry' = 'entry', conversationId = '') => {
-    const runKey = channel === 'assistant' ? 'assistant' : `entry:${conversationId}`;
+  const getEngine = async (context: UserRuntimeContext, channel: 'assistant' | 'entry' = 'entry', conversationId = '') => {
+    const runKey = agentRunKey(context.userId, channel, conversationId);
     if (channel === 'assistant') {
-      const sessionId = await fs.readFile(assistantSessionPath, 'utf8').then((value) => value.trim()).catch(() => '');
-      assistantEngine ??= await createAssistantEngine(runKey, sessionId || undefined);
-      return assistantEngine;
+      if (!context.assistantEngine) {
+        const runtimePromise = fs.readFile(context.assistantSessionPath, 'utf8')
+          .then((value) => value.trim())
+          .catch(() => '')
+          .then((sessionId) => createAssistantEngine(context, runKey, sessionId || undefined));
+        context.assistantEngine = runtimePromise;
+        runtimePromise.catch(() => {
+          if (context.assistantEngine === runtimePromise) context.assistantEngine = undefined;
+        });
+      }
+      return context.assistantEngine;
     }
-    const existing = entryEngines.get(conversationId);
+    const existing = context.entryEngines.get(conversationId);
     if (existing) return existing;
-    const sessionPath = entrySessionPath(activeWorkspaceRoot, conversationId);
-    const sessionId = await fs.readFile(sessionPath, 'utf8').then((value) => value.trim()).catch(() => '');
-    const turnState = entryTurnStates.get(conversationId) ?? {};
-    entryTurnStates.set(conversationId, turnState);
-    const runtime = await createQueryEngine({
+    const turnState = context.entryTurnStates.get(conversationId) ?? {};
+    context.entryTurnStates.set(conversationId, turnState);
+    const runtimePromise = fs.readFile(entrySessionPath(context.workspaceRoot, conversationId), 'utf8')
+      .then((value) => value.trim())
+      .catch(() => '')
+      .then((sessionId) => createQueryEngine({
       configPath: entryConfigPath,
       configMode: 'isolated',
-      workspaceRoot: activeWorkspaceRoot,
+      workspaceRoot: context.workspaceRoot,
       envPath,
       sessionId: sessionId || undefined,
       approvalProvider: approvalProvider(runKey),
@@ -161,7 +203,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       memoryEnabled: false,
       extraTools: [
         ...createEntryTools({
-          workspaceRoot: activeWorkspaceRoot,
+          workspaceRoot: context.workspaceRoot,
           conversationId,
           langcoreApiKey: entry.langcoreApiKey,
           langhubApiKey: entry.langhubApiKey,
@@ -172,49 +214,45 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
         }),
         ...createDocumentTools((action, input) => requestEditorTool(runKey, action, input)),
       ],
+    }));
+    context.entryEngines.set(conversationId, runtimePromise);
+    runtimePromise.catch(() => {
+      if (context.entryEngines.get(conversationId) === runtimePromise) context.entryEngines.delete(conversationId);
     });
-    entryEngines.set(conversationId, runtime);
-    return runtime;
+    return runtimePromise;
   };
 
-  const closeEngines = async () => {
-    await Promise.all([assistantEngine?.close(), ...[...entryEngines.values()].map((runtime) => runtime.close())]);
-    entryEngines.clear();
-    entryTurnStates.clear();
-    assistantEngine = undefined;
+  const closeAssistantEngine = async (context: UserRuntimeContext) => {
+    const runtime = context.assistantEngine;
+    context.assistantEngine = undefined;
+    if (runtime) await runtime.then((engine) => engine.close()).catch(() => undefined);
   };
 
-  const activateUser = async (user: AuthUser) => {
-    if (activeUserId === user.id) return;
-    if (userActivation) {
-      await userActivation;
-      if (activeUserId === user.id) return;
-    }
-    userActivation = (async () => {
-      if (runs.size) throw new Error('其他用户的智能体正在运行，请稍后重试');
-      await closeEngines();
-      activeUserId = user.id;
-      activeWorkspaceRoot = path.join(workspaceRoot, '.apollo', 'users', user.id, 'workspace');
-      activeAssistantConfigPath = path.join(activeWorkspaceRoot, '.apollo', 'assistant-config.json');
-      assistantSessionPath = path.join(activeWorkspaceRoot, '.apollo', 'web-assistant-session');
-      await ensureUserWorkspace(activeWorkspaceRoot, path.join(workspaceRoot, 'entry-skills'), assistantConfigTemplatePath);
-    })();
-    try { await userActivation; } finally { userActivation = undefined; }
+  const closeEntryEngines = async (context: UserRuntimeContext) => {
+    const runtimes = [...context.entryEngines.values()];
+    context.entryEngines.clear();
+    context.entryTurnStates.clear();
+    await Promise.all(runtimes.map((runtime) => runtime.then((engine) => engine.close()).catch(() => undefined)));
   };
 
-  const handle = async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+  const closeUserEngines = async (context: UserRuntimeContext) => {
+    await Promise.all([closeAssistantEngine(context), closeEntryEngines(context)]);
+  };
+
+  const handleRequest = async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
     if (!req.url?.startsWith('/apollo-api/')) return next();
+    if (closing) return jsonError(res, 503, '服务正在重启，请稍后重试');
     if (isHttps(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     if (!isSameOriginMutation(req)) return jsonError(res, 403, '跨站请求已拒绝');
     database ??= openConversationDatabase(databasePath);
     if (req.url.startsWith('/apollo-api/auth/')) return handleAuth(req, res, database, workspaceRoot, registrationInvite, adminUsername);
     const user = authenticatedUser(req, database);
     if (!user) return jsonError(res, 401, '请先登录');
-    const userWorkspaceRoot = path.join(workspaceRoot, '.apollo', 'users', user.id, 'workspace');
+    const context = await getUserContext(user.id);
+    const userWorkspaceRoot = context.workspaceRoot;
     const userArtifactRoot = path.join(userWorkspaceRoot, 'artifacts');
-    await ensureUserWorkspace(userWorkspaceRoot, path.join(workspaceRoot, 'entry-skills'), assistantConfigTemplatePath);
 
-    if (req.url === '/apollo-api/respond') return handleResponse(req, res, interactions);
+    if (req.url === '/apollo-api/respond') return handleResponse(req, res, user.id, interactions);
     if (req.url === '/apollo-api/uploads') return handleUploads(req, res, userWorkspaceRoot);
     if (req.url === '/apollo-api/artifacts/import') return importArtifacts(req, res, userArtifactRoot);
     if (req.url === '/apollo-api/memories' && req.method === 'GET') {
@@ -241,15 +279,14 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       return json(res, 200, { conversations: listConversations(database, user.id) });
     }
     if (req.url.startsWith('/apollo-api/conversations/')) {
-      try { await activateUser(user); } catch (error) { return jsonError(res, 409, error instanceof Error ? error.message : String(error)); }
       const conversationId = decodeURIComponent(req.url.slice('/apollo-api/conversations/'.length).split('?', 1)[0]!);
-      if (req.method === 'DELETE' && runs.has(`entry:${conversationId}`)) return jsonError(res, 409, '请先停止正在运行的对话');
+      if (req.method === 'DELETE' && runs.has(agentRunKey(user.id, 'entry', conversationId))) return jsonError(res, 409, '请先停止正在运行的对话');
       await handleConversation(req, res, database, user.id);
       if (req.method === 'DELETE' && /^chat-[A-Za-z0-9-]{1,80}$/.test(conversationId)) {
-        const runtime = entryEngines.get(conversationId);
-        if (runtime) await runtime.close();
-        entryEngines.delete(conversationId);
-        entryTurnStates.delete(conversationId);
+        const runtime = context.entryEngines.get(conversationId);
+        context.entryEngines.delete(conversationId);
+        context.entryTurnStates.delete(conversationId);
+        if (runtime) await runtime.then((engine) => engine.close()).catch(() => undefined);
         const sessionPath = entrySessionPath(userWorkspaceRoot, conversationId);
         const sessionId = await fs.readFile(sessionPath, 'utf8').then((value) => value.trim()).catch(() => '');
         await Promise.all([
@@ -276,31 +313,39 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       try {
         const { text } = JSON.parse(await readBody(req)) as { text?: unknown };
         if (typeof text !== 'string' || !text.trim()) throw new Error('text 不能为空');
-        const titleEngine = await createQueryEngine({
-          configPath: entryConfigPath,
-          configMode: 'isolated',
-          workspaceRoot: userWorkspaceRoot,
-          envPath,
-          stream: false,
-          memoryEnabled: false,
-          approvalProvider: async () => false,
-        });
+        if (capacityReason(runs.values(), user.id, globalRunLimit, perUserRunLimit, auxiliaryJobs) === 'global') {
+          res.setHeader('Retry-After', '3');
+          return jsonError(res, 429, '服务繁忙，请稍后重试');
+        }
+        auxiliaryJobs += 1;
+        let titleEngine: QueryEngine | undefined;
         try {
+          titleEngine = await createQueryEngine({
+            configPath: entryConfigPath,
+            configMode: 'isolated',
+            workspaceRoot: userWorkspaceRoot,
+            envPath,
+            stream: false,
+            memoryEnabled: false,
+            approvalProvider: async () => false,
+          });
           const title = await titleEngine.submitMessage(`为下面的用户请求生成一个简洁中文对话标题。只输出标题，不要解释、引号、句号或 Markdown，长度 6 到 16 个汉字。\n\n用户请求：${text.trim().slice(0, 2000)}`);
           return json(res, 200, { title: cleanTitle(title) });
         } finally {
-          const sessionId = titleEngine.getSessionId();
-          await titleEngine.close();
-          if (sessionId) await fs.rm(path.join(userWorkspaceRoot, '.apollo', 'sessions', `${sessionId}.json`), { force: true });
+          auxiliaryJobs -= 1;
+          if (titleEngine) {
+            const sessionId = titleEngine.getSessionId();
+            await titleEngine.close();
+            if (sessionId) await fs.rm(path.join(userWorkspaceRoot, '.apollo', 'sessions', `${sessionId}.json`), { force: true });
+          }
         }
       } catch (error) {
         return jsonError(res, 400, error instanceof Error ? error.message : String(error));
       }
     }
     if (req.url.startsWith('/apollo-api/permission')) {
-      await activateUser(user);
       const requestedChannel = new URL(req.url, 'http://localhost').searchParams.get('channel') === 'entry' ? 'entry' : 'assistant';
-      const permissionConfigPath = requestedChannel === 'entry' ? entryConfigPath : activeAssistantConfigPath;
+      const permissionConfigPath = requestedChannel === 'entry' ? entryConfigPath : context.assistantConfigPath;
       if (req.method === 'GET') return json(res, 200, { mode: allowUnrestricted ? await permissionMode(permissionConfigPath) : 'ask' });
       if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
       if (runs.size) return jsonError(res, 409, '智能体正在运行，请稍后切换模式');
@@ -308,7 +353,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
         const { mode, channel } = JSON.parse(await readBody(req)) as { mode?: unknown; channel?: unknown };
         if (mode !== 'ask' && mode !== 'unrestricted') throw new Error('无效的权限模式');
         if (channel === 'entry' && !user.admin) throw new Error('只有管理员可以修改统一入口权限');
-        const targetConfigPath = channel === 'entry' ? entryConfigPath : activeAssistantConfigPath;
+        const targetConfigPath = channel === 'entry' ? entryConfigPath : context.assistantConfigPath;
         if (mode === 'unrestricted' && !allowUnrestricted) throw new Error('当前部署未启用全自动权限；请先使用沙箱并设置 WEB_ALLOW_UNRESTRICTED=true');
         const config = await readConfig(targetConfigPath);
         config.permissions = {
@@ -317,16 +362,16 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
           autoApproveReadOnly: true,
         };
         await writeConfig(targetConfigPath, config);
-        await closeEngines();
+        if (channel === 'entry') await Promise.all([...userContexts.values()].map(closeEntryEngines));
+        else await closeAssistantEngine(context);
         return json(res, 200, { mode });
       } catch (error) {
         return jsonError(res, 400, error instanceof Error ? error.message : String(error));
       }
     }
     if (req.url === '/apollo-api/config') {
-      await activateUser(user);
       if (req.method === 'GET') {
-        const config = await fs.readFile(activeAssistantConfigPath, 'utf8').catch(() => '{}');
+        const config = await fs.readFile(context.assistantConfigPath, 'utf8').catch(() => '{}');
         return json(res, 200, { path: '当前用户/.apollo/assistant-config.json', config });
       }
       if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
@@ -338,8 +383,8 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
         if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') throw new Error('配置必须是 JSON 对象');
         const permissions = (parsed as { permissions?: { mode?: unknown } }).permissions;
         if (permissions?.mode === 'unrestricted' && !allowUnrestricted) throw new Error('当前部署禁止保存 unrestricted 权限');
-        await writeConfig(activeAssistantConfigPath, parsed as Record<string, unknown>);
-        await closeEngines();
+        await writeConfig(context.assistantConfigPath, parsed as Record<string, unknown>);
+        await closeAssistantEngine(context);
         return json(res, 200, { ok: true });
       } catch (error) {
         return jsonError(res, 400, error instanceof Error ? error.message : String(error));
@@ -347,15 +392,13 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     }
     if (req.url === '/apollo-api/status' && req.method === 'GET') {
       try {
-        await activateUser(user);
-        return json(res, 200, runtimeStatus(await getEngine('assistant')));
+        return json(res, 200, runtimeStatus(await getEngine(context, 'assistant')));
       } catch (error) {
         return jsonError(res, 500, error instanceof Error ? error.message : String(error));
       }
     }
     if (req.url !== '/apollo-api/chat') return next();
     if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
-    try { await activateUser(user); } catch (error) { return jsonError(res, 409, error instanceof Error ? error.message : String(error)); }
 
     let message: unknown;
     let channel: 'assistant' | 'entry' = 'entry';
@@ -374,8 +417,13 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       return jsonError(res, 400, error instanceof Error ? error.message : String(error));
     }
 
-    const runKey = channel === 'assistant' ? 'assistant' : `entry:${conversationId}`;
+    const runKey = agentRunKey(user.id, channel, conversationId);
     if (runs.has(runKey)) return jsonError(res, 409, '当前对话正在处理上一条消息');
+    const capacity = capacityReason(runs.values(), user.id, globalRunLimit, perUserRunLimit, auxiliaryJobs);
+    if (capacity) {
+      res.setHeader('Retry-After', '3');
+      return jsonError(res, 429, capacity === 'user' ? '当前账号并发任务过多，请稍后重试' : '服务繁忙，请稍后重试');
+    }
 
     console.info(`[Apollo] 开始调用：Apollo Agent｜通道：${channel === 'assistant' ? '助理' : '统一入口'}｜输入：${logPreview(message as string)}`);
 
@@ -401,15 +449,15 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       if (event.type === 'tool_result') event.artifacts?.forEach((artifact) => reportedArtifacts.set(artifact.path, artifact));
       send({ type: 'trace', event: webTraceEvent(event) });
     };
-    const configPath = channel === 'assistant' ? activeAssistantConfigPath : entryConfigPath;
+    const configPath = channel === 'assistant' ? context.assistantConfigPath : entryConfigPath;
     const run: RunContext = {
+      userId: user.id,
       send,
       sink,
       permissionMode: 'ask',
       interactionIds: new Set(),
     };
     runs.set(runKey, run);
-    if (allowUnrestricted) run.permissionMode = await permissionMode(configPath);
 
     res.on('close', () => {
       closed = true;
@@ -424,31 +472,32 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     });
 
     try {
+      if (allowUnrestricted) run.permissionMode = await permissionMode(configPath);
       if (channel === 'entry') {
-        const turnState = entryTurnStates.get(conversationId) ?? {};
+        const turnState = context.entryTurnStates.get(conversationId) ?? {};
         turnState.standardsQuery = undefined;
-        entryTurnStates.set(conversationId, turnState);
+        context.entryTurnStates.set(conversationId, turnState);
       }
-      const runtime = await getEngine(channel, conversationId);
+      const runtime = await getEngine(context, channel, conversationId);
       runs.get(runKey)!.runtime = runtime;
       await runInput(runtime, message.trim(), send);
       if (channel === 'assistant' && runtime.getSessionId()) {
-        await fs.mkdir(path.dirname(assistantSessionPath), { recursive: true });
-        await fs.writeFile(assistantSessionPath, `${runtime.getSessionId()}\n`, 'utf8');
+        await fs.mkdir(path.dirname(context.assistantSessionPath), { recursive: true });
+        await fs.writeFile(context.assistantSessionPath, `${runtime.getSessionId()}\n`, 'utf8');
       }
       if (channel === 'entry' && runtime.getSessionId()) {
-        const sessionPath = entrySessionPath(activeWorkspaceRoot, conversationId);
+        const sessionPath = entrySessionPath(context.workspaceRoot, conversationId);
         await fs.mkdir(path.dirname(sessionPath), { recursive: true });
         await fs.writeFile(sessionPath, `${runtime.getSessionId()}\n`, 'utf8');
       }
       const artifactScope = channel === 'entry' ? path.join('artifacts', conversationId) : undefined;
-      const artifacts = await collectArtifacts(activeWorkspaceRoot, startedAt, changedPaths, artifactScope, reportedArtifacts);
+      const artifacts = await collectArtifacts(context.workspaceRoot, startedAt, changedPaths, artifactScope, reportedArtifacts);
       console.info(`[Apollo] 调用完成：Apollo Agent｜耗时：${Date.now() - startedAt}ms｜产出文件：${artifacts.length}个`);
       send({ type: 'done', artifacts, status: runtimeStatus(runtime) });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const artifactScope = channel === 'entry' ? path.join('artifacts', conversationId) : undefined;
-      const artifacts = await collectArtifacts(activeWorkspaceRoot, startedAt, changedPaths, artifactScope, reportedArtifacts);
+      const artifacts = await collectArtifacts(context.workspaceRoot, startedAt, changedPaths, artifactScope, reportedArtifacts);
       console.error(`[Apollo] 调用失败：Apollo Agent｜错误：${logPreview(message)}｜已恢复文件：${artifacts.length}个`);
       const runtime = runs.get(runKey)?.runtime;
       if (runtime && artifacts.length) send({ type: 'done', artifacts, status: runtimeStatus(runtime) });
@@ -467,15 +516,50 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     }
   };
 
+  const idleContextSweep = setInterval(() => {
+    const cutoff = Date.now() - 30 * 60_000;
+    for (const [userId, context] of userContexts) {
+      if (context.lastUsedAt >= cutoff || [...runs.values()].some((run) => run.userId === userId)) continue;
+      userContexts.delete(userId);
+      void closeUserEngines(context);
+    }
+  }, 60_000);
+  idleContextSweep.unref();
+
+  const handle = (req: IncomingMessage, res: ServerResponse, next: () => void): void => {
+    void handleRequest(req, res, next).catch((error) => {
+      console.error(`[Apollo] 请求处理失败：${error instanceof Error ? error.stack ?? error.message : String(error)}`);
+      if (!res.headersSent) jsonError(res, 500, '服务暂时不可用，请稍后重试');
+      else if (!res.writableEnded) res.end();
+    });
+  };
+
   return {
     handle,
+    health: () => ({
+      ready: !closing,
+      activeRuns: runs.size,
+      activeJobs: runs.size + auxiliaryJobs,
+      runtimeUsers: userContexts.size,
+      limits: { global: globalRunLimit, perUser: perUserRunLimit },
+    }),
     close: async () => {
+      if (closing) return;
+      closing = true;
+      clearInterval(idleContextSweep);
+      for (const run of runs.values()) run.runtime?.cancelCurrentTurn();
       for (const pending of interactions.values()) pending.resolve(pending.fallback);
       interactions.clear();
-      await closeEngines();
+      await Promise.all([...userContexts.values()].map(closeUserEngines));
+      userContexts.clear();
       database?.close();
+      database = undefined;
     },
   };
+}
+
+function positiveInteger(value: number, fallback: number): number {
+  return Number.isInteger(value) && value > 0 ? value : fallback;
 }
 
 async function handleUploads(req: IncomingMessage, res: ServerResponse, userWorkspaceRoot: string): Promise<void> {
@@ -613,7 +697,7 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, database: D
       if (firstUser && (!adminUsername || username.toLowerCase() !== adminUsername.toLowerCase())) return jsonError(res, 403, '首个账号必须使用 WEB_ADMIN_USERNAME 指定的管理员用户名');
       const admin = Boolean(adminUsername) && username.toLowerCase() === adminUsername.toLowerCase();
       const id = randomUUID();
-      database.prepare('INSERT INTO users (id, username, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?, ?)').run(id, username, passwordHash(body.password), admin ? 1 : 0, new Date().toISOString());
+      database.prepare('INSERT INTO users (id, username, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?, ?)').run(id, username, await passwordHash(body.password), admin ? 1 : 0, new Date().toISOString());
       user = { id, username, admin };
       if (firstUser) {
         const rows = database.prepare("SELECT id FROM conversations WHERE instr(id, ':') = 0").all() as Array<{ id: string }>;
@@ -626,7 +710,7 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, database: D
       }
     } else {
       const row = database.prepare('SELECT id, username, password_hash AS "passwordHash" FROM users WHERE username = ?').get(username) as { id: string; username: string; passwordHash: string } | undefined;
-      if (!row || !verifyPassword(body.password, row.passwordHash)) throw new Error('用户名或密码错误');
+      if (!row || !await verifyPassword(body.password, row.passwordHash)) throw new Error('用户名或密码错误');
       user = { id: row.id, username: row.username, admin: isAdmin(database, row.id) };
     }
     const token = randomBytes(32).toString('base64url');
@@ -678,17 +762,21 @@ function setSessionCookie(req: IncomingMessage, res: ServerResponse, token: stri
   res.setHeader('Set-Cookie', `apollo_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? '; Secure' : ''}`);
 }
 
-function passwordHash(password: string): string {
+async function passwordHash(password: string): Promise<string> {
   const salt = randomBytes(16);
-  return `${salt.toString('base64')}:${scryptSync(password, salt, 64).toString('base64')}`;
+  return `${salt.toString('base64')}:${(await derivePassword(password, salt, 64)).toString('base64')}`;
 }
 
-function verifyPassword(password: string, encoded: string): boolean {
+async function verifyPassword(password: string, encoded: string): Promise<boolean> {
   const [saltText, hashText] = encoded.split(':');
   if (!saltText || !hashText) return false;
   const expected = Buffer.from(hashText, 'base64');
-  const actual = scryptSync(password, Buffer.from(saltText, 'base64'), expected.length);
+  const actual = await derivePassword(password, Buffer.from(saltText, 'base64'), expected.length);
   return expected.length === actual.length && timingSafeEqual(expected, actual);
+}
+
+function derivePassword(password: string, salt: Buffer, length: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => scrypt(password, salt, length, (error, key) => error ? reject(error) : resolve(key)));
 }
 
 function hashToken(token: string): string {
@@ -924,6 +1012,7 @@ type WebEvent =
 async function handleResponse(
   req: IncomingMessage,
   res: ServerResponse,
+  userId: string,
   interactions: Map<string, PendingInteraction>,
 ): Promise<void> {
   if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
@@ -932,6 +1021,7 @@ async function handleResponse(
     if (typeof id !== 'string' || typeof answer !== 'string') throw new Error('id 和 answer 必填');
     const pending = interactions.get(id);
     if (!pending) return jsonError(res, 404, '交互请求已失效');
+    if (pending.userId !== userId) return jsonError(res, 403, '无权响应此交互请求');
     interactions.delete(id);
     pending.resolve(answer);
     json(res, 200, { ok: true });

@@ -10,6 +10,7 @@
     "office:compress": "node scripts/precompress-assets.mjs",
     "build": "tsc -b && vite build && node scripts/precompress-assets.mjs && pnpm build:server",
     "build:server": "tsc -p tsconfig.server.json",
+    "test:concurrency": "pnpm build:server && node --test server-dist/server/concurrency.test.js",
     "start": "node server-dist/server/production.js",
     "preview": "vite preview --host 127.0.0.1"
   },
