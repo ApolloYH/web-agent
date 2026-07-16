@@ -14,7 +14,7 @@ BROWSER_WORKER_MODEL=claude-haiku-4-5 \
 .venv/bin/python server.py
 ```
 
-默认监听 `127.0.0.1:9140`，同时只运行一个任务。运行期间会保留最新浏览器画面，供 Web 通过带鉴权的 `/sessions/:id` 与 `/sessions/:id/frame` 接口展示；只保留最近 20 个会话且不落盘。生产环境应把它作为独立 systemd 服务或容器运行，不要放进 Web 主进程。
+默认监听 `127.0.0.1:9140`，同时只运行一个任务。浏览器默认禁止直接访问 IP、localhost、链路本地元数据和常见内部域名；生产环境仍应使用容器或网络命名空间阻断私网出口，以覆盖 DNS rebinding。运行期间会保留最新浏览器画面，供 Web 通过带鉴权的 `/sessions/:id` 与 `/sessions/:id/frame` 接口展示；只保留最近 20 个会话且不落盘。生产环境应把它作为独立 systemd 服务或容器运行，不要放进 Web 主进程。
 
 ## 生产 systemd
 

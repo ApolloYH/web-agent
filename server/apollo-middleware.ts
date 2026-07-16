@@ -78,7 +78,7 @@ type EntryConfig = {
   projects: Record<string, string>;
 };
 
-export function createApolloMiddleware({ workspaceRoot, envPath, registrationInvite, adminUsername, allowUnrestricted = false, maxConcurrentRuns = 8, maxRunsPerUser = 3, minFreeDiskBytes = 512 * 1024 * 1024, userStorageQuotaBytes = 2 * 1024 * 1024 * 1024, uploadRetentionDays = 7, managedBrowser, entry }: { workspaceRoot: string; envPath: string; registrationInvite: string; adminUsername: string; allowUnrestricted?: boolean; maxConcurrentRuns?: number; maxRunsPerUser?: number; minFreeDiskBytes?: number; userStorageQuotaBytes?: number; uploadRetentionDays?: number; managedBrowser?: { url: string; token: string }; entry: EntryConfig }) {
+export function createApolloMiddleware({ workspaceRoot, envPath, registrationInvite, adminUsername, allowUnrestricted = false, maxConcurrentRuns = 8, maxRunsPerUser = 3, minFreeDiskBytes = 512 * 1024 * 1024, userStorageQuotaBytes = 2 * 1024 * 1024 * 1024, uploadRetentionDays = 7, trustedProxyAddresses = [], managedBrowser, entry }: { workspaceRoot: string; envPath: string; registrationInvite: string; adminUsername: string; allowUnrestricted?: boolean; maxConcurrentRuns?: number; maxRunsPerUser?: number; minFreeDiskBytes?: number; userStorageQuotaBytes?: number; uploadRetentionDays?: number; trustedProxyAddresses?: string[]; managedBrowser?: { url: string; token: string }; entry: EntryConfig }) {
   minFreeDiskBytes = Number.isFinite(minFreeDiskBytes) && minFreeDiskBytes >= 0 ? minFreeDiskBytes : 512 * 1024 * 1024;
   userStorageQuotaBytes = Number.isFinite(userStorageQuotaBytes) && userStorageQuotaBytes >= 0 ? userStorageQuotaBytes : 2 * 1024 * 1024 * 1024;
   uploadRetentionDays = Number.isFinite(uploadRetentionDays) && uploadRetentionDays >= 1 ? uploadRetentionDays : 7;
@@ -92,6 +92,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
   const userContexts = new Map<string, UserRuntimeContext>();
   const managedBrowserViews = new Map<string, { id: string; updatedAt: number }>();
   const authRateLimits = new Map<string, RateLimitWindow>();
+  const trustedProxies = new Set(trustedProxyAddresses.map(normalizeAddress).filter(Boolean));
   const globalRunLimit = positiveInteger(maxConcurrentRuns, 8);
   const perUserRunLimit = Math.min(positiveInteger(maxRunsPerUser, 3), globalRunLimit);
   const maxCachedRuntimeUsers = Math.max(16, globalRunLimit * 2);
@@ -371,7 +372,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     if (req.url.startsWith('/apollo-api/auth/')) {
       const authRoute = req.url.split('?', 1)[0];
       if (req.method === 'POST' && (authRoute === '/apollo-api/auth/login' || authRoute === '/apollo-api/auth/register')) {
-        const retryAfter = consumeFixedWindow(authRateLimits, `ip:${clientAddress(req)}`, AUTH_IP_RATE_LIMIT, AUTH_RATE_WINDOW_MS);
+        const retryAfter = consumeFixedWindow(authRateLimits, `ip:${clientAddress(req, trustedProxies)}`, AUTH_IP_RATE_LIMIT, AUTH_RATE_WINDOW_MS);
         if (retryAfter) {
           res.setHeader('Retry-After', String(retryAfter));
           return jsonError(res, 429, '登录尝试过于频繁，请稍后重试');
@@ -966,7 +967,7 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, database: D
     const username = body.username.trim();
     if (!/^[\p{L}\p{N}_-]{2,32}$/u.test(username)) throw new Error('用户名需为 2–32 个字母、数字、中文、下划线或短横线');
     if (body.password.length < 8 || body.password.length > 128) throw new Error('密码长度需为 8–128 位');
-    const retryAfter = consumeFixedWindow(rateLimits, `identity:${clientAddress(req)}:${username.toLowerCase()}`, AUTH_IDENTITY_RATE_LIMIT, AUTH_RATE_WINDOW_MS);
+    const retryAfter = consumeFixedWindow(rateLimits, `identity:${username.toLowerCase()}`, AUTH_IDENTITY_RATE_LIMIT, AUTH_RATE_WINDOW_MS);
     if (retryAfter) {
       res.setHeader('Retry-After', String(retryAfter));
       return jsonError(res, 429, '该账号登录尝试过于频繁，请稍后重试');
@@ -1036,20 +1037,33 @@ function isHttps(req: IncomingMessage): boolean {
   return req.headers['x-forwarded-proto'] === 'https' || Boolean((req.socket as { encrypted?: boolean }).encrypted);
 }
 
-function clientAddress(req: IncomingMessage): string {
+export function clientAddress(req: IncomingMessage, trustedProxies = new Set<string>()): string {
+  const peer = normalizeAddress(req.socket.remoteAddress) || 'unknown';
+  if (!trustedProxies.has(peer)) return peer;
   const real = req.headers['x-real-ip'];
   const trusted = Array.isArray(real) ? real[0] : real;
-  if (trusted?.trim()) return trusted.trim();
+  if (trusted?.trim()) return normalizeAddress(trusted) || peer;
   const forwarded = req.headers['x-forwarded-for'];
-  const value = Array.isArray(forwarded) ? forwarded.at(-1) : forwarded?.split(',').at(-1);
-  return value?.trim() || req.socket.remoteAddress || 'unknown';
+  const chain = (Array.isArray(forwarded) ? forwarded.join(',') : forwarded || '').split(',').map(normalizeAddress).filter(Boolean);
+  for (let index = chain.length - 1; index >= 0; index -= 1) {
+    if (!trustedProxies.has(chain[index]!)) return chain[index]!;
+  }
+  return peer;
 }
 
-function isSameOriginMutation(req: IncomingMessage): boolean {
+function normalizeAddress(value?: string): string {
+  const address = value?.trim() || '';
+  return address.startsWith('::ffff:') ? address.slice(7) : address;
+}
+
+export function isSameOriginMutation(req: IncomingMessage): boolean {
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return true;
   const origin = req.headers.origin;
-  if (!origin) return true;
-  try { return new URL(origin).host === req.headers.host; } catch { return false; }
+  if (!origin || !req.headers.host) return false;
+  try {
+    const expected = new URL(`${isHttps(req) ? 'https' : 'http'}://${req.headers.host}`).origin;
+    return new URL(origin).origin === expected;
+  } catch { return false; }
 }
 
 function setSessionCookie(req: IncomingMessage, res: ServerResponse, token: string, maxAge: number): void {

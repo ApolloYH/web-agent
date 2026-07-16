@@ -23,6 +23,17 @@ class SessionStoreTest(unittest.TestCase):
         self.assertTrue(server.valid_session_id("abc-123"))
         self.assertFalse(server.valid_session_id("../secret"))
 
+    def test_browser_profile_blocks_ip_and_sensitive_hosts(self):
+        options = server.browser_profile_options([])
+        self.assertTrue(options["block_ip_addresses"])
+        self.assertIn("localhost", options["prohibited_domains"])
+        self.assertIn("metadata.google.internal", options["prohibited_domains"])
+
+    def test_unsafe_allowed_domains_are_rejected(self):
+        for domain in ["*", "localhost", "*.localhost", "127.0.0.1", "metadata.google.internal", "printer.local"]:
+            self.assertTrue(server.unsafe_allowed_domain(domain), domain)
+        self.assertFalse(server.unsafe_allowed_domain("*.example.com"))
+
 
 if __name__ == "__main__":
     unittest.main()

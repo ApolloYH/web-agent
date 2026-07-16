@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import contextlib
+import ipaddress
 import json
 import os
 import re
@@ -21,10 +22,52 @@ RUN_SLOT = threading.BoundedSemaphore(1)
 SESSIONS = {}
 SESSIONS_LOCK = threading.Lock()
 SESSION_LIMIT = 20
+PROHIBITED_DOMAINS = [
+    "localhost",
+    "*.localhost",
+    "*.local",
+    "*.internal",
+    "*.home.arpa",
+    "metadata.google.internal",
+    "host.docker.internal",
+    "gateway.docker.internal",
+]
 
 
 def valid_session_id(value):
     return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9-]{1,80}", value) is not None
+
+
+def unsafe_allowed_domain(value):
+    raw = value.strip().lower()
+    if raw in {"*", "http://*", "https://*"}:
+        return True
+    try:
+        parsed = urlparse(raw if "://" in raw else f"http://{raw}")
+        host = (parsed.hostname or "").rstrip(".")
+    except ValueError:
+        return True
+    if host.startswith("*."):
+        host = host[2:]
+    if not host or "." not in host:
+        return True
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    return host in {"metadata.google.internal", "host.docker.internal", "gateway.docker.internal"} or host.endswith((".localhost", ".local", ".internal", ".home.arpa"))
+
+
+def browser_profile_options(allowed_domains):
+    options = {
+        "headless": True,
+        "block_ip_addresses": True,
+        "prohibited_domains": PROHIBITED_DOMAINS,
+    }
+    if allowed_domains:
+        options["allowed_domains"] = allowed_domains
+    return options
 
 
 def create_session(session_id):
@@ -126,6 +169,9 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(domains, list) or any(not isinstance(item, str) for item in domains):
                 self.reply(400, {"error": "Invalid allowed_domains"})
                 return
+            if any(unsafe_allowed_domain(item) for item in domains):
+                self.reply(400, {"error": "Unsafe allowed_domains"})
+                return
             max_steps = body.get("max_steps", 30)
             if not isinstance(max_steps, int) or not 1 <= max_steps <= 50:
                 self.reply(400, {"error": "Invalid max_steps"})
@@ -174,10 +220,7 @@ class Handler(BaseHTTPRequestHandler):
 async def run_browser(task, allowed_domains, max_steps, session_id):
     from browser_use import Agent, BrowserProfile, ChatAnthropic
 
-    profile_options = {"headless": True}
-    if allowed_domains:
-        profile_options["allowed_domains"] = allowed_domains
-    profile = BrowserProfile(**profile_options)
+    profile = BrowserProfile(**browser_profile_options(allowed_domains))
     llm = ChatAnthropic(model=MODEL, auth_token=ANTHROPIC_AUTH_TOKEN, base_url=ANTHROPIC_BASE_URL)
     browser_ready = asyncio.Event()
 

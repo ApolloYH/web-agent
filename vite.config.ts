@@ -19,6 +19,7 @@ export default defineConfig(({ mode }) => {
     minFreeDiskBytes: Number(env.WEB_MIN_FREE_DISK_BYTES || 536870912),
     userStorageQuotaBytes: Number(env.WEB_USER_STORAGE_QUOTA_BYTES || 2147483648),
     uploadRetentionDays: Number(env.WEB_UPLOAD_RETENTION_DAYS || 7),
+    trustedProxyAddresses: (env.WEB_TRUSTED_PROXIES || '').split(',').map((value) => value.trim()).filter(Boolean),
     managedBrowser: env.APOLLO_BROWSER_WORKER_URL ? {
       url: env.APOLLO_BROWSER_WORKER_URL,
       token: env.APOLLO_BROWSER_WORKER_TOKEN || '',
