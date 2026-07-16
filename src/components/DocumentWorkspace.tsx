@@ -463,7 +463,7 @@ function WordEditor({ document, editorRef, onSave, onStatus, onError }: {
     );
   }
   return (
-    <div className="relative h-full w-full overflow-hidden bg-[#f3f3f3]">
+    <div className="word-editor-surface relative h-full w-full overflow-hidden bg-[#f3f3f3]">
       {previewVisible && canPreview && (
         <div className={`absolute inset-0 transition-opacity duration-200 motion-reduce:transition-none ${loading ? 'opacity-100' : 'pointer-events-none opacity-0'}`}>
           <WordView file={document.file} fileName={document.name} />

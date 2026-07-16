@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { ManagedBrowserView } from '@/lib/apolloAgent';
 
 export default function BrowserLivePanel({
@@ -15,31 +15,51 @@ export default function BrowserLivePanel({
   onClose: () => void;
 }) {
   const [frameUrl, setFrameUrl] = useState<string | null>(null);
+  const [closing, setClosing] = useState(false);
+  const closeTimerRef = useRef<number | null>(null);
 
   useEffect(() => { setFrameUrl(null); }, [view?.id]);
+  useEffect(() => {
+    if (!open) return;
+    if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = null;
+    setClosing(false);
+  }, [open]);
+  useEffect(() => () => {
+    if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
+  }, []);
   useEffect(() => {
     if (!view?.frame_version) return;
     const next = `/apollo-api/browser-view/frame?v=${encodeURIComponent(view.frame_version)}`;
     const image = new Image();
     let cancelled = false;
+    image.decoding = 'async';
+    image.fetchPriority = 'low';
     image.onload = () => { if (!cancelled) setFrameUrl(next); };
     image.src = next;
     return () => { cancelled = true; };
   }, [view?.frame_version]);
 
   const status = viewStatus(view);
-  const transition = resizing ? 'transition-none' : 'transition-[width,opacity,transform] duration-300 ease-out';
+  const visuallyOpen = open && !closing;
+  const transition = resizing ? 'transition-none' : `transition-[opacity,transform] duration-200 motion-reduce:transition-none ${closing ? 'ease-in' : 'ease-out'}`;
+  const requestClose = () => {
+    if (closing) return;
+    setClosing(true);
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return onClose();
+    closeTimerRef.current = window.setTimeout(onClose, 200);
+  };
 
   return (
     <aside
       aria-label="托管浏览器实时画面"
-      aria-hidden={!open}
-      inert={!open}
+      aria-hidden={!visuallyOpen}
+      inert={!visuallyOpen}
       style={{ '--browser-panel-width': `${width}px` } as CSSProperties}
-      className={`relative z-30 flex shrink-0 flex-col overflow-hidden bg-[#f7f7f8] ${transition} max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:w-[min(640px,100%)] max-lg:shadow-[-18px_0_50px_rgba(0,0,0,0.14)] ${
-        open
-          ? 'w-[min(var(--browser-panel-width),calc(100%_-_420px))] translate-x-0 border-l border-black/[0.08] opacity-100'
-          : 'pointer-events-none w-0 translate-x-4 border-l border-transparent opacity-0 max-lg:translate-x-full'
+      className={`relative z-30 flex shrink-0 transform-gpu flex-col overflow-hidden bg-[#f7f7f8] ${transition} ${closing ? 'lg:absolute lg:inset-y-0 lg:right-0' : ''} max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:w-[min(640px,100%)] max-lg:shadow-[-18px_0_50px_rgba(0,0,0,0.14)] ${
+        open ? 'w-[min(var(--browser-panel-width),calc(100%_-_420px))] border-l border-black/[0.08]' : 'pointer-events-none w-0 border-l border-transparent'
+      } ${
+        visuallyOpen ? 'translate-x-0 opacity-100' : 'pointer-events-none translate-x-full opacity-0'
       }`}
     >
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-black/[0.07] bg-white px-3.5">
@@ -51,7 +71,7 @@ export default function BrowserLivePanel({
             {status.label}
           </span>
         </div>
-        <button type="button" onClick={onClose} className="icon-button inline-flex shrink-0" aria-label="关闭浏览器画面">
+        <button type="button" onClick={requestClose} className="icon-button inline-flex shrink-0" aria-label="关闭浏览器画面">
           <CloseIcon />
         </button>
       </header>
@@ -63,10 +83,10 @@ export default function BrowserLivePanel({
         </div>
       </div>
 
-      <div className="relative min-h-0 flex-1 overflow-hidden bg-[radial-gradient(circle_at_50%_20%,#ffffff_0%,#f5f5f6_56%,#eeeeef_100%)] p-3">
-        <div className="relative flex h-full min-h-52 items-start justify-center overflow-hidden rounded-xl border border-black/[0.09] bg-white shadow-[0_12px_34px_rgba(0,0,0,0.10)]">
+      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_50%_20%,#ffffff_0%,#f5f5f6_56%,#eeeeef_100%)] p-3">
+        <div className="relative flex aspect-video max-h-full w-full min-h-52 items-center justify-center overflow-hidden rounded-xl border border-black/[0.09] bg-white shadow-[0_12px_34px_rgba(0,0,0,0.10)]">
           {frameUrl ? (
-            <img src={frameUrl} alt={view?.title ? `托管浏览器：${view.title}` : '托管浏览器实时画面'} className="h-full w-full object-contain object-top" />
+            <img src={frameUrl} decoding="async" alt={view?.title ? `托管浏览器：${view.title}` : '托管浏览器实时画面'} className="absolute inset-0 h-full w-full object-contain object-center" />
           ) : (
             <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-8 text-center">
               <div className="flex size-12 items-center justify-center rounded-2xl bg-[#f2f3f4] text-[#777]"><BrowserIcon large /></div>

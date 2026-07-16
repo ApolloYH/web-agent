@@ -88,6 +88,17 @@ summary:focus-visible {
 
 * { scrollbar-width: thin; scrollbar-color: #d4d4d4 transparent; }
 
+.word-editor-surface {
+  contain: strict;
+  isolation: isolate;
+}
+
+.word-editor-surface .office-editor-host-frame {
+  contain: strict;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     scroll-behavior: auto !important;
