@@ -90,6 +90,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
   const runs = new Map<string, RunContext>();
   const interactions = new Map<string, PendingInteraction>();
   const userContexts = new Map<string, UserRuntimeContext>();
+  const managedBrowserViews = new Map<string, { id: string; updatedAt: number }>();
   const authRateLimits = new Map<string, RateLimitWindow>();
   const globalRunLimit = positiveInteger(maxConcurrentRuns, 8);
   const perUserRunLimit = Math.min(positiveInteger(maxRunsPerUser, 3), globalRunLimit);
@@ -168,8 +169,40 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
   const clientTools = (runKey: string) => [
     ...createDocumentTools((action, input) => requestClientTool(runKey, 'editor_request', action, input)),
     ...createBrowserTools((action, input) => requestClientTool(runKey, 'browser_request', action, input)),
-    ...createManagedBrowserTools(managedBrowser),
+    ...createManagedBrowserTools(managedBrowser ? {
+      ...managedBrowser,
+      onSession: (id) => {
+        const run = runs.get(runKey);
+        if (run) managedBrowserViews.set(run.userId, { id, updatedAt: Date.now() });
+      },
+    } : undefined),
   ];
+
+  const handleManagedBrowserView = async (req: IncomingMessage, res: ServerResponse, userId: string) => {
+    if (req.method !== 'GET') return jsonError(res, 405, 'Method not allowed');
+    if (!managedBrowser) return json(res, 200, { available: false, session: null });
+    const view = managedBrowserViews.get(userId);
+    if (!view) return json(res, 200, { available: true, session: null });
+    const pathname = new URL(req.url!, 'http://localhost').pathname;
+    const frame = pathname === '/apollo-api/browser-view/frame';
+    try {
+      const response = await fetch(new URL(`/sessions/${view.id}${frame ? '/frame' : ''}`, managedBrowser.url), {
+        headers: managedBrowser.token ? { Authorization: `Bearer ${managedBrowser.token}` } : {},
+      });
+      if (response.status === 404 && !frame) return json(res, 200, { available: true, session: null });
+      if (!response.ok) return jsonError(res, 502, '浏览器画面暂时不可用');
+      if (!frame) return json(res, 200, { available: true, session: { ...(await response.json() as object), id: view.id } });
+      const bytes = Buffer.from(await response.arrayBuffer());
+      res.writeHead(200, {
+        'Content-Type': response.headers.get('content-type') || 'image/jpeg',
+        'Content-Length': bytes.length,
+        'Cache-Control': 'no-store',
+      });
+      res.end(bytes);
+    } catch {
+      return jsonError(res, 502, '浏览器画面暂时不可用');
+    }
+  };
 
   function registerInteraction(id: string, run: RunContext, fallback: string): Promise<string> {
     return new Promise((resolve) => {
@@ -353,6 +386,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     const userArtifactRoot = path.join(userWorkspaceRoot, 'artifacts');
 
     if (req.url === '/apollo-api/respond') return handleResponse(req, res, user.id, interactions);
+    if (req.url.startsWith('/apollo-api/browser-view')) return handleManagedBrowserView(req, res, user.id);
     if (req.url === '/apollo-api/uploads' || req.url === '/apollo-api/artifacts/import') {
       const expectedBytes = req.url === '/apollo-api/uploads' ? MAX_UPLOAD_REQUEST_BYTES : 40 * 1024 * 1024;
       if (!hasDiskCapacity(workspaceRoot, minFreeDiskBytes + expectedBytes)) return jsonError(res, 507, '服务器存储空间不足，请联系管理员清理后重试');
@@ -667,6 +701,9 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       void closeUserEngines(context);
     }
     pruneExpiredWindows(authRateLimits, now);
+    for (const [userId, view] of managedBrowserViews) {
+      if (view.updatedAt < now - 60 * 60_000) managedBrowserViews.delete(userId);
+    }
     if (now - lastMaintenanceAt >= 60 * 60_000) {
       lastMaintenanceAt = now;
       database.prepare('DELETE FROM auth_sessions WHERE expires_at <= ?').run(new Date(now).toISOString());
@@ -717,6 +754,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       for (const id of [...interactions.keys()]) settleInteraction(id);
       await Promise.all([...userContexts.values()].map(closeUserEngines));
       userContexts.clear();
+      managedBrowserViews.clear();
       database.close();
     },
   };

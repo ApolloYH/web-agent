@@ -7,6 +7,8 @@ export default function ResizeDivider({
   growDirection,
   label,
   onChange,
+  onResizeStart,
+  onResizeEnd,
 }: {
   value: number;
   min: number;
@@ -14,6 +16,8 @@ export default function ResizeDivider({
   growDirection: 1 | -1;
   label: string;
   onChange: (value: number) => void;
+  onResizeStart?: () => void;
+  onResizeEnd?: () => void;
 }) {
   const clamp = (next: number) => Math.min(max, Math.max(min, Math.round(next)));
 
@@ -27,6 +31,7 @@ export default function ResizeDivider({
     const previousSelection = document.body.style.userSelect;
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
+    onResizeStart?.();
 
     const move = (next: globalThis.PointerEvent) => {
       onChange(clamp(startValue + (next.clientX - startX) * growDirection));
@@ -38,6 +43,7 @@ export default function ResizeDivider({
       window.removeEventListener('blur', stop);
       document.body.style.cursor = previousCursor;
       document.body.style.userSelect = previousSelection;
+      onResizeEnd?.();
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', stop);

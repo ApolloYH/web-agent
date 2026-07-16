@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 import asyncio
+import base64
+import contextlib
 import json
 import os
+import re
 import threading
+import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse
 
 HOST = os.environ.get("BROWSER_WORKER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("BROWSER_WORKER_PORT", "9140"))
@@ -12,22 +18,91 @@ MODEL = os.environ.get("BROWSER_WORKER_MODEL", os.environ.get("ANTHROPIC_DEFAULT
 ANTHROPIC_AUTH_TOKEN = os.environ.get("ANTHROPIC_AUTH_TOKEN", "")
 ANTHROPIC_BASE_URL = os.environ.get("ANTHROPIC_BASE_URL", "")
 RUN_SLOT = threading.BoundedSemaphore(1)
+SESSIONS = {}
+SESSIONS_LOCK = threading.Lock()
+SESSION_LIMIT = 20
+
+
+def valid_session_id(value):
+    return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9-]{1,80}", value) is not None
+
+
+def create_session(session_id):
+    with SESSIONS_LOCK:
+        if len(SESSIONS) >= SESSION_LIMIT:
+            oldest = min(SESSIONS, key=lambda key: SESSIONS[key]["updated_at"])
+            SESSIONS.pop(oldest, None)
+        SESSIONS[session_id] = {
+            "status": "starting",
+            "url": "about:blank",
+            "title": "正在启动浏览器",
+            "step": 0,
+            "updated_at": time.time(),
+            "frame_version": "",
+            "frame": None,
+            "frame_mime": "image/jpeg",
+            "error": "",
+        }
+
+
+def update_session(session_id, frame=None, frame_mime=None, **fields):
+    with SESSIONS_LOCK:
+        session = SESSIONS.get(session_id)
+        if not session:
+            return
+        session.update(fields)
+        session["updated_at"] = time.time()
+        if frame:
+            session["frame"] = frame
+            session["frame_mime"] = frame_mime or session["frame_mime"]
+            session["frame_version"] = str(time.time_ns())
+
+
+def session_snapshot(session_id):
+    with SESSIONS_LOCK:
+        session = SESSIONS.get(session_id)
+        if not session:
+            return None
+        return {key: value for key, value in session.items() if key not in {"frame", "frame_mime"}}
+
+
+def session_frame(session_id):
+    with SESSIONS_LOCK:
+        session = SESSIONS.get(session_id)
+        return (session.get("frame"), session.get("frame_mime")) if session else (None, None)
 
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "ApolloBrowserWorker/0.1"
 
     def do_GET(self):
-        if self.path == "/healthz":
+        path = urlparse(self.path).path
+        if path == "/healthz":
             available = RUN_SLOT.acquire(blocking=False)
             if available:
                 RUN_SLOT.release()
             self.reply(200, {"ready": True, "busy": not available})
             return
+        if TOKEN and self.headers.get("Authorization") != f"Bearer {TOKEN}":
+            self.reply(401, {"error": "Unauthorized"})
+            return
+        match = re.fullmatch(r"/sessions/([A-Za-z0-9-]{1,80})(/frame)?", path)
+        if match:
+            session_id, frame_path = match.groups()
+            if frame_path:
+                frame, mime = session_frame(session_id)
+                if not frame:
+                    self.reply(404, {"error": "Frame not found"})
+                else:
+                    self.reply_bytes(200, frame, mime or "image/jpeg")
+                return
+            session = session_snapshot(session_id)
+            self.reply(200, session) if session else self.reply(404, {"error": "Session not found"})
+            return
         self.reply(404, {"error": "Not found"})
 
     def do_POST(self):
-        if self.path != "/run":
+        if urlparse(self.path).path != "/run":
             self.reply(404, {"error": "Not found"})
             return
         if TOKEN and self.headers.get("Authorization") != f"Bearer {TOKEN}":
@@ -36,6 +111,7 @@ class Handler(BaseHTTPRequestHandler):
         if not RUN_SLOT.acquire(blocking=False):
             self.reply(429, {"error": "Browser worker is busy"}, {"Retry-After": "3"})
             return
+        session_id = ""
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if length <= 0 or length > 64 * 1024:
@@ -54,10 +130,20 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(max_steps, int) or not 1 <= max_steps <= 50:
                 self.reply(400, {"error": "Invalid max_steps"})
                 return
-            self.reply(200, asyncio.run(run_browser(task.strip(), domains[:50], max_steps)))
+            session_id = body.get("session_id") or uuid.uuid4().hex
+            if not valid_session_id(session_id):
+                self.reply(400, {"error": "Invalid session_id"})
+                return
+            create_session(session_id)
+            result = asyncio.run(run_browser(task.strip(), domains[:50], max_steps, session_id))
+            status = "succeeded" if result["ok"] else "failed"
+            update_session(session_id, status=status, error="" if result["ok"] else "任务未成功完成")
+            self.reply(200, {**result, "session_id": session_id})
         except json.JSONDecodeError:
             self.reply(400, {"error": "Invalid JSON"})
         except Exception as error:
+            if session_id:
+                update_session(session_id, status="failed", error=str(error)[:500])
             self.reply(500, {"ok": False, "error": str(error)[:2_000]})
         finally:
             RUN_SLOT.release()
@@ -73,11 +159,19 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def reply_bytes(self, status, data, content_type):
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
     def log_message(self, format, *args):
         print(f"[Apollo Browser Worker] {self.address_string()} {format % args}")
 
 
-async def run_browser(task, allowed_domains, max_steps):
+async def run_browser(task, allowed_domains, max_steps, session_id):
     from browser_use import Agent, BrowserProfile, ChatAnthropic
 
     profile_options = {"headless": True}
@@ -85,14 +179,49 @@ async def run_browser(task, allowed_domains, max_steps):
         profile_options["allowed_domains"] = allowed_domains
     profile = BrowserProfile(**profile_options)
     llm = ChatAnthropic(model=MODEL, auth_token=ANTHROPIC_AUTH_TOKEN, base_url=ANTHROPIC_BASE_URL)
-    agent = Agent(task=task, llm=llm, browser_profile=profile, enable_signal_handler=False)
-    history = await agent.run(max_steps=max_steps)
+    browser_ready = asyncio.Event()
+
+    async def on_step(state, _output, step):
+        frame = None
+        if state.screenshot:
+            with contextlib.suppress(ValueError):
+                frame = base64.b64decode(state.screenshot)
+        update_session(session_id, frame=frame, frame_mime="image/png", status="running", url=state.url, title=state.title, step=step)
+        browser_ready.set()
+
+    agent = Agent(
+        task=task,
+        llm=llm,
+        browser_profile=profile,
+        enable_signal_handler=False,
+        register_new_step_callback=on_step,
+    )
+    capture_task = asyncio.create_task(capture_frames(agent, session_id, browser_ready))
+    try:
+        history = await agent.run(max_steps=max_steps)
+    finally:
+        capture_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await capture_task
     return {
         "ok": bool(history.is_successful()),
         "result": history.final_result(),
         "urls": history.urls(),
         "errors": [error for error in history.errors() if error][-10:],
     }
+
+
+async def capture_frames(agent, session_id, browser_ready):
+    await browser_ready.wait()
+    while True:
+        await asyncio.sleep(0.8)
+        try:
+            frame = await agent.browser_session.take_screenshot(format="jpeg", quality=72)
+            url = await agent.browser_session.get_current_page_url()
+            title = await agent.browser_session.get_current_page_title()
+            update_session(session_id, frame=frame, frame_mime="image/jpeg", status="running", url=url, title=title)
+        except Exception:
+            continue
 
 
 if __name__ == "__main__":

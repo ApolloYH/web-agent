@@ -1,6 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import type { ToolDefinition } from '@apolloyh/apollo-agent';
 
-export function createManagedBrowserTools(config?: { url: string; token: string }): ToolDefinition[] {
+export function createManagedBrowserTools(config?: { url: string; token: string; onSession?: (sessionId: string) => void }): ToolDefinition[] {
   if (!config?.url) return [];
   return [{
     name: 'browser_managed_task',
@@ -23,6 +24,8 @@ export function createManagedBrowserTools(config?: { url: string; token: string 
         ? input.allowed_domains.filter((value): value is string => typeof value === 'string').slice(0, 50)
         : [];
       const maxSteps = Number.isInteger(input.max_steps) ? Math.min(50, Math.max(1, Number(input.max_steps))) : 30;
+      const sessionId = randomUUID();
+      config.onSession?.(sessionId);
       try {
         const response = await fetch(new URL('/run', config.url), {
           method: 'POST',
@@ -30,7 +33,7 @@ export function createManagedBrowserTools(config?: { url: string; token: string 
             'Content-Type': 'application/json',
             ...(config.token ? { Authorization: `Bearer ${config.token}` } : {}),
           },
-          body: JSON.stringify({ task: input.task.trim(), allowed_domains: domains, max_steps: maxSteps }),
+          body: JSON.stringify({ task: input.task.trim(), allowed_domains: domains, max_steps: maxSteps, session_id: sessionId }),
           signal: context.signal,
         });
         const result = await response.json().catch(() => ({ error: `HTTP ${response.status}` })) as Record<string, unknown>;

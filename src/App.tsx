@@ -3,6 +3,7 @@ import type { ChatMessage, RuntimeStatus } from '@/types';
 import { extractArtifacts } from '@/lib/agent';
 import {
   getApolloPermission,
+  getManagedBrowserView,
   getStoredArtifacts,
   getApolloStatus,
   respondApollo,
@@ -11,6 +12,7 @@ import {
   summarizeConversationTitle,
   uploadInputFiles,
   type ApolloPermissionMode,
+  type ManagedBrowserView,
   type StoredArtifact,
 } from '@/lib/apolloAgent';
 import { applyApolloEvent } from '@/lib/apolloTimeline';
@@ -39,6 +41,7 @@ import { openArtifact, openLibraryFile, type LibraryFile, type OpenDocument } fr
 import { chooseLocalFolder, ensureFolderPermission, listLocalFiles, restoreLocalFolder, type DirectoryHandle } from '@/lib/localFolder';
 import { getBrowserConnectionStatus, runBrowserAction, type BrowserConnectionStatus } from '@/lib/browserExtension';
 import ResizeDivider from '@/components/ResizeDivider';
+import BrowserLivePanel from '@/components/BrowserLivePanel';
 
 let idSeq = 0;
 const nextId = (p: string) => `${p}-${Date.now()}-${idSeq++}`;
@@ -50,6 +53,7 @@ const documentConversationId = (value: string) => {
 const LAST_WORKSPACE_KEY = 'apollo:last-workspace';
 const SIDEBAR_WIDTH = { default: 210, min: 180, max: 360 };
 const DOCUMENT_PANEL_WIDTH = { default: 360, min: 280, max: 640 };
+const BROWSER_PANEL_WIDTH = { default: 680, min: 480, max: 960 };
 
 function storedPaneWidth(key: string, fallback: number, min: number, max: number): number {
   try {
@@ -126,8 +130,15 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1024);
   const sidebarWidthKey = `apollo:pane:sidebar:${user.id}`;
   const documentPanelWidthKey = `apollo:pane:document-chat:${user.id}`;
+  const browserPanelWidthKey = `apollo:pane:managed-browser:${user.id}`;
   const [sidebarWidth, setSidebarWidth] = useState(() => storedPaneWidth(sidebarWidthKey, SIDEBAR_WIDTH.default, SIDEBAR_WIDTH.min, SIDEBAR_WIDTH.max));
   const [documentPanelWidth, setDocumentPanelWidth] = useState(() => storedPaneWidth(documentPanelWidthKey, DOCUMENT_PANEL_WIDTH.default, DOCUMENT_PANEL_WIDTH.min, DOCUMENT_PANEL_WIDTH.max));
+  const [browserPanelWidth, setBrowserPanelWidth] = useState(() => storedPaneWidth(browserPanelWidthKey, BROWSER_PANEL_WIDTH.default, BROWSER_PANEL_WIDTH.min, BROWSER_PANEL_WIDTH.max));
+  const [browserPanelOpen, setBrowserPanelOpen] = useState(false);
+  const [browserPanelResizing, setBrowserPanelResizing] = useState(false);
+  const [managedBrowserView, setManagedBrowserView] = useState<ManagedBrowserView | null>(null);
+  const [managedBrowserPolling, setManagedBrowserPolling] = useState(false);
+  const [managedBrowserRun, setManagedBrowserRun] = useState(0);
   const abortRefs = useRef(new Map<string, AbortController>());
   const messageCache = useRef(new Map<string, ChatMessage[]>());
   const activeConversationIdRef = useRef(conversationId);
@@ -148,6 +159,42 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
     }, 150);
     return () => window.clearTimeout(timer);
   }, [documentPanelWidth, documentPanelWidthKey]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try { localStorage.setItem(browserPanelWidthKey, String(browserPanelWidth)); } catch { /* Layout persistence is optional. */ }
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [browserPanelWidth, browserPanelWidthKey]);
+
+  useEffect(() => {
+    if (!browserPanelOpen || !managedBrowserPolling) return;
+    let cancelled = false;
+    let timer = 0;
+    const controller = new AbortController();
+    const poll = async () => {
+      try {
+        const view = await getManagedBrowserView(controller.signal);
+        if (cancelled) return;
+        if (view) {
+          setManagedBrowserView(view);
+          if (view.status === 'succeeded' || view.status === 'failed') {
+            setManagedBrowserPolling(false);
+            return;
+          }
+        }
+      } catch {
+        if (cancelled) return;
+      }
+      timer = window.setTimeout(() => { void poll(); }, 800);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [browserPanelOpen, managedBrowserPolling, managedBrowserRun]);
 
   const refreshBrowserStatus = useCallback(() => {
     void getBrowserConnectionStatus().then(setBrowserStatus);
@@ -370,6 +417,24 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
         const artifacts = await streamApollo(
           executionText,
           (event) => {
+            if (event.type === 'trace' && event.event.type === 'tool_call' && event.event.tool === 'browser_managed_task') {
+              setBrowserPanelOpen(true);
+              setManagedBrowserView({
+                id: `starting-${Date.now()}`,
+                status: 'starting',
+                url: 'about:blank',
+                title: '正在启动浏览器',
+                step: 0,
+                updated_at: Date.now() / 1000,
+                frame_version: '',
+              });
+              setManagedBrowserPolling(true);
+              setManagedBrowserRun((value) => value + 1);
+            }
+            if (event.type === 'trace' && event.event.type === 'tool_result' && event.event.tool === 'browser_managed_task' && event.event.isError) {
+              setManagedBrowserPolling(false);
+              setManagedBrowserView((current) => current ? { ...current, status: 'failed', error: '托管浏览器任务未成功完成' } : current);
+            }
             if (event.type === 'trace' && event.event.type === 'assistant_delta') onDelta(event.event.text);
             if (event.type === 'editor_request') {
               void (async () => {
@@ -894,6 +959,28 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
             />
           )}
         </section>
+        {browserPanelOpen && (
+          <ResizeDivider
+            value={browserPanelWidth}
+            min={BROWSER_PANEL_WIDTH.min}
+            max={BROWSER_PANEL_WIDTH.max}
+            growDirection={-1}
+            label="调整托管浏览器面板宽度"
+            onChange={setBrowserPanelWidth}
+            onResizeStart={() => setBrowserPanelResizing(true)}
+            onResizeEnd={() => setBrowserPanelResizing(false)}
+          />
+        )}
+        <BrowserLivePanel
+          open={browserPanelOpen}
+          width={browserPanelWidth}
+          resizing={browserPanelResizing}
+          view={managedBrowserView}
+          onClose={() => {
+            setBrowserPanelOpen(false);
+            setManagedBrowserPolling(false);
+          }}
+        />
       </main>
     </div>
   );

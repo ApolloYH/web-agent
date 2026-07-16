@@ -20,6 +20,24 @@ export type ApolloEvent =
 
 export type ApolloChannel = 'assistant' | 'entry';
 
+export interface ManagedBrowserView {
+  id: string;
+  status: 'starting' | 'running' | 'succeeded' | 'failed';
+  url: string;
+  title: string;
+  step: number;
+  updated_at: number;
+  frame_version: string;
+  error?: string;
+}
+
+export async function getManagedBrowserView(signal?: AbortSignal): Promise<ManagedBrowserView | null> {
+  const response = await fetch('/apollo-api/browser-view', { signal });
+  if (!response.ok) throw new Error(`浏览器画面请求失败 ${response.status}`);
+  const payload = await response.json() as { session?: ManagedBrowserView | null };
+  return payload.session ?? null;
+}
+
 export async function uploadInputFiles(files: File[]): Promise<Attachment[]> {
   if (!files.length) return [];
   const body = new FormData();
