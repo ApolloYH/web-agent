@@ -16,7 +16,7 @@ import {
 import type { Artifact, RuntimeStatus } from '../src/types/index.js';
 import { createEntryTools } from './entry-tools.js';
 import { createDocumentTools } from './document-tools.js';
-import { createBrowserTools } from './browser-tools.js';
+import { createBrowserTools, explicitlyRequestsUserBrowser } from './browser-tools.js';
 import { createManagedBrowserTools } from './managed-browser-tools.js';
 import { agentRunKey, capacityReason, consumeFixedWindow, pruneExpiredWindows, type RateLimitWindow } from './concurrency.js';
 
@@ -55,6 +55,7 @@ type RunContext = {
   send: Send;
   sink: (event: TraceEvent) => void;
   permissionMode: 'ask' | 'unrestricted';
+  userBrowserAllowed: boolean;
   interactionIds: Set<string>;
   runtime?: QueryEngine;
 };
@@ -169,9 +170,13 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
 
   const clientTools = (runKey: string) => [
     ...createDocumentTools((action, input) => requestClientTool(runKey, 'editor_request', action, input)),
-    ...createBrowserTools((action, input) => requestClientTool(runKey, 'browser_request', action, input)),
+    ...createBrowserTools(
+      (action, input) => requestClientTool(runKey, 'browser_request', action, input),
+      () => Boolean(runs.get(runKey)?.userBrowserAllowed),
+    ),
     ...createManagedBrowserTools(managedBrowser ? {
       ...managedBrowser,
+      allowed: () => runs.get(runKey)?.userBrowserAllowed === false,
       onSession: (id) => {
         const run = runs.get(runKey);
         if (run) managedBrowserViews.set(run.userId, { id, updatedAt: Date.now() });
@@ -630,6 +635,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       send,
       sink,
       permissionMode: 'ask',
+      userBrowserAllowed: explicitlyRequestsUserBrowser(message),
       interactionIds: new Set(),
     };
     runs.set(runKey, run);

@@ -28,3 +28,20 @@ test('managed browser tool binds a view session before starting the worker', asy
     globalThis.fetch = originalFetch;
   }
 });
+
+test('managed browser yields when the current turn explicitly chose the user browser', async () => {
+  let fetched = false;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    fetched = true;
+    return new Response('{}');
+  };
+  try {
+    const tool = createManagedBrowserTools({ url: 'http://127.0.0.1:9140', token: 'test', allowed: () => false })[0]!;
+    const result = await tool.execute({ task: 'test' }, { workspaceRoot: '.', emit: () => undefined, requestApproval: async () => true });
+    assert.equal(result.isError, true);
+    assert.equal(fetched, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
