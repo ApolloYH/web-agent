@@ -290,6 +290,14 @@ function WordEditor({ document, editorRef, onSave, onStatus, onError }: {
   const containerRef = useRef<HTMLDivElement>(null);
   const [failed, setFailed] = useState('');
   const [loading, setLoading] = useState(true);
+  const [previewVisible, setPreviewVisible] = useState(true);
+  const canPreview = document.name.toLowerCase().endsWith('.docx');
+
+  useEffect(() => {
+    if (loading) return;
+    const timer = window.setTimeout(() => setPreviewVisible(false), 200);
+    return () => window.clearTimeout(timer);
+  }, [loading]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -362,20 +370,25 @@ function WordEditor({ document, editorRef, onSave, onStatus, onError }: {
     );
   }
   return (
-    <div className="relative h-full w-full bg-white">
-      <div ref={containerRef} className="h-full w-full bg-white" />
+    <div className="relative h-full w-full overflow-hidden bg-[#f3f3f3]">
+      {previewVisible && canPreview && (
+        <div className={`absolute inset-0 transition-opacity duration-200 motion-reduce:transition-none ${loading ? 'opacity-100' : 'pointer-events-none opacity-0'}`}>
+          <WordView file={document.file} fileName={document.name} />
+        </div>
+      )}
+      <div ref={containerRef} className={`absolute inset-0 bg-white transition-opacity duration-200 motion-reduce:transition-none ${loading ? 'pointer-events-none opacity-0' : 'opacity-100'}`} />
       {loading && (
         <div
           role="status"
           aria-live="polite"
           aria-label="正在加载 Word 文档"
-          className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-white"
+          className="absolute inset-x-0 top-0 z-10 flex h-9 items-center justify-center gap-2 border-b border-black/[0.06] bg-white/90 text-[#777] backdrop-blur-sm"
         >
           <span
             aria-hidden="true"
-            className="h-7 w-7 animate-spin rounded-full border-2 border-[#dedede] border-t-[#171717] motion-reduce:animate-none"
+            className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-[#dedede] border-t-[#171717] motion-reduce:animate-none"
           />
-          <span className="text-[12px] text-[#777]">正在加载 Word 文档…</span>
+          <span className="text-[11px]">只读预览 · 正在准备编辑器…</span>
         </div>
       )}
     </div>
