@@ -1,8 +1,12 @@
 node_modules/
+.venv/
 dist/
 server-dist/
+browser-extension/dist/
 .vite/
 coverage/
+__pycache__/
+*.pyc
 tsconfig.tsbuildinfo
 .apollo/
 

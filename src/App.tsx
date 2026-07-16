@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { ChatMessage, RuntimeStatus } from '@/types';
 import { extractArtifacts } from '@/lib/agent';
 import {
@@ -37,6 +37,8 @@ import { getCurrentUser, logout, type AuthUser } from '@/lib/auth';
 import DocumentWorkspace, { officeHostUrl, type DocumentWorkspaceHandle } from '@/components/DocumentWorkspace';
 import { openArtifact, openLibraryFile, type LibraryFile, type OpenDocument } from '@/lib/documentFiles';
 import { chooseLocalFolder, ensureFolderPermission, listLocalFiles, restoreLocalFolder, type DirectoryHandle } from '@/lib/localFolder';
+import { getBrowserConnectionStatus, runBrowserAction, type BrowserConnectionStatus } from '@/lib/browserExtension';
+import ResizeDivider from '@/components/ResizeDivider';
 
 let idSeq = 0;
 const nextId = (p: string) => `${p}-${Date.now()}-${idSeq++}`;
@@ -46,6 +48,17 @@ const documentConversationId = (value: string) => {
   return `document-${(hash >>> 0).toString(36)}`;
 };
 const LAST_WORKSPACE_KEY = 'apollo:last-workspace';
+const SIDEBAR_WIDTH = { default: 210, min: 180, max: 360 };
+const DOCUMENT_PANEL_WIDTH = { default: 360, min: 280, max: 640 };
+
+function storedPaneWidth(key: string, fallback: number, min: number, max: number): number {
+  try {
+    const value = Number(localStorage.getItem(key));
+    return Number.isFinite(value) && value >= min && value <= max ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
 const initialWorkspace = (): { view: 'assistant' | 'chat' | 'library'; conversationId?: string } => {
   try {
     const saved = JSON.parse(sessionStorage.getItem(LAST_WORKSPACE_KEY) || '{}');
@@ -84,6 +97,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [runningConversationIds, setRunningConversationIds] = useState<Set<string>>(() => new Set());
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
+  const [browserStatus, setBrowserStatus] = useState<BrowserConnectionStatus>({ connected: false });
   const [permissionMode, setPermissionMode] = useState<ApolloPermissionMode>('ask');
   const [entryPermissionMode, setEntryPermissionMode] = useState<ApolloPermissionMode>('ask');
   const [conversationId, setConversationId] = useState(ASSISTANT_CONVERSATION_ID);
@@ -110,12 +124,40 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   } | null>(null);
   const documentWorkspaceRef = useRef<DocumentWorkspaceHandle>(null);
   const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1024);
+  const sidebarWidthKey = `apollo:pane:sidebar:${user.id}`;
+  const documentPanelWidthKey = `apollo:pane:document-chat:${user.id}`;
+  const [sidebarWidth, setSidebarWidth] = useState(() => storedPaneWidth(sidebarWidthKey, SIDEBAR_WIDTH.default, SIDEBAR_WIDTH.min, SIDEBAR_WIDTH.max));
+  const [documentPanelWidth, setDocumentPanelWidth] = useState(() => storedPaneWidth(documentPanelWidthKey, DOCUMENT_PANEL_WIDTH.default, DOCUMENT_PANEL_WIDTH.min, DOCUMENT_PANEL_WIDTH.max));
   const abortRefs = useRef(new Map<string, AbortController>());
   const messageCache = useRef(new Map<string, ChatMessage[]>());
   const activeConversationIdRef = useRef(conversationId);
   const skipNextAutoSaveRef = useRef(false);
   const titleGeneratedRef = useRef(false);
   const streaming = runningConversationIds.has(conversationId);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try { localStorage.setItem(sidebarWidthKey, String(sidebarWidth)); } catch { /* Layout persistence is optional. */ }
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [sidebarWidth, sidebarWidthKey]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      try { localStorage.setItem(documentPanelWidthKey, String(documentPanelWidth)); } catch { /* Layout persistence is optional. */ }
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [documentPanelWidth, documentPanelWidthKey]);
+
+  const refreshBrowserStatus = useCallback(() => {
+    void getBrowserConnectionStatus().then(setBrowserStatus);
+  }, []);
+
+  useEffect(() => {
+    refreshBrowserStatus();
+    window.addEventListener('focus', refreshBrowserStatus);
+    return () => window.removeEventListener('focus', refreshBrowserStatus);
+  }, [refreshBrowserStatus]);
 
   useEffect(() => {
     void restoreLocalFolder().then(async (folder) => {
@@ -348,6 +390,14 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
                 await respondApollo(event.id, JSON.stringify(result));
               })().catch((error) => respondApollo(event.id, JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })));
             }
+            if (event.type === 'browser_request') {
+              void runBrowserAction(event.action, event.input)
+                .then(async (result) => {
+                  await respondApollo(event.id, JSON.stringify(result));
+                  refreshBrowserStatus();
+                })
+                .catch((error) => respondApollo(event.id, JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })));
+            }
             if (assistantSurface && (event.type === 'status' || event.type === 'done')) setRuntimeStatus(event.status);
             if (event.type === 'trace' || event.type === 'interaction') {
               updateRunMessages(targetConversationId, (prev) =>
@@ -409,7 +459,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
         }
       }
     },
-    [activeDocument, activeView, conversationGroup, conversationId, conversationTitle, finishRun, librarySource, localFolder, rememberConversation, updateRunMessages],
+    [activeDocument, activeView, conversationGroup, conversationId, conversationTitle, finishRun, librarySource, localFolder, refreshBrowserStatus, rememberConversation, updateRunMessages],
   );
 
   const handleStop = useCallback(() => {
@@ -721,7 +771,19 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
         onDeleteChat={setDeleteConversationId}
         username={user.username}
         onLogout={onLogout}
+        width={sidebarWidth}
       />
+
+      {sidebarOpen && (
+        <ResizeDivider
+          value={sidebarWidth}
+          min={SIDEBAR_WIDTH.min}
+          max={SIDEBAR_WIDTH.max}
+          growDirection={1}
+          label="调整左侧导航宽度"
+          onChange={setSidebarWidth}
+        />
+      )}
 
       {deleteConversationId && <DeleteConversationDialog
         title={conversationList.find((item) => item.id === deleteConversationId)?.title || '这个对话'}
@@ -748,6 +810,8 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
               canManageConfig={user.admin}
               workspaceLabel={workspaceLabel}
               onWorkspaceToggle={toggleWorkspace}
+              browserStatus={browserStatus}
+              onRefreshBrowser={refreshBrowserStatus}
             /> : activeView !== 'document' && <WorkspaceBar label={workspaceLabel} onToggle={toggleWorkspace} />}
           {activeView === 'assistant' && <RuntimeStatusBar status={runtimeStatus} />}
           {activeView === 'library' ? (
@@ -774,29 +838,43 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
                 onBack={closeDocument}
               />
               {documentApolloOpen && (
-                <aside className="relative z-30 flex w-[360px] shrink-0 flex-col border-l border-black/[0.07] bg-white max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:w-[min(360px,100%)] max-lg:shadow-[-12px_0_40px_rgba(0,0,0,0.12)]" aria-label="Apollo 对话">
-                  <header className="flex h-12 shrink-0 items-center justify-between border-b border-black/[0.06] px-4">
-                    <span className="text-[12px] font-medium text-[#303030]">关于此文件</span>
-                    <button type="button" onClick={() => setDocumentApolloOpen(false)} className="icon-button inline-flex" aria-label="关闭 Apollo"><ClosePanelIcon /></button>
-                  </header>
-                  <div className="min-h-0 flex-1">
-                    <ChatPanel
-                      messages={messages}
-                      streaming={streaming}
-                      onSend={handleSend}
-                      onStop={handleStop}
-                      onCommand={handleCommand}
-                      onRespond={handleRespond}
-                      onOpenArtifact={(artifact) => { void openArtifactDocument(artifact); }}
-                      runtimeMode={runtimeStatus?.mode ?? 'normal'}
-                      permissionMode={documentChannelRef.current === 'assistant' ? permissionMode : entryPermissionMode}
-                      onPermissionChange={documentChannelRef.current === 'assistant' ? changePermissionMode : changeEntryPermissionMode}
-                      canManagePermission={documentChannelRef.current === 'assistant' ? true : user.admin}
-                      surface={documentChannelRef.current}
-                      embedded
-                    />
-                  </div>
-                </aside>
+                <>
+                  <ResizeDivider
+                    value={documentPanelWidth}
+                    min={DOCUMENT_PANEL_WIDTH.min}
+                    max={DOCUMENT_PANEL_WIDTH.max}
+                    growDirection={-1}
+                    label="调整文档问答面板宽度"
+                    onChange={setDocumentPanelWidth}
+                  />
+                  <aside
+                    style={{ '--document-panel-width': `${documentPanelWidth}px` } as CSSProperties}
+                    className="relative z-30 flex w-[min(var(--document-panel-width),calc(100%_-_420px))] shrink-0 flex-col bg-white max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:w-[min(360px,100%)] max-lg:border-l max-lg:border-black/[0.07] max-lg:shadow-[-12px_0_40px_rgba(0,0,0,0.12)]"
+                    aria-label="Apollo 对话"
+                  >
+                    <header className="flex h-12 shrink-0 items-center justify-between border-b border-black/[0.06] px-4">
+                      <span className="text-[12px] font-medium text-[#303030]">关于此文件</span>
+                      <button type="button" onClick={() => setDocumentApolloOpen(false)} className="icon-button inline-flex" aria-label="关闭 Apollo"><ClosePanelIcon /></button>
+                    </header>
+                    <div className="min-h-0 flex-1">
+                      <ChatPanel
+                        messages={messages}
+                        streaming={streaming}
+                        onSend={handleSend}
+                        onStop={handleStop}
+                        onCommand={handleCommand}
+                        onRespond={handleRespond}
+                        onOpenArtifact={(artifact) => { void openArtifactDocument(artifact); }}
+                        runtimeMode={runtimeStatus?.mode ?? 'normal'}
+                        permissionMode={documentChannelRef.current === 'assistant' ? permissionMode : entryPermissionMode}
+                        onPermissionChange={documentChannelRef.current === 'assistant' ? changePermissionMode : changeEntryPermissionMode}
+                        canManagePermission={documentChannelRef.current === 'assistant' ? true : user.admin}
+                        surface={documentChannelRef.current}
+                        embedded
+                      />
+                    </div>
+                  </aside>
+                </>
               )}
             </div>
           ) : (

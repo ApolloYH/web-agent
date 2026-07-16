@@ -1,0 +1,1 @@
+browser-use[core]==0.13.4

@@ -1,0 +1,27 @@
+[Unit]
+Description=Apollo managed browser worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wyd-agent
+WorkingDirectory=/opt/wyd-web-agent/current/browser-worker
+EnvironmentFile=/opt/wyd-web-agent/shared/.env
+Environment=HOME=/opt/wyd-web-agent/shared/browser-worker-home
+ExecStart=/opt/wyd-web-agent/shared/browser-worker-venv/bin/python server.py
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/wyd-web-agent/shared
+MemoryHigh=1500M
+MemoryMax=2G
+TasksMax=256
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target

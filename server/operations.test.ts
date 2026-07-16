@@ -17,6 +17,7 @@ test('Web deployment permanently blocks host and external execution tools', () =
   }
   assert.equal(isWebToolAllowed('read_file'), true);
   assert.equal(isWebToolAllowed('document_get_context'), true);
+  assert.equal(isWebToolAllowed('browser_get_state'), true);
 });
 
 test('health checks database and disk instead of returning a static flag', async () => {

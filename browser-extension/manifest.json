@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Apollo Browser Bridge",
+  "description": "Allow Apollo Web Agent to operate browser tabs you approve.",
+  "version": "0.1.0",
+  "permissions": ["tabs", "storage"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_title": "将当前标签页交给 Apollo 操作" },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -16,6 +16,8 @@ import {
 import type { Artifact, RuntimeStatus } from '../src/types/index.js';
 import { createEntryTools } from './entry-tools.js';
 import { createDocumentTools } from './document-tools.js';
+import { createBrowserTools } from './browser-tools.js';
+import { createManagedBrowserTools } from './managed-browser-tools.js';
 import { agentRunKey, capacityReason, consumeFixedWindow, pruneExpiredWindows, type RateLimitWindow } from './concurrency.js';
 
 const ARTIFACT_EXTENSIONS = new Set(['.docx', '.pdf', '.jpg', '.jpeg', '.png', '.webp', '.md', '.markdown', '.json']);
@@ -76,7 +78,7 @@ type EntryConfig = {
   projects: Record<string, string>;
 };
 
-export function createApolloMiddleware({ workspaceRoot, envPath, registrationInvite, adminUsername, allowUnrestricted = false, maxConcurrentRuns = 8, maxRunsPerUser = 3, minFreeDiskBytes = 512 * 1024 * 1024, userStorageQuotaBytes = 2 * 1024 * 1024 * 1024, uploadRetentionDays = 7, entry }: { workspaceRoot: string; envPath: string; registrationInvite: string; adminUsername: string; allowUnrestricted?: boolean; maxConcurrentRuns?: number; maxRunsPerUser?: number; minFreeDiskBytes?: number; userStorageQuotaBytes?: number; uploadRetentionDays?: number; entry: EntryConfig }) {
+export function createApolloMiddleware({ workspaceRoot, envPath, registrationInvite, adminUsername, allowUnrestricted = false, maxConcurrentRuns = 8, maxRunsPerUser = 3, minFreeDiskBytes = 512 * 1024 * 1024, userStorageQuotaBytes = 2 * 1024 * 1024 * 1024, uploadRetentionDays = 7, managedBrowser, entry }: { workspaceRoot: string; envPath: string; registrationInvite: string; adminUsername: string; allowUnrestricted?: boolean; maxConcurrentRuns?: number; maxRunsPerUser?: number; minFreeDiskBytes?: number; userStorageQuotaBytes?: number; uploadRetentionDays?: number; managedBrowser?: { url: string; token: string }; entry: EntryConfig }) {
   minFreeDiskBytes = Number.isFinite(minFreeDiskBytes) && minFreeDiskBytes >= 0 ? minFreeDiskBytes : 512 * 1024 * 1024;
   userStorageQuotaBytes = Number.isFinite(userStorageQuotaBytes) && userStorageQuotaBytes >= 0 ? userStorageQuotaBytes : 2 * 1024 * 1024 * 1024;
   uploadRetentionDays = Number.isFinite(uploadRetentionDays) && uploadRetentionDays >= 1 ? uploadRetentionDays : 7;
@@ -143,20 +145,31 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     return registerInteraction(id, run, fallback);
   };
 
-  const requestEditorTool = async (runKey: string, action: string, input: Record<string, unknown>): Promise<Record<string, unknown>> => {
+  const requestClientTool = async (
+    runKey: string,
+    type: 'editor_request' | 'browser_request',
+    action: string,
+    input: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> => {
     const run = runs.get(runKey);
-    if (!run) return { ok: false, error: '当前没有可用的浏览器编辑会话' };
-    const id = `editor-${randomUUID()}`;
+    if (!run) return { ok: false, error: '当前没有可用的浏览器会话' };
+    const id = `${type === 'editor_request' ? 'editor' : 'browser'}-${randomUUID()}`;
     run.interactionIds.add(id);
-    run.send({ type: 'editor_request', id, action, input });
-    const answer = await registerInteraction(id, run, JSON.stringify({ ok: false, error: '编辑请求已取消' }));
+    run.send({ type, id, action, input });
+    const answer = await registerInteraction(id, run, JSON.stringify({ ok: false, error: '浏览器请求已取消' }));
     try {
       const parsed = JSON.parse(answer) as unknown;
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : { ok: false, error: '编辑器返回格式无效' };
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : { ok: false, error: '浏览器返回格式无效' };
     } catch {
-      return { ok: false, error: answer || '编辑器没有返回结果' };
+      return { ok: false, error: answer || '浏览器没有返回结果' };
     }
   };
+
+  const clientTools = (runKey: string) => [
+    ...createDocumentTools((action, input) => requestClientTool(runKey, 'editor_request', action, input)),
+    ...createBrowserTools((action, input) => requestClientTool(runKey, 'browser_request', action, input)),
+    ...createManagedBrowserTools(managedBrowser),
+  ];
 
   function registerInteraction(id: string, run: RunContext, fallback: string): Promise<string> {
     return new Promise((resolve) => {
@@ -229,7 +242,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
         '(no answer)',
       ),
     onEvent: (event) => runs.get(runKey)?.sink(event),
-    extraTools: createDocumentTools((action, input) => requestEditorTool(runKey, action, input)),
+    extraTools: clientTools(runKey),
   });
 
   const getEngine = async (context: UserRuntimeContext, channel: 'assistant' | 'entry' = 'entry', conversationId = '') => {
@@ -280,7 +293,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
           turnState,
           assertStorageCapacity: (incomingBytes) => assertWorkspaceCapacity(context.workspaceRoot, userStorageQuotaBytes, incomingBytes),
         }),
-        ...createDocumentTools((action, input) => requestEditorTool(runKey, action, input)),
+        ...clientTools(runKey),
       ],
     }));
     context.entryEngines.set(conversationId, runtimePromise);

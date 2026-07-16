@@ -8,8 +8,9 @@
     "dev": "vite --host 127.0.0.1",
     "office:setup": "node scripts/setup-onlyoffice-runtime.mjs",
     "office:compress": "node scripts/precompress-assets.mjs",
-    "build": "tsc -b && vite build && node scripts/precompress-assets.mjs && pnpm build:server",
+    "build": "tsc -b && vite build && node scripts/precompress-assets.mjs && pnpm build:server && pnpm build:extension",
     "build:server": "tsc -p tsconfig.server.json",
+    "build:extension": "tsc -p browser-extension/tsconfig.json && vite build --config browser-extension/vite.config.ts --mode extension-content && vite build --config browser-extension/vite.config.ts --mode extension-background",
     "backup": "node scripts/backup-production.mjs",
     "test": "pnpm build:server && node --test server-dist/server/*.test.js",
     "test:concurrency": "pnpm build:server && node --test server-dist/server/concurrency.test.js",
@@ -22,6 +23,7 @@
   "dependencies": {
     "@agentbridges-ai/onlyoffice-browser": "0.3.27",
     "@apolloyh/apollo-agent": "workspace:*",
+    "@page-agent/page-controller": "1.12.1",
     "docx-preview": "^0.4.0",
     "fflate": "0.8.2",
     "highlight.js": "^11.10.0",
@@ -33,6 +35,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.18",
+    "@types/chrome": "0.2.2",
     "@types/node": "^26.1.1",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

@@ -8,17 +8,22 @@ import {
 } from '@/lib/apolloAgent';
 import type { ApolloMemory, ApolloPermissionMode } from '@/lib/apolloAgent';
 import { useDismissDetails } from '@/lib/useDismissDetails';
+import type { BrowserConnectionStatus } from '@/lib/browserExtension';
 
 export default function SettingsBar({
   apolloPermissionMode,
   canManageConfig = true,
   workspaceLabel,
   onWorkspaceToggle,
+  browserStatus,
+  onRefreshBrowser,
 }: {
   apolloPermissionMode: ApolloPermissionMode;
   canManageConfig?: boolean;
   workspaceLabel: string;
   onWorkspaceToggle: () => void;
+  browserStatus: BrowserConnectionStatus;
+  onRefreshBrowser: () => void;
 }) {
   const detailsRef = useDismissDetails();
 
@@ -38,10 +43,28 @@ export default function SettingsBar({
         </summary>
           <div className="absolute right-0 z-30 mt-2 max-h-[calc(100dvh-5rem)] w-[min(24rem,calc(100vw-1.5rem))] overflow-y-auto rounded-2xl border border-black/[0.08] bg-white p-4 shadow-[0_18px_48px_rgba(0,0,0,0.12)]">
             <h2 className="mb-3 text-[13px] font-semibold text-gray-900">设置</h2>
+            <BrowserConnection status={browserStatus} onRefresh={onRefreshBrowser} />
             <ApolloPanel permissionMode={apolloPermissionMode} canManageConfig={canManageConfig} />
           </div>
       </details>
     </header>
+  );
+}
+
+function BrowserConnection({ status, onRefresh }: { status: BrowserConnectionStatus; onRefresh: () => void }) {
+  return (
+    <div className="mb-3 flex items-center justify-between gap-3 rounded-xl bg-gray-50 px-3 py-2 text-[11px]">
+      <div className="min-w-0">
+        <div className="flex items-center gap-1.5 font-medium text-gray-700">
+          <span className={`h-1.5 w-1.5 rounded-full ${status.connected ? 'bg-emerald-500' : 'bg-gray-300'}`} />
+          浏览器扩展{status.connected ? '已连接' : '未连接'}
+        </div>
+        <p className="mt-0.5 truncate text-[10px] text-gray-400" title={status.tab?.url ?? status.error}>
+          {status.tab?.title || status.error || (status.connected ? '点击扩展图标选择目标标签页' : '安装扩展后可操作当前 Chrome')}
+        </p>
+      </div>
+      <button type="button" onClick={onRefresh} className="shrink-0 rounded-lg px-2 py-1 text-gray-500 hover:bg-white hover:text-gray-900">检测</button>
+    </div>
   );
 }
 

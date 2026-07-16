@@ -15,6 +15,7 @@ export type ApolloEvent =
   | { type: 'status'; status: RuntimeStatus }
   | { type: 'done'; artifacts: Artifact[]; status: RuntimeStatus }
   | { type: 'editor_request'; id: string; action: string; input: Record<string, unknown> }
+  | { type: 'browser_request'; id: string; action: string; input: Record<string, unknown> }
   | { type: 'error'; message: string };
 
 export type ApolloChannel = 'assistant' | 'entry';

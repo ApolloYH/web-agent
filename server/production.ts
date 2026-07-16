@@ -20,6 +20,10 @@ const apollo = createApolloMiddleware({
   minFreeDiskBytes: Number(process.env.WEB_MIN_FREE_DISK_BYTES || 536870912),
   userStorageQuotaBytes: Number(process.env.WEB_USER_STORAGE_QUOTA_BYTES || 2147483648),
   uploadRetentionDays: Number(process.env.WEB_UPLOAD_RETENTION_DAYS || 7),
+  managedBrowser: process.env.APOLLO_BROWSER_WORKER_URL ? {
+    url: process.env.APOLLO_BROWSER_WORKER_URL,
+    token: process.env.APOLLO_BROWSER_WORKER_TOKEN || '',
+  } : undefined,
   entry: {
     langcoreApiKey: process.env.LANGCORE_API_KEY || '',
     langhubApiKey: process.env.NOUMI_API_KEY || '',

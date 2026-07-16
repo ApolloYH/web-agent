@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import type { ConversationSummary } from '@/lib/chatHistory';
 import { useDismissDetails } from '@/lib/useDismissDetails';
 import { ChatIcon, PlusIcon, SidebarIcon } from './Icons';
@@ -19,6 +19,7 @@ export default function AppSidebar({
   onDeleteChat,
   username,
   onLogout,
+  width,
 }: {
   open: boolean;
   onToggle: () => void;
@@ -35,11 +36,15 @@ export default function AppSidebar({
   onDeleteChat: (id: string) => void;
   username: string;
   onLogout: () => void;
+  width: number;
 }) {
   return (
     <>
       {open && <button aria-label="关闭侧栏" onClick={onToggle} className="fixed inset-0 z-30 cursor-default bg-black/25 lg:hidden" />}
-      <aside className={`fixed inset-y-0 left-0 z-40 flex shrink-0 flex-col bg-[#f9f9f9] p-1.5 transition-[width,transform] duration-200 lg:static ${open ? 'w-[210px] translate-x-0' : 'w-[210px] -translate-x-full lg:w-[50px] lg:translate-x-0'}`}>
+      <aside
+        style={{ '--sidebar-width': `${width}px` } as CSSProperties}
+        className={`fixed inset-y-0 left-0 z-40 flex shrink-0 flex-col bg-[#f9f9f9] p-1.5 transition-transform duration-200 lg:static ${open ? 'w-[210px] translate-x-0 lg:w-[var(--sidebar-width)]' : 'w-[210px] -translate-x-full lg:w-[50px] lg:translate-x-0'}`}
+      >
         <div className={`flex h-10 items-center justify-between ${open ? 'px-1.5' : 'px-0.5'}`}>
           <div className={`flex items-center gap-2 overflow-hidden ${open ? '' : 'lg:w-0'}`}>
             <img src="./apollo-avatar.jpg" alt="Apollo" className="h-6 w-6 shrink-0 rounded-full object-cover" />
