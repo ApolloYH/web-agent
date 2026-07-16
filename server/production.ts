@@ -111,7 +111,15 @@ async function serveStatic(rawUrl: string, method: string, res: import('node:htt
     ...(servedFile === compressed ? { 'Content-Encoding': 'br' } : {}),
   });
   if (method === 'HEAD') res.end();
-  else createReadStream(servedFile).pipe(res);
+  else {
+    const stream = createReadStream(servedFile);
+    stream.on('error', (error) => {
+      console.error(`[Apollo] 静态文件读取失败：${error.message}`);
+      if (!res.writableEnded) res.destroy();
+    });
+    res.on('close', () => stream.destroy());
+    stream.pipe(res);
+  }
 }
 
 function mime(ext: string): string {

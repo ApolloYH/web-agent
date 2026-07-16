@@ -1,6 +1,6 @@
 import { createReadStream, readFileSync, statSync } from 'node:fs';
 import { createServer, type Server as HttpServer } from 'node:http';
-import { resolve } from 'node:path';
+import { isAbsolute, relative, resolve } from 'node:path';
 
 const OFFICE_WARM_ASSETS = [
   '/wasm/x2t/x2t.wasm',
@@ -49,6 +49,20 @@ export function serveOfficeRuntime(
   res: import('node:http').ServerResponse,
   next: () => void,
 ): void {
+  try {
+    serveOfficeRuntimeRequest(req, res, next);
+  } catch (error) {
+    console.error(`[Apollo] Office 资源处理失败：${error instanceof Error ? error.message : String(error)}`);
+    if (!res.headersSent) res.writeHead(500).end('Internal server error');
+    else if (!res.writableEnded) res.destroy();
+  }
+}
+
+function serveOfficeRuntimeRequest(
+  req: import('node:http').IncomingMessage,
+  res: import('node:http').ServerResponse,
+  next: () => void,
+): void {
   if (req.method !== 'GET' && req.method !== 'HEAD') return next();
   let pathname: string;
   try { pathname = decodeURIComponent(new URL(req.url || '/', 'http://localhost').pathname); }
@@ -73,8 +87,8 @@ export function serveOfficeRuntime(
   }
   const root = resolve(process.cwd(), '.apollo', 'onlyoffice-runtime');
   const file = resolve(root, `.${pathname}`);
-  const relative = file.slice(root.length + 1);
-  if (!relative || relative.startsWith('..')) return next();
+  const relativePath = relative(root, file);
+  if (!relativePath || relativePath.startsWith('..') || isAbsolute(relativePath)) return next();
   let stat;
   try { stat = statSync(file); } catch { return next(); }
   if (!stat.isFile()) return next();
@@ -123,7 +137,8 @@ export function serveOfficeRuntime(
   const cacheable = !file.endsWith('.html') && !file.endsWith('.json') && pathname !== '/web-apps/apps/api/documents/api.js';
   const compressedFile = `${file}.br`;
   let servedFile = file;
-  if (cacheable) {
+  const acceptsBrotli = /(?:^|,)\s*br\s*(?:;|,|$)/i.test(req.headers['accept-encoding'] || '');
+  if (cacheable && acceptsBrotli) {
     try {
       const compressedStat = statSync(compressedFile);
       if (compressedStat.isFile() && compressedStat.mtimeMs >= stat.mtimeMs) {
@@ -136,10 +151,19 @@ export function serveOfficeRuntime(
     'Content-Type': officeMime(file),
     'Content-Length': stat.size,
     'Cache-Control': cacheable ? 'public, max-age=2592000, immutable' : 'no-cache',
+    'Vary': 'Accept-Encoding',
     ...(servedFile === compressedFile ? { 'Content-Encoding': 'br' } : {}),
   });
   if (req.method === 'HEAD') res.end();
-  else createReadStream(servedFile).pipe(res);
+  else {
+    const stream = createReadStream(servedFile);
+    stream.on('error', (error) => {
+      console.error(`[Apollo] Office 文件读取失败：${error.message}`);
+      if (!res.writableEnded) res.destroy();
+    });
+    res.on('close', () => stream.destroy());
+    stream.pipe(res);
+  }
 }
 
 export function startOfficeRuntimeServer(port: number): HttpServer | null {
@@ -148,6 +172,13 @@ export function startOfficeRuntimeServer(port: number): HttpServer | null {
   const server = createServer((req, res) => serveOfficeRuntime(req, res, () => { res.writeHead(404).end('Not found'); }));
   server.on('error', (error: NodeJS.ErrnoException) => {
     if (error.code !== 'EADDRINUSE') console.error(`[Apollo] Office Host 启动失败：${error.message}`);
+  });
+  server.headersTimeout = 15_000;
+  server.requestTimeout = 5 * 60_000;
+  server.keepAliveTimeout = 5_000;
+  server.maxRequestsPerSocket = 1_000;
+  server.on('clientError', (_error, socket) => {
+    if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
   });
   server.listen(port, '127.0.0.1', () => console.info(`[Apollo] Office Host：http://127.0.0.1:${port}/office-host.html`));
   return server;

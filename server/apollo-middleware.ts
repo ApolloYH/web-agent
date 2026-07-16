@@ -16,16 +16,21 @@ import {
 import type { Artifact, RuntimeStatus } from '../src/types/index.js';
 import { createEntryTools } from './entry-tools.js';
 import { createDocumentTools } from './document-tools.js';
-import { agentRunKey, capacityReason } from './concurrency.js';
+import { agentRunKey, capacityReason, consumeFixedWindow, pruneExpiredWindows, type RateLimitWindow } from './concurrency.js';
 
 const ARTIFACT_EXTENSIONS = new Set(['.docx', '.pdf', '.jpg', '.jpeg', '.png', '.webp', '.md', '.markdown', '.json']);
 const SKIP_DIRECTORIES = new Set(['.git', '.apollo', 'node_modules', 'dist']);
 const MAX_ARTIFACT_BYTES = 25 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const UPLOAD_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.txt', '.md', '.json']);
+const INTERACTION_TIMEOUT_MS = 5 * 60_000;
+const AUTH_IP_RATE_LIMIT = 60;
+const AUTH_IDENTITY_RATE_LIMIT = 10;
+const AUTH_RATE_WINDOW_MS = 60_000;
+const MAX_CONCURRENT_FILE_TRANSFERS = 2;
 
 type Send = (event: object) => void;
-type PendingInteraction = { userId: string; resolve: (answer: string) => void; fallback: string };
+type PendingInteraction = { userId: string; resolve: (answer: string) => void; fallback: string; timer: NodeJS.Timeout };
 type AuthUser = { id: string; username: string; admin: boolean };
 type RunContext = {
   userId: string;
@@ -64,9 +69,14 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
   const runs = new Map<string, RunContext>();
   const interactions = new Map<string, PendingInteraction>();
   const userContexts = new Map<string, UserRuntimeContext>();
+  const authRateLimits = new Map<string, RateLimitWindow>();
   const globalRunLimit = positiveInteger(maxConcurrentRuns, 8);
   const perUserRunLimit = Math.min(positiveInteger(maxRunsPerUser, 3), globalRunLimit);
+  const maxCachedRuntimeUsers = Math.max(16, globalRunLimit * 2);
   let auxiliaryJobs = 0;
+  const auxiliaryJobsByUser = new Map<string, number>();
+  let activeFileTransfers = 0;
+  const fileTransfersByUser = new Map<string, number>();
   let closing = false;
   const entryTemplate = JSON.parse(readFileSync(entryConfigTemplatePath, 'utf8')) as Record<string, unknown>;
   let entryRuntime: Record<string, unknown> = {};
@@ -108,7 +118,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     const id = `interaction-${randomUUID()}`;
     run.interactionIds.add(id);
     run.send({ ...payload, id });
-    return new Promise((resolve) => interactions.set(id, { userId: run.userId, resolve, fallback }));
+    return registerInteraction(id, run, fallback);
   };
 
   const requestEditorTool = async (runKey: string, action: string, input: Record<string, unknown>): Promise<Record<string, unknown>> => {
@@ -117,13 +127,34 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     const id = `editor-${randomUUID()}`;
     run.interactionIds.add(id);
     run.send({ type: 'editor_request', id, action, input });
-    const answer = await new Promise<string>((resolve) => interactions.set(id, { userId: run.userId, resolve, fallback: JSON.stringify({ ok: false, error: '编辑请求已取消' }) }));
+    const answer = await registerInteraction(id, run, JSON.stringify({ ok: false, error: '编辑请求已取消' }));
     try {
       const parsed = JSON.parse(answer) as unknown;
       return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : { ok: false, error: '编辑器返回格式无效' };
     } catch {
       return { ok: false, error: answer || '编辑器没有返回结果' };
     }
+  };
+
+  function registerInteraction(id: string, run: RunContext, fallback: string): Promise<string> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        if (interactions.get(id)?.timer !== timer) return;
+        interactions.delete(id);
+        run.interactionIds.delete(id);
+        resolve(fallback);
+      }, INTERACTION_TIMEOUT_MS);
+      timer.unref();
+      interactions.set(id, { userId: run.userId, resolve, fallback, timer });
+    });
+  }
+
+  const settleInteraction = (id: string, answer?: string): void => {
+    const pending = interactions.get(id);
+    if (!pending) return;
+    interactions.delete(id);
+    clearTimeout(pending.timer);
+    pending.resolve(answer ?? pending.fallback);
   };
 
   const approvalProvider = (runKey: string): ApprovalProvider => async (request) => {
@@ -185,7 +216,11 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       return context.assistantEngine;
     }
     const existing = context.entryEngines.get(conversationId);
-    if (existing) return existing;
+    if (existing) {
+      context.entryEngines.delete(conversationId);
+      context.entryEngines.set(conversationId, existing);
+      return existing;
+    }
     const turnState = context.entryTurnStates.get(conversationId) ?? {};
     context.entryTurnStates.set(conversationId, turnState);
     const runtimePromise = fs.readFile(entrySessionPath(context.workspaceRoot, conversationId), 'utf8')
@@ -239,13 +274,33 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     await Promise.all([closeAssistantEngine(context), closeEntryEngines(context)]);
   };
 
+  const pruneEntryEngines = async (context: UserRuntimeContext) => {
+    for (const [conversationId, runtime] of context.entryEngines) {
+      if (context.entryEngines.size <= perUserRunLimit) break;
+      if (runs.has(agentRunKey(context.userId, 'entry', conversationId))) continue;
+      context.entryEngines.delete(conversationId);
+      context.entryTurnStates.delete(conversationId);
+      await runtime.then((engine) => engine.close()).catch(() => undefined);
+    }
+  };
+
   const handleRequest = async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
     if (!req.url?.startsWith('/apollo-api/')) return next();
     if (closing) return jsonError(res, 503, '服务正在重启，请稍后重试');
     if (isHttps(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     if (!isSameOriginMutation(req)) return jsonError(res, 403, '跨站请求已拒绝');
     database ??= openConversationDatabase(databasePath);
-    if (req.url.startsWith('/apollo-api/auth/')) return handleAuth(req, res, database, workspaceRoot, registrationInvite, adminUsername);
+    if (req.url.startsWith('/apollo-api/auth/')) {
+      const authRoute = req.url.split('?', 1)[0];
+      if (req.method === 'POST' && (authRoute === '/apollo-api/auth/login' || authRoute === '/apollo-api/auth/register')) {
+        const retryAfter = consumeFixedWindow(authRateLimits, `ip:${clientAddress(req)}`, AUTH_IP_RATE_LIMIT, AUTH_RATE_WINDOW_MS);
+        if (retryAfter) {
+          res.setHeader('Retry-After', String(retryAfter));
+          return jsonError(res, 429, '登录尝试过于频繁，请稍后重试');
+        }
+      }
+      return handleAuth(req, res, database, workspaceRoot, registrationInvite, adminUsername, authRateLimits);
+    }
     const user = authenticatedUser(req, database);
     if (!user) return jsonError(res, 401, '请先登录');
     const context = await getUserContext(user.id);
@@ -253,8 +308,25 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     const userArtifactRoot = path.join(userWorkspaceRoot, 'artifacts');
 
     if (req.url === '/apollo-api/respond') return handleResponse(req, res, user.id, interactions);
-    if (req.url === '/apollo-api/uploads') return handleUploads(req, res, userWorkspaceRoot);
-    if (req.url === '/apollo-api/artifacts/import') return importArtifacts(req, res, userArtifactRoot);
+    if (req.url === '/apollo-api/uploads' || req.url === '/apollo-api/artifacts/import') {
+      const userTransfers = fileTransfersByUser.get(user.id) ?? 0;
+      if (activeFileTransfers >= MAX_CONCURRENT_FILE_TRANSFERS || userTransfers >= 1) {
+        res.setHeader('Retry-After', '3');
+        return jsonError(res, 429, '文件正在处理中，请稍后重试');
+      }
+      activeFileTransfers += 1;
+      fileTransfersByUser.set(user.id, userTransfers + 1);
+      try {
+        return req.url === '/apollo-api/uploads'
+          ? await handleUploads(req, res, userWorkspaceRoot)
+          : await importArtifacts(req, res, userArtifactRoot);
+      } finally {
+        activeFileTransfers -= 1;
+        const remaining = (fileTransfersByUser.get(user.id) ?? 1) - 1;
+        if (remaining > 0) fileTransfersByUser.set(user.id, remaining);
+        else fileTransfersByUser.delete(user.id);
+      }
+    }
     if (req.url === '/apollo-api/memories' && req.method === 'GET') {
       return json(res, 200, { memories: await listMemories(userWorkspaceRoot) });
     }
@@ -313,11 +385,14 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       try {
         const { text } = JSON.parse(await readBody(req)) as { text?: unknown };
         if (typeof text !== 'string' || !text.trim()) throw new Error('text 不能为空');
-        if (capacityReason(runs.values(), user.id, globalRunLimit, perUserRunLimit, auxiliaryJobs) === 'global') {
+        const userAuxiliaryJobs = auxiliaryJobsByUser.get(user.id) ?? 0;
+        const capacity = capacityReason(runs.values(), user.id, globalRunLimit, perUserRunLimit, auxiliaryJobs, userAuxiliaryJobs);
+        if (capacity) {
           res.setHeader('Retry-After', '3');
-          return jsonError(res, 429, '服务繁忙，请稍后重试');
+          return jsonError(res, 429, capacity === 'user' ? '当前账号并发任务过多，请稍后重试' : '服务繁忙，请稍后重试');
         }
         auxiliaryJobs += 1;
+        auxiliaryJobsByUser.set(user.id, userAuxiliaryJobs + 1);
         let titleEngine: QueryEngine | undefined;
         try {
           titleEngine = await createQueryEngine({
@@ -333,6 +408,9 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
           return json(res, 200, { title: cleanTitle(title) });
         } finally {
           auxiliaryJobs -= 1;
+          const remaining = (auxiliaryJobsByUser.get(user.id) ?? 1) - 1;
+          if (remaining > 0) auxiliaryJobsByUser.set(user.id, remaining);
+          else auxiliaryJobsByUser.delete(user.id);
           if (titleEngine) {
             const sessionId = titleEngine.getSessionId();
             await titleEngine.close();
@@ -419,7 +497,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
 
     const runKey = agentRunKey(user.id, channel, conversationId);
     if (runs.has(runKey)) return jsonError(res, 409, '当前对话正在处理上一条消息');
-    const capacity = capacityReason(runs.values(), user.id, globalRunLimit, perUserRunLimit, auxiliaryJobs);
+    const capacity = capacityReason(runs.values(), user.id, globalRunLimit, perUserRunLimit, auxiliaryJobs, auxiliaryJobsByUser.get(user.id) ?? 0);
     if (capacity) {
       res.setHeader('Retry-After', '3');
       return jsonError(res, 429, capacity === 'user' ? '当前账号并发任务过多，请稍后重试' : '服务繁忙，请稍后重试');
@@ -463,12 +541,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       closed = true;
       const run = runs.get(runKey);
       if (!res.writableEnded) run?.runtime?.cancelCurrentTurn();
-      for (const id of run?.interactionIds ?? []) {
-        const pending = interactions.get(id);
-        if (!pending) continue;
-        interactions.delete(id);
-        pending.resolve(pending.fallback);
-      }
+      for (const id of run?.interactionIds ?? []) settleInteraction(id);
     });
 
     try {
@@ -505,24 +578,26 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     } finally {
       clearInterval(heartbeat);
       const run = runs.get(runKey);
-      for (const id of run?.interactionIds ?? []) {
-        const pending = interactions.get(id);
-        if (!pending) continue;
-        interactions.delete(id);
-        pending.resolve(pending.fallback);
-      }
+      for (const id of run?.interactionIds ?? []) settleInteraction(id);
       runs.delete(runKey);
+      if (channel === 'entry') void pruneEntryEngines(context);
       if (!closed) res.end();
     }
   };
 
   const idleContextSweep = setInterval(() => {
-    const cutoff = Date.now() - 30 * 60_000;
-    for (const [userId, context] of userContexts) {
-      if (context.lastUsedAt >= cutoff || [...runs.values()].some((run) => run.userId === userId)) continue;
+    const now = Date.now();
+    const activeUsers = new Set([...runs.values()].map((run) => run.userId));
+    const contexts = [...userContexts.entries()].sort((left, right) => left[1].lastUsedAt - right[1].lastUsedAt);
+    for (const [userId, context] of contexts) {
+      if (activeUsers.has(userId)) continue;
+      const expired = context.lastUsedAt < now - 30 * 60_000;
+      const overLimit = userContexts.size > maxCachedRuntimeUsers && context.lastUsedAt < now - 60_000;
+      if (!expired && !overLimit) continue;
       userContexts.delete(userId);
       void closeUserEngines(context);
     }
+    pruneExpiredWindows(authRateLimits, now);
   }, 60_000);
   idleContextSweep.unref();
 
@@ -540,16 +615,16 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       ready: !closing,
       activeRuns: runs.size,
       activeJobs: runs.size + auxiliaryJobs,
+      activeFileTransfers,
       runtimeUsers: userContexts.size,
-      limits: { global: globalRunLimit, perUser: perUserRunLimit },
+      limits: { global: globalRunLimit, perUser: perUserRunLimit, fileTransfers: MAX_CONCURRENT_FILE_TRANSFERS },
     }),
     close: async () => {
       if (closing) return;
       closing = true;
       clearInterval(idleContextSweep);
       for (const run of runs.values()) run.runtime?.cancelCurrentTurn();
-      for (const pending of interactions.values()) pending.resolve(pending.fallback);
-      interactions.clear();
+      for (const id of [...interactions.keys()]) settleInteraction(id);
       await Promise.all([...userContexts.values()].map(closeUserEngines));
       userContexts.clear();
       database?.close();
@@ -671,7 +746,7 @@ async function ensureUserWorkspace(userRoot: string, sharedEntrySkillsPath: stri
   }
 }
 
-async function handleAuth(req: IncomingMessage, res: ServerResponse, database: DatabaseSync, workspaceRoot: string, registrationInvite: string, adminUsername: string): Promise<void> {
+async function handleAuth(req: IncomingMessage, res: ServerResponse, database: DatabaseSync, workspaceRoot: string, registrationInvite: string, adminUsername: string, rateLimits: Map<string, RateLimitWindow>): Promise<void> {
   const route = req.url!.split('?', 1)[0];
   if (route === '/apollo-api/auth/me' && req.method === 'GET') {
     return json(res, 200, { user: authenticatedUser(req, database), hasUsers: Boolean(database.prepare('SELECT 1 FROM users LIMIT 1').get()), registrationEnabled: Boolean(registrationInvite) });
@@ -689,6 +764,11 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, database: D
     const username = body.username.trim();
     if (!/^[\p{L}\p{N}_-]{2,32}$/u.test(username)) throw new Error('用户名需为 2–32 个字母、数字、中文、下划线或短横线');
     if (body.password.length < 8 || body.password.length > 128) throw new Error('密码长度需为 8–128 位');
+    const retryAfter = consumeFixedWindow(rateLimits, `identity:${clientAddress(req)}:${username.toLowerCase()}`, AUTH_IDENTITY_RATE_LIMIT, AUTH_RATE_WINDOW_MS);
+    if (retryAfter) {
+      res.setHeader('Retry-After', String(retryAfter));
+      return jsonError(res, 429, '该账号登录尝试过于频繁，请稍后重试');
+    }
     let user: AuthUser;
     if (route.endsWith('/register')) {
       if (!registrationInvite) return jsonError(res, 403, '当前部署已关闭注册');
@@ -710,7 +790,11 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, database: D
       }
     } else {
       const row = database.prepare('SELECT id, username, password_hash AS "passwordHash" FROM users WHERE username = ?').get(username) as { id: string; username: string; passwordHash: string } | undefined;
-      if (!row || !await verifyPassword(body.password, row.passwordHash)) throw new Error('用户名或密码错误');
+      if (!row) {
+        await derivePassword(body.password, Buffer.alloc(16), 64);
+        throw new Error('用户名或密码错误');
+      }
+      if (!await verifyPassword(body.password, row.passwordHash)) throw new Error('用户名或密码错误');
       user = { id: row.id, username: row.username, admin: isAdmin(database, row.id) };
     }
     const token = randomBytes(32).toString('base64url');
@@ -748,6 +832,15 @@ function cookieValue(req: IncomingMessage, name: string): string | undefined {
 
 function isHttps(req: IncomingMessage): boolean {
   return req.headers['x-forwarded-proto'] === 'https' || Boolean((req.socket as { encrypted?: boolean }).encrypted);
+}
+
+function clientAddress(req: IncomingMessage): string {
+  const real = req.headers['x-real-ip'];
+  const trusted = Array.isArray(real) ? real[0] : real;
+  if (trusted?.trim()) return trusted.trim();
+  const forwarded = req.headers['x-forwarded-for'];
+  const value = Array.isArray(forwarded) ? forwarded.at(-1) : forwarded?.split(',').at(-1);
+  return value?.trim() || req.socket.remoteAddress || 'unknown';
 }
 
 function isSameOriginMutation(req: IncomingMessage): boolean {
@@ -976,7 +1069,13 @@ async function readConfig(configPath: string): Promise<Record<string, unknown>> 
 
 async function writeConfig(configPath: string, config: Record<string, unknown>): Promise<void> {
   await fs.mkdir(path.dirname(configPath), { recursive: true });
-  await fs.writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+  const temporaryPath = `${configPath}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+    await fs.rename(temporaryPath, configPath);
+  } finally {
+    await fs.rm(temporaryPath, { force: true });
+  }
 }
 
 async function permissionMode(configPath: string): Promise<'ask' | 'unrestricted'> {
@@ -1023,6 +1122,7 @@ async function handleResponse(
     if (!pending) return jsonError(res, 404, '交互请求已失效');
     if (pending.userId !== userId) return jsonError(res, 403, '无权响应此交互请求');
     interactions.delete(id);
+    clearTimeout(pending.timer);
     pending.resolve(answer);
     json(res, 200, { ok: true });
   } catch (error) {
@@ -1213,12 +1313,7 @@ function truncate(value: string, max: number): string {
 }
 
 async function readBody(req: IncomingMessage, maxBytes = 1024 * 1024): Promise<string> {
-  let body = '';
-  for await (const chunk of req) {
-    body += chunk;
-    if (body.length > maxBytes) throw new Error('请求体过大');
-  }
-  return body;
+  return (await readBytes(req, maxBytes)).toString('utf8');
 }
 
 async function readBytes(req: IncomingMessage, maxBytes: number): Promise<Buffer> {
