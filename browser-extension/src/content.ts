@@ -14,11 +14,15 @@ if (['https://apollo.yh521.top', 'http://127.0.0.1:5173', 'http://localhost:5173
   window.addEventListener('message', (event: MessageEvent<unknown>) => {
     if (event.source !== window || event.origin !== location.origin || !isRecord(event.data) || event.data.type !== APOLLO_BROWSER_MESSAGE) return;
     const request = event.data as unknown as BrowserRequest;
-    void chrome.runtime.sendMessage(request).then((response) => {
-      window.postMessage({ type: APOLLO_BROWSER_RESPONSE, id: request.id, response }, location.origin);
-    }).catch((error) => {
-      window.postMessage({ type: APOLLO_BROWSER_RESPONSE, id: request.id, response: { ok: false, error: error instanceof Error ? error.message : String(error) } }, location.origin);
-    });
+    try {
+      void chrome.runtime.sendMessage(request).then((response) => {
+        window.postMessage({ type: APOLLO_BROWSER_RESPONSE, id: request.id, response }, location.origin);
+      }).catch((error) => {
+        window.postMessage({ type: APOLLO_BROWSER_RESPONSE, id: request.id, response: { ok: false, error: browserExtensionError(error) } }, location.origin);
+      });
+    } catch (error) {
+      window.postMessage({ type: APOLLO_BROWSER_RESPONSE, id: request.id, response: { ok: false, error: browserExtensionError(error) } }, location.origin);
+    }
   });
 }
 
@@ -244,4 +248,9 @@ function sanitizePageContent(value: string): string {
 
 function redact(value: string): string {
   return value.replace(/\b(?:sk|sess|token)-[A-Za-z0-9_-]{12,}\b/g, '[REDACTED]');
+}
+
+function browserExtensionError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('Extension context invalidated') ? '浏览器扩展已更新，请刷新当前网页后重试' : message;
 }
