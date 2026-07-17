@@ -48,6 +48,9 @@ export default function ChatPanel({
   surface,
   canManagePermission,
   embedded = false,
+  emptyTitle,
+  emptyDescription,
+  placeholder = '给 Apollo 发消息',
 }: {
   messages: ChatMessage[];
   streaming: boolean;
@@ -62,6 +65,9 @@ export default function ChatPanel({
   surface: 'assistant' | 'entry';
   canManagePermission: boolean;
   embedded?: boolean;
+  emptyTitle?: string;
+  emptyDescription?: string;
+  placeholder?: string;
 }) {
   const [input, setInput] = useState('');
   const [files, setFiles] = useState<File[]>([]);
@@ -138,10 +144,10 @@ export default function ChatPanel({
         {messages.length === 0 ? (
           <div className="mx-auto flex min-h-full max-w-3xl flex-col items-center justify-center pb-16 text-center">
             <h1 className="text-[24px] font-semibold leading-[30px] tracking-[-0.035em] text-[#0d0d0d]">
-              {surface === 'assistant' ? '你好，我是 Apollo' : '需要完成什么任务？'}
+              {emptyTitle ?? (surface === 'assistant' ? '你好，我是 Apollo' : '需要完成什么任务？')}
             </h1>
             <p className="mt-2 text-[11px] leading-[17px] text-[#777]">
-              {surface === 'assistant' ? '我会持续了解你的工作习惯，协助处理日常事务。' : '描述你的需求，我会匹配合适的智能体。'}
+              {emptyDescription ?? (surface === 'assistant' ? '我会持续了解你的工作习惯，协助处理日常事务。' : '描述你的需求，我会匹配合适的智能体。')}
             </p>
             {!embedded && <div className="mt-7 flex w-full max-w-3xl flex-col items-center gap-1.5">
               {(surface === 'assistant' ? [assistantSuggestions] : suggestionRows).map((row, rowIndex) => (
@@ -255,7 +261,7 @@ export default function ChatPanel({
               }
             }}
             rows={1}
-            placeholder="给 Apollo 发消息"
+            placeholder={placeholder}
             aria-label="消息内容"
             className="block max-h-[200px] min-h-5 w-full resize-none overflow-y-auto border-0 bg-transparent px-1 text-[12px] leading-[18px] text-[#0d0d0d] outline-none placeholder:text-[#8f8f8f] focus-visible:outline-none"
           />

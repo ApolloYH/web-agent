@@ -43,6 +43,7 @@ import { getBrowserConnectionStatus, runBrowserAction, type BrowserConnectionSta
 import ResizeDivider from '@/components/ResizeDivider';
 import BrowserLivePanel from '@/components/BrowserLivePanel';
 import SitesWorkspace from '@/components/SitesWorkspace';
+import type { PublishedSite } from '@/lib/sites';
 
 let idSeq = 0;
 const nextId = (p: string) => `${p}-${Date.now()}-${idSeq++}`;
@@ -69,7 +70,7 @@ const initialWorkspace = (): { view: 'assistant' | 'chat' | 'library' | 'sites';
     const saved = JSON.parse(sessionStorage.getItem(LAST_WORKSPACE_KEY) || '{}');
     if (saved.view === 'chat' && typeof saved.conversationId === 'string') return saved;
     if (saved.view === 'library') return { view: 'library' };
-    if (saved.view === 'sites') return { view: 'sites' };
+    if (saved.view === 'sites' && typeof saved.conversationId === 'string') return saved;
   } catch { /* Ignore stale browser state. */ }
   return { view: 'assistant' };
 };
@@ -100,6 +101,7 @@ export default function App() {
 
 function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void }) {
   const initialWorkspaceRef = useRef(initialWorkspace());
+  const siteConversationKey = `apollo:site-conversation:${user.id}`;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [runningConversationIds, setRunningConversationIds] = useState<Set<string>>(() => new Set());
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null);
@@ -113,7 +115,11 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   const [deleteConversationId, setDeleteConversationId] = useState<string | null>(null);
   const [historyReady, setHistoryReady] = useState(false);
   const [activeView, setActiveView] = useState<'assistant' | 'chat' | 'library' | 'sites' | 'document'>(initialWorkspaceRef.current.view);
-  const [queuedSitePrompt, setQueuedSitePrompt] = useState('');
+  const [siteConversationId, setSiteConversationId] = useState<string | null>(() => initialWorkspaceRef.current.view === 'sites'
+    ? initialWorkspaceRef.current.conversationId ?? null
+    : sessionStorage.getItem(siteConversationKey));
+  const [activeSite, setActiveSite] = useState<PublishedSite | null>(null);
+  const [siteRefreshKey, setSiteRefreshKey] = useState(0);
   const [storedArtifacts, setStoredArtifacts] = useState<StoredArtifact[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [localFolder, setLocalFolder] = useState<DirectoryHandle | null>(null);
@@ -150,6 +156,11 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   const streaming = runningConversationIds.has(conversationId);
 
   useEffect(() => {
+    if (siteConversationId) sessionStorage.setItem(siteConversationKey, siteConversationId);
+    else sessionStorage.removeItem(siteConversationKey);
+  }, [siteConversationId, siteConversationKey]);
+
+  useEffect(() => {
     const timer = window.setTimeout(() => {
       try { localStorage.setItem(sidebarWidthKey, String(sidebarWidth)); } catch { /* Layout persistence is optional. */ }
     }, 150);
@@ -171,7 +182,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   }, [browserPanelWidth, browserPanelWidthKey]);
 
   useEffect(() => {
-    if (!browserPanelOpen || !managedBrowserPolling) return;
+    if ((!browserPanelOpen && activeView !== 'sites') || !managedBrowserPolling) return;
     let cancelled = false;
     let timer = 0;
     const controller = new AbortController();
@@ -197,7 +208,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [browserPanelOpen, managedBrowserPolling, managedBrowserRun]);
+  }, [activeView, browserPanelOpen, managedBrowserPolling, managedBrowserRun]);
 
   const refreshBrowserStatus = useCallback(() => {
     void getBrowserConnectionStatus().then(setBrowserStatus);
@@ -227,7 +238,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
     if (!historyReady || activeView === 'document') return;
     sessionStorage.setItem(LAST_WORKSPACE_KEY, JSON.stringify({
       view: activeView,
-      ...(activeView === 'chat' ? { conversationId } : {}),
+      ...(activeView === 'chat' || activeView === 'sites' ? { conversationId } : {}),
     }));
   }, [activeView, conversationId, historyReady]);
 
@@ -267,7 +278,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
         if (cancelled) return;
         setConversationList(items.filter((item) => item.id !== ASSISTANT_CONVERSATION_ID));
         const saved = initialWorkspaceRef.current;
-        const savedConversation = saved.view === 'chat' && saved.conversationId
+        const savedConversation = (saved.view === 'chat' || saved.view === 'sites') && saved.conversationId
           ? await getConversationIfExists(saved.conversationId)
           : null;
         const conversation = savedConversation ?? await getConversationIfExists(ASSISTANT_CONVERSATION_ID);
@@ -276,7 +287,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
         setConversationTitle(conversation?.title ?? ASSISTANT_CONVERSATION_TITLE);
         setConversationGroup(conversation?.group ?? '最近');
         setMessages(conversation?.messages ?? []);
-        if (saved.view === 'chat' && !savedConversation) setActiveView('assistant');
+        if ((saved.view === 'chat' || saved.view === 'sites') && !savedConversation) setActiveView('assistant');
         titleGeneratedRef.current = true;
       })
       .catch((error) => window.alert(error instanceof Error ? error.message : String(error)))
@@ -413,7 +424,11 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
         let executionText = attachments.length
           ? `${text}\n\n已上传文件：\n${attachments.map((file) => `- ${file.path}`).join('\n')}`
           : text;
-        if (activeDocument) {
+        if (activeView === 'sites') {
+          executionText += activeSite
+            ? `\n\n当前处于站点工作台，正在持续迭代站点“${activeSite.name}”，源码目录为 ${activeSite.sourceDir}，预览地址为 ${activeSite.url}。把本轮请求视为同一站点的后续修改；如需参考用户提供的网页且用户未明确指定自己的浏览器，使用 browser_managed_task。完成本轮修改后必须再次调用 site_publish，确保右侧预览立即更新。`
+            : '\n\n当前处于站点工作台，要通过多轮对话创建一个新站点。先结合用户发来的网页链接、附件和描述理解需求；如需参考网页且用户未明确指定自己的浏览器，使用 browser_managed_task。把源码写入 sites/<英文短名>/，完成可预览版本后必须调用 site_publish，后续每轮修改也要重新发布。';
+        } else if (activeDocument) {
           executionText += `\n\n当前 Web 编辑工作台已打开文档：${activeDocument.name}（${activeDocument.kind}，${activeDocument.source}）。如果用户要求读取或修改“当前文档”，请使用 document_get_context、document_replace_text、document_append_text 或 document_set_content 工具，不要使用服务器文件工具绕过当前编辑器。`;
         } else if (librarySource === 'local' && localFolder) {
           executionText += `\n\n当前 Web 工作区是用户浏览器中的本地文件夹“${localFolder.name}”。如果用户询问该文件夹内容，请使用 local_folder_list_files，不要使用服务器文件工具。`;
@@ -422,7 +437,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
           executionText,
           (event) => {
             if (event.type === 'trace' && event.event.type === 'tool_call' && event.event.tool === 'browser_managed_task') {
-              setBrowserPanelOpen(true);
+              if (activeView !== 'sites') setBrowserPanelOpen(true);
               setManagedBrowserView({
                 id: `starting-${Date.now()}`,
                 status: 'starting',
@@ -438,6 +453,9 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
             if (event.type === 'trace' && event.event.type === 'tool_result' && event.event.tool === 'browser_managed_task' && event.event.isError) {
               setManagedBrowserPolling(false);
               setManagedBrowserView((current) => current ? { ...current, status: 'failed', error: '托管浏览器任务未成功完成' } : current);
+            }
+            if (event.type === 'trace' && event.event.type === 'tool_result' && event.event.tool === 'site_publish' && !event.event.isError) {
+              setSiteRefreshKey((value) => value + 1);
             }
             if (event.type === 'trace' && event.event.type === 'assistant_delta') onDelta(event.event.text);
             if (event.type === 'editor_request') {
@@ -535,14 +553,14 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
         }
       }
     },
-    [activeDocument, activeView, conversationGroup, conversationId, conversationTitle, finishRun, librarySource, localFolder, refreshBrowserStatus, rememberConversation, updateRunMessages],
+    [activeDocument, activeSite, activeView, conversationGroup, conversationId, conversationTitle, finishRun, librarySource, localFolder, refreshBrowserStatus, rememberConversation, updateRunMessages],
   );
 
   const handleStop = useCallback(() => {
     abortRefs.current.get(conversationId)?.abort();
   }, [conversationId]);
 
-  const handleNewChat = useCallback(() => {
+  const handleNewChat = useCallback((view: 'chat' | 'sites' = 'chat') => {
     if (messages.length || conversationTitle) {
       void saveConversation({ id: conversationId, title: conversationTitle, group: conversationGroup, messages })
         .then(rememberConversation)
@@ -556,20 +574,9 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
     setConversationTitle('');
     setConversationGroup('最近');
     titleGeneratedRef.current = false;
-    setActiveView('chat');
+    setActiveView(view);
+    if (view === 'sites') setSiteConversationId(id);
   }, [conversationGroup, conversationId, conversationTitle, messages, rememberConversation]);
-
-  useEffect(() => {
-    if (!queuedSitePrompt || activeView !== 'chat' || messages.length || streaming) return;
-    const prompt = queuedSitePrompt;
-    setQueuedSitePrompt('');
-    void handleSend(`请创建并发布一个轻量静态网站：${prompt}`);
-  }, [activeView, handleSend, messages.length, queuedSitePrompt, streaming]);
-
-  const startSiteCreation = useCallback((description: string) => {
-    handleNewChat();
-    setQueuedSitePrompt(description);
-  }, [handleNewChat]);
 
   const openAssistant = useCallback(async () => {
     if (activeView === 'assistant') return;
@@ -591,9 +598,10 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
     }
   }, [activeView]);
 
-  const openConversation = useCallback(async (id: string) => {
+  const openConversation = useCallback(async (id: string, view: 'chat' | 'sites' = 'chat') => {
     if (id === conversationId) {
-      setActiveView('chat');
+      setActiveView(view);
+      if (view === 'sites') setSiteConversationId(id);
       return;
     }
     setHistoryReady(false);
@@ -605,7 +613,8 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
       setConversationTitle(conversation.title);
       setConversationGroup(conversation.group);
       setMessages(messageCache.current.get(conversation.id) ?? conversation.messages);
-      setActiveView('chat');
+      setActiveView(view);
+      if (view === 'sites') setSiteConversationId(id);
       titleGeneratedRef.current = Boolean(conversation.title || conversation.messages.length);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : String(error));
@@ -638,6 +647,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
     if (abortRefs.current.has(id)) throw new Error('请先停止正在运行的对话');
     await deleteConversation(id);
     setConversationList((items) => items.filter((item) => item.id !== id));
+    if (id === siteConversationId) setSiteConversationId(null);
     if (id !== conversationId) return;
     const nextId = newConversationId();
     activeConversationIdRef.current = nextId;
@@ -647,7 +657,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
     setConversationGroup('最近');
     setMessages([]);
     titleGeneratedRef.current = false;
-  }, [conversationId]);
+  }, [conversationId, siteConversationId]);
 
   const activateDocumentConversation = useCallback(async (key: string, name: string) => {
     if (activeView !== 'document') {
@@ -700,8 +710,10 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   }, [activeView]);
 
   const openSites = useCallback(() => {
-    setActiveView('sites');
-  }, []);
+    if (activeView === 'sites') return;
+    if (siteConversationId) void openConversation(siteConversationId, 'sites');
+    else handleNewChat('sites');
+  }, [activeView, handleNewChat, openConversation, siteConversationId]);
 
   useEffect(() => {
     if (activeView !== 'library') return;
@@ -911,7 +923,30 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
             /> : activeView !== 'document' && activeView !== 'sites' && <WorkspaceBar label={workspaceLabel} onToggle={toggleWorkspace} />}
           {activeView === 'assistant' && <RuntimeStatusBar status={runtimeStatus} />}
           {activeView === 'sites' ? (
-            <SitesWorkspace onCreate={startSiteCreation} />
+            <SitesWorkspace
+              chat={<ChatPanel
+                messages={messages}
+                streaming={streaming}
+                onSend={handleSend}
+                onStop={handleStop}
+                onCommand={handleCommand}
+                onRespond={handleRespond}
+                onOpenArtifact={(artifact) => { void openArtifactDocument(artifact); }}
+                runtimeMode="normal"
+                permissionMode={entryPermissionMode}
+                onPermissionChange={changeEntryPermissionMode}
+                canManagePermission={user.admin}
+                surface="entry"
+                embedded
+                emptyTitle="想做一个什么系统？"
+                emptyDescription="发来参考网页、资料或想法，我们边聊边搭建。"
+                placeholder="发网页链接，或继续描述要修改的地方"
+              />}
+              browserView={managedBrowserView}
+              refreshKey={siteRefreshKey}
+              onNewConversation={() => handleNewChat('sites')}
+              onSiteChange={setActiveSite}
+            />
           ) : activeView === 'library' ? (
             <FileLibrary
               files={storedArtifacts.map((file) => ({ ...file, source: 'server' as const }))}
@@ -992,7 +1027,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
             />
           )}
         </section>
-        {browserPanelOpen && (
+        {browserPanelOpen && activeView !== 'sites' && (
           <ResizeDivider
             value={browserPanelWidth}
             min={BROWSER_PANEL_WIDTH.min}
@@ -1005,7 +1040,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
           />
         )}
         <BrowserLivePanel
-          open={browserPanelOpen}
+          open={browserPanelOpen && activeView !== 'sites'}
           width={browserPanelWidth}
           resizing={browserPanelResizing}
           view={managedBrowserView}

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import type { ManagedBrowserView } from '@/lib/apolloAgent';
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type WheelEvent } from 'react';
+import { sendManagedBrowserInput, type ManagedBrowserView } from '@/lib/apolloAgent';
 
 export default function BrowserLivePanel({
   open,
@@ -14,11 +14,9 @@ export default function BrowserLivePanel({
   view: ManagedBrowserView | null;
   onClose: () => void;
 }) {
-  const [frameUrl, setFrameUrl] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
   const closeTimerRef = useRef<number | null>(null);
 
-  useEffect(() => { setFrameUrl(null); }, [view?.id]);
   useEffect(() => {
     if (!open) return;
     if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
@@ -28,23 +26,12 @@ export default function BrowserLivePanel({
   useEffect(() => () => {
     if (closeTimerRef.current) window.clearTimeout(closeTimerRef.current);
   }, []);
-  useEffect(() => {
-    if (!view?.frame_version) return;
-    const next = `/apollo-api/browser-view/frame?v=${encodeURIComponent(view.frame_version)}`;
-    const image = new Image();
-    let cancelled = false;
-    image.decoding = 'async';
-    image.fetchPriority = 'high';
-    image.onload = () => { void image.decode().catch(() => undefined).then(() => { if (!cancelled) setFrameUrl(next); }); };
-    image.src = next;
-    return () => { cancelled = true; };
-  }, [view?.frame_version]);
-
   const status = viewStatus(view);
   const visuallyOpen = open && !closing;
   const transition = resizing ? 'transition-none' : `transition-[opacity,transform] duration-200 motion-reduce:transition-none ${closing ? 'ease-in' : 'ease-out'}`;
   const requestClose = () => {
     if (closing) return;
+    if (view?.status === 'running') void sendManagedBrowserInput({ type: 'resume' }).catch(() => undefined);
     setClosing(true);
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return onClose();
     closeTimerRef.current = window.setTimeout(onClose, 200);
@@ -84,34 +71,147 @@ export default function BrowserLivePanel({
       </div>
 
       <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_50%_20%,#ffffff_0%,#f5f5f6_56%,#eeeeef_100%)] p-3">
-        <div className="relative flex aspect-video max-h-full w-full min-h-52 items-center justify-center overflow-hidden rounded-xl border border-black/[0.09] bg-white shadow-[0_12px_34px_rgba(0,0,0,0.10)]">
-          {view?.live_view_url ? (
-            <iframe
-              src={view.live_view_url}
-              title={view?.title ? `托管浏览器：${view.title}` : '托管浏览器实时画面'}
-              sandbox="allow-same-origin allow-scripts"
-              allow="clipboard-read; clipboard-write"
-              className="absolute inset-0 h-full w-full border-0"
-            />
-          ) : frameUrl ? (
-            <img src={frameUrl} decoding="async" alt={view?.title ? `托管浏览器：${view.title}` : '托管浏览器实时画面'} className="absolute inset-0 h-full w-full object-contain object-center" />
-          ) : (
-            <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-8 text-center">
-              <div className="flex size-12 items-center justify-center rounded-2xl bg-[#f2f3f4] text-[#777]"><BrowserIcon large /></div>
-              <div>
-                <p className="text-[12px] font-medium text-[#3b3b3b]">{view?.status === 'failed' ? '浏览器任务未完成' : '正在准备浏览器画面'}</p>
-                <p className="mt-1 text-[10px] leading-5 text-[#777]">{view?.error || '启动浏览器后，实时画面会显示在这里。'}</p>
-              </div>
-            </div>
-          )}
-        </div>
+        <BrowserViewport view={view} className="aspect-video max-h-full w-full min-h-52 rounded-xl border border-black/[0.09] shadow-[0_12px_34px_rgba(0,0,0,0.10)]" />
       </div>
 
       <footer className="flex h-9 shrink-0 items-center justify-between border-t border-black/[0.06] bg-white px-3.5 text-[10px] text-[#777]">
         <span className="truncate" title={view?.title}>{view?.title || '等待页面载入'}</span>
-        <span className="ml-3 shrink-0">{view?.step ? `第 ${view.step} 步` : '实时画面'}</span>
+        <span className="ml-3 shrink-0">{view?.status === 'running' ? '点击画面可操作' : view?.step ? `第 ${view.step} 步` : '实时画面'}</span>
       </footer>
     </aside>
+  );
+}
+
+export function BrowserViewport({ view, className = '' }: { view: ManagedBrowserView | null; className?: string }) {
+  const [frameUrl, setFrameUrl] = useState<string | null>(null);
+  const [streamFailed, setStreamFailed] = useState(false);
+  const imageRef = useRef<HTMLImageElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const lastWheelAtRef = useRef(0);
+  const [cursor, setCursor] = useState<{ x: number; y: number } | null>(null);
+  const [userControlled, setUserControlled] = useState(false);
+
+  useEffect(() => { setFrameUrl(null); setStreamFailed(false); setCursor(null); setUserControlled(false); }, [view?.id]);
+  useEffect(() => { setUserControlled(Boolean(view?.user_controlled)); }, [view?.user_controlled]);
+  useEffect(() => {
+    if (!streamFailed || view?.status !== 'running') return;
+    const timer = window.setTimeout(() => setStreamFailed(false), 1_000);
+    return () => window.clearTimeout(timer);
+  }, [streamFailed, view?.status]);
+  useEffect(() => {
+    if (!view?.frame_version || view.status === 'running') return;
+    const next = `/apollo-api/browser-view/frame?v=${encodeURIComponent(view.frame_version)}`;
+    const image = new Image();
+    let cancelled = false;
+    image.decoding = 'async';
+    image.fetchPriority = 'high';
+    image.onload = () => { void image.decode().catch(() => undefined).then(() => { if (!cancelled) setFrameUrl(next); }); };
+    image.src = next;
+    return () => { cancelled = true; };
+  }, [view?.frame_version]);
+
+  const point = (clientX: number, clientY: number) => {
+    const image = imageRef.current;
+    if (!image?.naturalWidth || !image.naturalHeight) return null;
+    const rect = image.getBoundingClientRect();
+    const scale = Math.min(rect.width / image.naturalWidth, rect.height / image.naturalHeight);
+    const width = image.naturalWidth * scale;
+    const height = image.naturalHeight * scale;
+    const left = rect.left + (rect.width - width) / 2;
+    const top = rect.top + (rect.height - height) / 2;
+    const x = (clientX - left) / width;
+    const y = (clientY - top) / height;
+    return x >= 0 && x <= 1 && y >= 0 && y <= 1 ? { x, y } : null;
+  };
+  const onPointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    if (view?.status !== 'running') return;
+    const position = point(event.clientX, event.clientY);
+    if (!position) return;
+    event.preventDefault();
+    setCursor(position);
+    setUserControlled(true);
+    inputRef.current?.focus({ preventScroll: true });
+    void sendManagedBrowserInput({ type: 'click', ...position }).catch(() => undefined);
+  };
+  const onWheel = (event: WheelEvent<HTMLDivElement>) => {
+    if (view?.status !== 'running') return;
+    const position = point(event.clientX, event.clientY);
+    if (!position) return;
+    event.preventDefault();
+    const now = performance.now();
+    if (now - lastWheelAtRef.current < 50) return;
+    lastWheelAtRef.current = now;
+    void sendManagedBrowserInput({
+      type: 'scroll',
+      ...position,
+      delta_x: Math.max(-2000, Math.min(2000, event.deltaX)),
+      delta_y: Math.max(-2000, Math.min(2000, event.deltaY)),
+    }).catch(() => undefined);
+  };
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (!['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    void sendManagedBrowserInput({ type: 'key', key: event.key }).catch(() => undefined);
+  };
+  const interactive = view?.status === 'running' && !streamFailed;
+
+  return (
+    <div
+      className={`relative flex items-center justify-center overflow-hidden bg-white outline-none ${interactive ? 'cursor-crosshair' : ''} ${className}`}
+      onPointerDown={onPointerDown}
+      onWheel={onWheel}
+    >
+      {interactive || frameUrl ? (
+        <img
+          ref={imageRef}
+          src={interactive ? `/apollo-api/browser-view/stream?session=${encodeURIComponent(view.id)}` : frameUrl!}
+          decoding="async"
+          draggable={false}
+          onError={() => { if (interactive) setStreamFailed(true); }}
+          alt={view?.title ? `托管浏览器：${view.title}` : '托管浏览器实时画面'}
+          className="absolute inset-0 h-full w-full select-none object-contain object-center"
+        />
+      ) : (
+        <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-8 text-center">
+          <div className="flex size-12 items-center justify-center rounded-2xl bg-[#f2f3f4] text-[#777]"><BrowserIcon large /></div>
+          <div>
+            <p className="text-[12px] font-medium text-[#3b3b3b]">{view?.status === 'failed' ? '浏览器任务未完成' : '正在准备浏览器画面'}</p>
+            <p className="mt-1 text-[10px] leading-5 text-[#777]">{view?.error || '把参考网页发给 Apollo 后，实时画面会显示在这里。'}</p>
+          </div>
+        </div>
+      )}
+      {interactive && cursor ? (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-blue-500/80 shadow-[0_0_0_4px_rgba(59,130,246,0.2)]"
+          style={{ left: `${cursor.x * 100}%`, top: `${cursor.y * 100}%` }}
+        />
+      ) : null}
+      {interactive && userControlled ? (
+        <button
+          type="button"
+          className="absolute right-3 top-3 rounded-full border border-white/70 bg-[#202124]/90 px-3 py-1.5 text-[10px] font-medium text-white shadow-lg backdrop-blur"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={() => {
+            setUserControlled(false);
+            void sendManagedBrowserInput({ type: 'resume' }).catch(() => setUserControlled(true));
+          }}
+        >
+          交还 Apollo
+        </button>
+      ) : null}
+      <input
+        ref={inputRef}
+        aria-label="向托管浏览器输入文字"
+        className="pointer-events-none absolute size-px opacity-0"
+        onKeyDown={onKeyDown}
+        onInput={(event) => {
+          const text = event.currentTarget.value;
+          event.currentTarget.value = '';
+          if (text) void sendManagedBrowserInput({ type: 'text', text }).catch(() => undefined);
+        }}
+      />
+    </div>
   );
 }
 

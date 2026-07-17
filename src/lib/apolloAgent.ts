@@ -29,6 +29,7 @@ export interface ManagedBrowserView {
   updated_at: number;
   frame_version: string;
   live_view_url?: string;
+  user_controlled?: boolean;
   error?: string;
 }
 
@@ -37,6 +38,22 @@ export async function getManagedBrowserView(signal?: AbortSignal): Promise<Manag
   if (!response.ok) throw new Error(`浏览器画面请求失败 ${response.status}`);
   const payload = await response.json() as { session?: ManagedBrowserView | null };
   return payload.session ?? null;
+}
+
+export type ManagedBrowserInput =
+  | { type: 'click'; x: number; y: number }
+  | { type: 'scroll'; x: number; y: number; delta_x: number; delta_y: number }
+  | { type: 'key'; key: string }
+  | { type: 'text'; text: string }
+  | { type: 'resume' };
+
+export async function sendManagedBrowserInput(input: ManagedBrowserInput): Promise<void> {
+  const response = await fetch('/apollo-api/browser-view/input', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new Error(`浏览器控制失败 ${response.status}`);
 }
 
 export async function uploadInputFiles(files: File[]): Promise<Attachment[]> {

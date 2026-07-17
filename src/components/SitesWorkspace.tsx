@@ -1,28 +1,78 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { BrowserViewport } from '@/components/BrowserLivePanel';
+import ResizeDivider from '@/components/ResizeDivider';
+import type { ManagedBrowserView } from '@/lib/apolloAgent';
 import { getPublishedSites, republishSite, type PublishedSite } from '@/lib/sites';
 
-export default function SitesWorkspace({ onCreate }: { onCreate: (description: string) => void }) {
-  const [description, setDescription] = useState('');
+const CHAT_WIDTH = { default: 400, min: 320, max: 640 };
+
+export default function SitesWorkspace({
+  chat,
+  browserView,
+  refreshKey,
+  onNewConversation,
+  onSiteChange,
+}: {
+  chat: ReactNode;
+  browserView: ManagedBrowserView | null;
+  refreshKey: number;
+  onNewConversation: () => void;
+  onSiteChange: (site: PublishedSite | null) => void;
+}) {
   const [sites, setSites] = useState<PublishedSite[]>([]);
+  const [selectedSlug, setSelectedSlug] = useState('');
   const [available, setAvailable] = useState(true);
-  const [loading, setLoading] = useState(true);
   const [busySlug, setBusySlug] = useState('');
   const [notice, setNotice] = useState('');
+  const [preview, setPreview] = useState<'site' | 'browser'>('site');
+  const [chatWidth, setChatWidth] = useState(CHAT_WIDTH.default);
+  const [resizing, setResizing] = useState(false);
+  const newSiteAfterRef = useRef(0);
 
-  const refresh = () => getPublishedSites().then((result) => {
-    setAvailable(result.available);
-    setSites(result.sites);
-  }).catch((error) => setNotice(error instanceof Error ? error.message : String(error))).finally(() => setLoading(false));
+  useEffect(() => {
+    let cancelled = false;
+    void getPublishedSites().then((result) => {
+      if (cancelled) return;
+      setAvailable(result.available);
+      setSites(result.sites);
+      const created = newSiteAfterRef.current
+        ? result.sites.find((site) => Date.parse(site.publishedAt) >= newSiteAfterRef.current - 5_000)
+        : undefined;
+      if (created) {
+        newSiteAfterRef.current = 0;
+        setSelectedSlug(created.slug);
+        setPreview('site');
+      } else {
+        setSelectedSlug((current) => current && result.sites.some((site) => site.slug === current)
+          ? current
+          : newSiteAfterRef.current ? '' : result.sites[0]?.slug ?? '');
+      }
+    }).catch((error) => {
+      if (!cancelled) setNotice(error instanceof Error ? error.message : String(error));
+    });
+    return () => { cancelled = true; };
+  }, [refreshKey]);
 
-  useEffect(() => { void refresh(); }, []);
+  const selectedSite = sites.find((site) => site.slug === selectedSlug) ?? null;
+  useEffect(() => { onSiteChange(selectedSite); }, [onSiteChange, selectedSite]);
+  useEffect(() => { if (browserView?.id) setPreview('browser'); }, [browserView?.id]);
 
-  const deploy = async (site: PublishedSite) => {
-    setBusySlug(site.slug);
+  const startNew = () => {
+    newSiteAfterRef.current = Date.now();
+    setSelectedSlug('');
+    setPreview('site');
+    setNotice('');
+    onNewConversation();
+  };
+
+  const deploy = async () => {
+    if (!selectedSite) return;
+    setBusySlug(selectedSite.slug);
     setNotice('');
     try {
-      const updated = await republishSite(site);
+      const updated = await republishSite(selectedSite);
       setSites((items) => items.map((item) => item.slug === updated.slug ? updated : item));
-      setNotice(`“${site.name}”已重新部署`);
+      setNotice(`“${updated.name}”已重新部署`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : String(error));
     } finally {
@@ -30,94 +80,110 @@ export default function SitesWorkspace({ onCreate }: { onCreate: (description: s
     }
   };
 
-  const submit = () => {
-    const value = description.trim();
-    if (!value) return;
-    onCreate(value);
-  };
-
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-white">
-      <header className="flex h-12 shrink-0 items-center justify-between border-b border-black/[0.06] pl-12 pr-4 lg:px-5">
-        <div className="flex items-center gap-2.5"><SitesIcon /><h1 className="text-[13px] font-semibold text-[#202020]">站点</h1></div>
-        <span className="text-[10px] text-[#858585]">{sites.length ? `${sites.length} 个站点` : '轻站点'}</span>
-      </header>
-
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-6 sm:px-8 lg:px-10">
-        <div className="mx-auto max-w-6xl">
-          <section className="rounded-2xl border border-black/[0.08] bg-[#fafafa] p-5 sm:p-6">
-            <div className="max-w-2xl">
-              <h2 className="text-[21px] font-semibold tracking-[-0.025em] text-[#171717]">把想法变成一个网站</h2>
-              <p className="mt-1.5 text-[12px] leading-5 text-[#666]">描述用途、内容和风格，Apollo 会创建静态网站并在发布前请求你确认。</p>
-            </div>
-            <label htmlFor="site-description" className="mt-5 block text-[11px] font-medium text-[#333]">网站描述</label>
-            <div className="mt-2 flex flex-col gap-2.5 sm:flex-row">
-              <textarea
-                id="site-description"
-                value={description}
-                onChange={(event) => setDescription(event.target.value)}
-                onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') submit(); }}
-                rows={3}
-                placeholder="例如：为我的摄影工作室做一个极简作品集，包含介绍、作品和联系方式"
-                className="min-h-24 flex-1 resize-none rounded-xl border border-black/[0.10] bg-white px-3.5 py-3 text-[12px] leading-5 text-[#202020] outline-none transition-colors placeholder:text-[#aaa] focus:border-black/30 focus-visible:ring-2 focus-visible:ring-black/10"
-              />
-              <button type="button" disabled={!description.trim() || !available} onClick={submit} className="h-10 cursor-pointer self-end rounded-full bg-[#171717] px-5 text-[11px] font-medium text-white transition-colors hover:bg-[#333] disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717]">用 Apollo 创建</button>
-            </div>
-            {!available && <p className="mt-3 text-[11px] text-[#b45309]">管理员尚未配置独立站点域名，创建后暂时不能发布。</p>}
-          </section>
-
-          <div className="mt-8 flex items-end justify-between">
-            <div><h2 className="text-[14px] font-semibold text-[#202020]">我的站点</h2><p className="mt-1 text-[10px] text-[#858585]">修改源文件后，可在这里一键重新部署。</p></div>
-            {notice && <p aria-live="polite" className="text-[10px] text-[#555]">{notice}</p>}
-          </div>
-
-          {loading ? (
-            <div className="flex h-48 items-center justify-center text-[11px] text-[#888]">正在读取站点…</div>
-          ) : sites.length ? (
-            <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {sites.map((site) => <SiteCard key={site.slug} site={site} busy={busySlug === site.slug} onDeploy={() => { void deploy(site); }} />)}
-            </div>
-          ) : (
-            <div className="mt-4 flex h-48 flex-col items-center justify-center rounded-2xl border border-dashed border-black/[0.12] bg-[#fcfcfc] text-center">
-              <div className="flex size-10 items-center justify-center rounded-xl bg-[#f0f0f0] text-[#777]"><SitesIcon /></div>
-              <p className="mt-3 text-[12px] font-medium text-[#444]">还没有站点</p>
-              <p className="mt-1 text-[10px] text-[#888]">在上方描述你想要的网站，Apollo 会完成创建和发布。</p>
-            </div>
+      <header className="flex h-12 shrink-0 items-center justify-between border-b border-black/[0.07] pl-12 pr-3 lg:px-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <h1 className="shrink-0 text-[13px] font-semibold text-[#202020]">站点</h1>
+          {sites.length > 0 && (
+            <label className="min-w-0">
+              <span className="sr-only">当前站点</span>
+              <select
+                value={selectedSlug}
+                onChange={(event) => { setSelectedSlug(event.target.value); setPreview('site'); }}
+                className="max-w-24 cursor-pointer truncate rounded-lg border-0 bg-[#f3f3f3] px-2 py-1.5 text-[10px] text-[#555] outline-none focus-visible:ring-2 focus-visible:ring-black/15 sm:max-w-52 sm:px-2.5"
+              >
+                {!selectedSlug && <option value="">等待新站点发布</option>}
+                {sites.map((site) => <option key={site.slug} value={site.slug}>{site.name}</option>)}
+              </select>
+            </label>
           )}
         </div>
+        <button type="button" disabled={!available} onClick={startNew} className="h-8 cursor-pointer rounded-full bg-[#171717] px-3 text-[11px] font-medium text-white transition-colors hover:bg-[#343434] disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717] sm:px-4"><span className="sm:hidden">新建</span><span className="hidden sm:inline">新建站点</span></button>
+      </header>
+
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
+        <aside
+          style={{ '--site-chat-width': `${chatWidth}px` } as CSSProperties}
+          className="flex h-[52dvh] min-h-[360px] w-full shrink-0 flex-col border-b border-black/[0.07] lg:h-auto lg:min-h-0 lg:w-[var(--site-chat-width)] lg:border-b-0"
+          aria-label="站点对话"
+        >
+          <div className="flex h-11 shrink-0 items-center justify-between border-b border-black/[0.06] px-4">
+            <div>
+              <p className="text-[11px] font-medium text-[#303030]">与 Apollo 一起构建</p>
+              <p className="mt-0.5 text-[9px] text-[#888]">发链接、上传资料，或继续描述修改</p>
+            </div>
+            <span className="rounded-full bg-[#f2f2f2] px-2 py-1 text-[9px] text-[#666]">持续对话</span>
+          </div>
+          <div className="min-h-0 flex-1">{chat}</div>
+        </aside>
+
+        <ResizeDivider
+          value={chatWidth}
+          min={CHAT_WIDTH.min}
+          max={CHAT_WIDTH.max}
+          growDirection={1}
+          label="调整站点对话宽度"
+          onChange={setChatWidth}
+          onResizeStart={() => setResizing(true)}
+          onResizeEnd={() => setResizing(false)}
+        />
+
+        <section className="flex h-[52dvh] min-h-[360px] min-w-0 flex-1 flex-col bg-[#f7f7f8] lg:h-auto lg:min-h-0" aria-label="站点实时预览">
+          <header className="flex h-11 shrink-0 items-center justify-between border-b border-black/[0.07] bg-white px-3">
+            <div className="flex items-center gap-1 rounded-lg bg-[#f3f3f3] p-0.5">
+              <PreviewTab active={preview === 'site'} onClick={() => setPreview('site')}>网站预览</PreviewTab>
+              <PreviewTab active={preview === 'browser'} onClick={() => setPreview('browser')}>参考网页</PreviewTab>
+            </div>
+            <div className="flex items-center gap-1.5">
+              {notice && <span aria-live="polite" className="hidden max-w-48 truncate text-[9px] text-[#666] sm:block">{notice}</span>}
+              {selectedSite && preview === 'site' && <>
+                <button type="button" disabled={busySlug === selectedSite.slug} onClick={() => { void deploy(); }} className="h-7 cursor-pointer rounded-full px-2.5 text-[9px] font-medium text-[#555] transition-colors hover:bg-[#f2f2f2] disabled:cursor-wait disabled:opacity-50">{busySlug === selectedSite.slug ? '部署中…' : '重新部署'}</button>
+                <a href={selectedSite.url} target="_blank" rel="noreferrer" className="inline-flex h-7 cursor-pointer items-center rounded-full bg-[#171717] px-3 text-[9px] font-medium text-white transition-colors hover:bg-[#343434]">新窗口打开</a>
+              </>}
+            </div>
+          </header>
+
+          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-black/[0.06] bg-white px-3">
+            <span className="text-[#858585]" aria-hidden="true"><LockIcon /></span>
+            <div className="min-w-0 flex-1 truncate rounded-lg border border-black/[0.08] bg-[#f7f7f8] px-3 py-1.5 text-[9px] text-[#666]">
+              {preview === 'browser' ? browserView?.url || '参考网页将在这里打开' : selectedSite?.url || '站点发布后会自动出现在这里'}
+            </div>
+          </div>
+
+          <div className="relative min-h-0 flex-1 overflow-hidden p-3">
+            {preview === 'browser' ? (
+              <BrowserViewport view={browserView} className="h-full w-full rounded-xl border border-black/[0.09] shadow-[0_10px_30px_rgba(0,0,0,0.08)]" />
+            ) : selectedSite ? (
+              <iframe
+                key={`${selectedSite.slug}:${selectedSite.publishedAt}`}
+                src={selectedSite.url}
+                title={`${selectedSite.name} 可交互预览`}
+                sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
+                className={`h-full w-full rounded-xl border border-black/[0.09] bg-white shadow-[0_10px_30px_rgba(0,0,0,0.08)] ${resizing ? 'pointer-events-none' : ''}`}
+              />
+            ) : (
+              <div className="flex h-full min-h-64 flex-col items-center justify-center rounded-xl border border-dashed border-black/[0.14] bg-white px-6 text-center">
+                <PreviewIcon />
+                <h2 className="mt-4 text-[15px] font-semibold text-[#242424]">边聊边做，实时查看</h2>
+                <p className="mt-2 max-w-sm text-[10px] leading-5 text-[#777]">在左侧发网页链接或描述需求。Apollo 发布第一版后，预览会自动刷新，并且可以直接点击操作。</p>
+              </div>
+            )}
+          </div>
+        </section>
       </div>
     </div>
   );
 }
 
-function SiteCard({ site, busy, onDeploy }: { site: PublishedSite; busy: boolean; onDeploy: () => void }) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    await navigator.clipboard.writeText(site.url);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1600);
-  };
-  return (
-    <article className="overflow-hidden rounded-2xl border border-black/[0.08] bg-white transition-colors hover:border-black/[0.16]">
-      <div className="aspect-[16/10] overflow-hidden border-b border-black/[0.06] bg-[#f4f4f4]">
-        <iframe src={site.url} title={`${site.name} 预览`} sandbox="allow-scripts allow-forms" loading="lazy" tabIndex={-1} className="pointer-events-none h-[160%] w-[160%] origin-top-left scale-[0.625] border-0 bg-white" />
-      </div>
-      <div className="p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0"><h3 className="truncate text-[12px] font-semibold text-[#252525]">{site.name}</h3><p className="mt-1 truncate text-[9px] text-[#8a8a8a]" title={site.url}>{site.url}</p></div>
-          <span className="flex shrink-0 items-center gap-1 rounded-full bg-[#edf7ef] px-2 py-1 text-[9px] font-medium text-[#347744]"><span className="size-1.5 rounded-full bg-[#42a85a]" />已发布</span>
-        </div>
-        <p className="mt-3 text-[9px] text-[#999]">{new Date(site.publishedAt).toLocaleString('zh-CN')} · {site.fileCount} 个文件</p>
-        <div className="mt-4 flex items-center gap-2">
-          <a href={site.url} target="_blank" rel="noreferrer" className="inline-flex h-8 cursor-pointer items-center rounded-full bg-[#171717] px-3.5 text-[10px] font-medium text-white transition-colors hover:bg-[#333] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717]">访问</a>
-          <button type="button" onClick={copy} className="h-8 cursor-pointer rounded-full border border-black/[0.12] px-3 text-[10px] text-[#444] transition-colors hover:bg-[#f5f5f5] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717]">{copied ? '已复制' : '复制链接'}</button>
-          <button type="button" disabled={busy} onClick={onDeploy} className="ml-auto h-8 cursor-pointer rounded-full px-2 text-[10px] font-medium text-[#555] transition-colors hover:bg-[#f2f2f2] disabled:cursor-wait disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717]">{busy ? '部署中…' : '重新部署'}</button>
-        </div>
-      </div>
-    </article>
-  );
+function PreviewTab({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+  return <button type="button" onClick={onClick} className={`h-7 cursor-pointer rounded-md px-3 text-[9px] font-medium transition-colors ${active ? 'bg-white text-[#222] shadow-sm' : 'text-[#707070] hover:text-[#222]'}`}>{children}</button>;
 }
 
-function SitesIcon() {
-  return <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5v-13Z" stroke="currentColor" strokeWidth="1.7"/><path d="M4 8h16M7 6h.01M10 6h.01M13 6h.01" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></svg>;
+function LockIcon() {
+  return <svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true"><rect x="6.5" y="10" width="11" height="9" rx="2" stroke="currentColor" strokeWidth="1.6"/><path d="M9 10V7.8a3 3 0 0 1 6 0V10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>;
+}
+
+function PreviewIcon() {
+  return <svg viewBox="0 0 24 24" width="28" height="28" fill="none" className="text-[#777]" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="2.5" stroke="currentColor" strokeWidth="1.6"/><path d="M3.5 8h17M7 6h.01M10 6h.01" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>;
 }

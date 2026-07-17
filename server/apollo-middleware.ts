@@ -187,15 +187,65 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
   ];
 
   const handleManagedBrowserView = async (req: IncomingMessage, res: ServerResponse, userId: string) => {
-    if (req.method !== 'GET') return jsonError(res, 405, 'Method not allowed');
     if (!managedBrowser) return json(res, 200, { available: false, session: null });
     const view = managedBrowserViews.get(userId);
     if (!view) return json(res, 200, { available: true, session: null });
     const pathname = new URL(req.url!, 'http://localhost').pathname;
+    const workerHeaders: Record<string, string> = managedBrowser.token ? { Authorization: `Bearer ${managedBrowser.token}` } : {};
+    if (pathname === '/apollo-api/browser-view/input') {
+      if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
+      try {
+        const body = await readBody(req, 8 * 1024);
+        const response = await fetch(new URL(`/sessions/${view.id}/input`, managedBrowser.url), {
+          method: 'POST',
+          headers: { ...workerHeaders, 'Content-Type': 'application/json' },
+          body,
+        });
+        return json(res, response.status, await response.json() as object);
+      } catch {
+        return jsonError(res, 502, '浏览器控制暂时不可用');
+      }
+    }
+    if (req.method !== 'GET') return jsonError(res, 405, 'Method not allowed');
+    if (pathname === '/apollo-api/browser-view/stream') {
+      const controller = new AbortController();
+      res.once('close', () => controller.abort());
+      try {
+        const response = await fetch(new URL(`/sessions/${view.id}/stream`, managedBrowser.url), { headers: workerHeaders, signal: controller.signal });
+        if (!response.ok || !response.body) return jsonError(res, 502, '浏览器实时画面暂时不可用');
+        res.writeHead(200, {
+          'Content-Type': response.headers.get('content-type') || 'multipart/x-mixed-replace; boundary=apollo-frame',
+          'Cache-Control': 'private, no-store, no-transform',
+          'X-Accel-Buffering': 'no',
+        });
+        const reader = response.body.getReader();
+        while (!controller.signal.aborted) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (!res.write(Buffer.from(value))) {
+            if (res.destroyed) break;
+            await new Promise<void>((resolve) => {
+              const doneWaiting = () => {
+                res.off('drain', doneWaiting);
+                res.off('close', doneWaiting);
+                resolve();
+              };
+              res.once('drain', doneWaiting);
+              res.once('close', doneWaiting);
+            });
+          }
+        }
+        if (!res.writableEnded) res.end();
+      } catch {
+        if (!res.headersSent) return jsonError(res, 502, '浏览器实时画面暂时不可用');
+        if (!res.writableEnded) res.end();
+      }
+      return;
+    }
     const frame = pathname === '/apollo-api/browser-view/frame';
     try {
       const response = await fetch(new URL(`/sessions/${view.id}${frame ? '/frame' : ''}`, managedBrowser.url), {
-        headers: managedBrowser.token ? { Authorization: `Bearer ${managedBrowser.token}` } : {},
+        headers: workerHeaders,
       });
       if (response.status === 404 && !frame) return json(res, 200, { available: true, session: null });
       if (!response.ok) return jsonError(res, 502, '浏览器画面暂时不可用');
