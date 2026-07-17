@@ -77,6 +77,7 @@ export default function SitesWorkspace({
     setPreview('site');
     setNotice('');
     setView('builder');
+    onNewConversation();
   };
 
   const deploy = async () => {

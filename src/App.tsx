@@ -710,10 +710,8 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   }, [activeView]);
 
   const openSites = useCallback(() => {
-    if (activeView === 'sites') return;
-    if (siteConversationId) void openConversation(siteConversationId, 'sites');
-    else handleNewChat('sites');
-  }, [activeView, handleNewChat, openConversation, siteConversationId]);
+    setActiveView('sites');
+  }, []);
 
   useEffect(() => {
     if (activeView !== 'library') return;
