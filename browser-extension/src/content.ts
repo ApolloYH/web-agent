@@ -1,4 +1,5 @@
 import { PageController } from '@page-agent/page-controller';
+import { Motion } from 'ai-motion';
 import { APOLLO_BROWSER_MESSAGE, APOLLO_BROWSER_RESPONSE, APOLLO_PAGE_MESSAGE, MAX_PAGE_CONTENT, integer, isRecord, type BrowserRequest, type BrowserResponse } from './protocol';
 
 let pageController: PageController | undefined;
@@ -110,17 +111,8 @@ function createControlIndicator(): ControlIndicator {
     <style>
       .control { position: absolute; inset: 0; opacity: 0; transition: opacity 240ms ease-in; }
       .control.active { opacity: 1; transition-timing-function: ease-out; }
-      .edge { position: absolute; inset: 0; border-radius: 14px;
-        box-shadow: inset 0 0 72px rgba(56, 189, 248, .22), inset 0 0 34px rgba(192, 132, 252, .18);
-        animation: apollo-edge-pulse 2.4s ease-in-out infinite; will-change: opacity; }
-      .edge::before, .edge::after { content: ""; position: absolute; inset: 0; padding: 5px; border-radius: inherit;
-        background: linear-gradient(115deg, #22d3ee, #60a5fa, #a78bfa, #f472b6, #fb7185, #fbbf24, #22d3ee);
-        background-size: 220% 220%;
-        -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-        -webkit-mask-composite: xor; mask-composite: exclude;
-        animation: apollo-edge-flow 2.8s linear infinite; will-change: background-position; }
-      .edge::before { opacity: .96; }
-      .edge::after { padding: 14px; opacity: .72; filter: blur(14px); }
+      .edge { position: absolute; inset: 0; border-radius: 18px; overflow: hidden; opacity: .78; }
+      .edge.fallback { box-shadow: inset 0 0 32px rgba(57, 182, 255, .4), inset 0 0 56px rgba(189, 69, 251, .22); }
       .status { position: absolute; left: 50%; bottom: 18px; display: flex; align-items: center; gap: 8px;
         transform: translateX(-50%); padding: 9px 15px; border: 1px solid rgba(125, 211, 252, .56); border-radius: 999px;
         background: rgba(15, 23, 42, .92); color: white; box-shadow: 0 8px 28px rgba(15, 23, 42, .34), 0 0 18px rgba(14, 165, 233, .24);
@@ -134,24 +126,13 @@ function createControlIndicator(): ControlIndicator {
       .ripple { position: absolute; left: 0; top: 0; width: 36px; height: 36px; border: 3px solid #38bdf8;
         border-radius: 50%; opacity: 0; transform: translate3d(calc(64vw - 18px), calc(50vh - 18px), 0); scale: .25; }
       .ripple.click { animation: apollo-click 300ms ease-out; }
-      @keyframes apollo-edge-pulse {
-        0%, 100% { opacity: .84; }
-        50% { opacity: 1; }
-      }
-      @keyframes apollo-edge-flow {
-        0%, 100% { background-position: 0% 0%; }
-        25% { background-position: 100% 0%; }
-        50% { background-position: 100% 100%; }
-        75% { background-position: 0% 100%; }
-      }
       @keyframes apollo-click {
         0% { opacity: .95; scale: 0; }
         100% { opacity: 0; scale: 2; }
       }
       @media (prefers-reduced-motion: reduce) {
         .control { transition: none; }
-        .edge, .edge::before, .edge::after, .ripple.click { animation: none; }
-        .edge { opacity: 1; }
+        .ripple.click { animation: none; }
       }
     </style>
     <div class="control" aria-hidden="true">
@@ -166,6 +147,7 @@ function createControlIndicator(): ControlIndicator {
   document.documentElement.appendChild(host);
 
   const control = root.querySelector<HTMLElement>('.control')!;
+  const edge = root.querySelector<HTMLElement>('.edge')!;
   const label = root.querySelector<HTMLElement>('.label')!;
   const cursor = root.querySelector<HTMLElement>('.cursor')!;
   const ripple = root.querySelector<HTMLElement>('.ripple')!;
@@ -174,6 +156,19 @@ function createControlIndicator(): ControlIndicator {
   let targetX = x;
   let targetY = y;
   let animationFrame = 0;
+  let motion: Motion | undefined;
+
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    edge.classList.add('fallback');
+  } else {
+    try {
+      motion = new Motion({ mode: 'light', borderWidth: 3, borderRadius: 18, glowWidth: 72, styles: { position: 'absolute', inset: '0' }, skipGreeting: true });
+      edge.appendChild(motion.element);
+      motion.autoResize(edge);
+    } catch {
+      edge.classList.add('fallback');
+    }
+  }
 
   const renderPosition = () => {
     cursor.style.transform = `translate3d(${x - 8}px, ${y - 15}px, 0) rotate(-135deg) scale(1.06)`;
@@ -222,10 +217,12 @@ function createControlIndicator(): ControlIndicator {
     show(text) {
       label.textContent = `Apollo ${text}`;
       control.classList.add('active');
+      motion?.start();
     },
     moveTo,
     hide() {
       control.classList.remove('active');
+      motion?.pause();
     },
   };
 }

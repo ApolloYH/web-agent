@@ -17,6 +17,9 @@ importers:
       '@page-agent/page-controller':
         specifier: 1.12.1
         version: 1.12.1
+      ai-motion:
+        specifier: 0.4.8
+        version: 0.4.8
       docx-preview:
         specifier: ^0.4.0
         version: 0.4.0
