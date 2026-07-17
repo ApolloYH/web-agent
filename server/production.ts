@@ -110,7 +110,7 @@ async function serveStatic(rawUrl: string, method: string, res: import('node:htt
   const requested = path.resolve(dist, `.${pathname}`);
   const relative = path.relative(dist, requested);
   const stat = !relative.startsWith('..') && !path.isAbsolute(relative) ? await fs.stat(requested).catch(() => null) : null;
-  const file = stat?.isFile() ? requested : path.join(dist, 'index.html');
+  const file = stat?.isFile() ? requested : stat?.isDirectory() ? path.join(requested, 'index.html') : path.join(dist, 'index.html');
   const fileStat = await fs.stat(file).catch(() => null);
   if (!fileStat?.isFile()) {
     res.writeHead(404).end('Not found');

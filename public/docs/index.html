@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Apollo 个人超级助手使用指南：对话、文件、文档、站点与浏览器操作。" />
+  <title>Apollo 使用指南</title>
+  <style>
+    :root { color-scheme: light; --ink:#171717; --muted:#686868; --line:#e8e8e8; --soft:#f7f7f7; --blue:#2563eb; }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin:0; color:var(--ink); background:#fff; font:15px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
+    a { color:inherit; }
+    .topbar { position:sticky; top:0; z-index:10; display:flex; align-items:center; justify-content:space-between; height:64px; padding:0 28px; border-bottom:1px solid var(--line); background:rgba(255,255,255,.92); backdrop-filter:blur(16px); }
+    .brand { display:flex; align-items:center; gap:10px; font-weight:700; text-decoration:none; }
+    .brand img { width:30px; height:30px; border-radius:50%; object-fit:cover; }
+    .open { border-radius:999px; padding:8px 16px; color:#fff; background:var(--ink); font-size:13px; font-weight:600; text-decoration:none; transition:background .2s ease; }
+    .open:hover { background:#383838; }
+    .layout { display:grid; grid-template-columns:220px minmax(0,760px); gap:64px; max-width:1100px; margin:0 auto; padding:52px 32px 100px; }
+    nav { position:sticky; top:96px; align-self:start; }
+    nav p { margin:0 0 10px; color:#999; font-size:12px; font-weight:600; }
+    nav a { display:block; margin:2px 0; padding:6px 10px; border-radius:8px; color:#555; font-size:13px; text-decoration:none; }
+    nav a:hover { color:var(--ink); background:var(--soft); }
+    main { min-width:0; }
+    .hero { padding:16px 0 52px; border-bottom:1px solid var(--line); }
+    .eyebrow { margin:0 0 14px; color:var(--blue); font-size:13px; font-weight:700; }
+    h1 { max-width:680px; margin:0; font-size:48px; line-height:1.12; letter-spacing:-.045em; }
+    .lead { max-width:650px; margin:20px 0 0; color:var(--muted); font-size:17px; }
+    .actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:28px; }
+    .button { display:inline-flex; align-items:center; min-height:42px; padding:0 18px; border:1px solid var(--line); border-radius:999px; font-size:13px; font-weight:600; text-decoration:none; }
+    .button.primary { color:#fff; border-color:var(--ink); background:var(--ink); }
+    section { padding:48px 0 8px; scroll-margin-top:82px; }
+    h2 { margin:0 0 12px; font-size:28px; line-height:1.25; letter-spacing:-.03em; }
+    h3 { margin:26px 0 8px; font-size:17px; }
+    p { margin:10px 0; }
+    .muted { color:var(--muted); }
+    .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; margin-top:22px; }
+    .card { padding:20px; border:1px solid var(--line); border-radius:16px; background:#fff; }
+    .card h3 { margin:0 0 6px; }
+    .card p { margin:0; color:var(--muted); font-size:13px; }
+    .steps { margin:20px 0 0; padding:0; list-style:none; counter-reset:step; }
+    .steps li { position:relative; min-height:44px; margin:0 0 12px; padding:8px 0 8px 48px; counter-increment:step; }
+    .steps li::before { position:absolute; left:0; top:4px; display:grid; place-items:center; width:34px; height:34px; border-radius:10px; background:var(--soft); content:counter(step); font-size:13px; font-weight:700; }
+    .note { margin:20px 0; padding:16px 18px; border-left:3px solid var(--blue); border-radius:0 12px 12px 0; background:#f5f8ff; color:#394150; }
+    code { padding:2px 6px; border-radius:6px; background:var(--soft); font:13px ui-monospace,SFMono-Regular,Menlo,monospace; }
+    table { width:100%; margin:18px 0; border-collapse:collapse; font-size:13px; }
+    th,td { padding:12px; border-bottom:1px solid var(--line); text-align:left; vertical-align:top; }
+    th { color:#555; font-weight:600; }
+    footer { margin-top:56px; padding-top:24px; border-top:1px solid var(--line); color:#888; font-size:12px; }
+    :focus-visible { outline:2px solid var(--blue); outline-offset:3px; }
+    @media (max-width:800px) {
+      .topbar { padding:0 18px; }
+      .layout { display:block; padding:34px 20px 72px; }
+      nav { display:none; }
+      h1 { font-size:38px; }
+      .hero { padding-top:6px; }
+    }
+    @media (max-width:520px) { .grid { grid-template-columns:1fr; } h1 { font-size:34px; } }
+    @media (prefers-reduced-motion:reduce) { html { scroll-behavior:auto; } * { transition:none !important; } }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/"><img src="/apollo-avatar.jpg" alt="" />Apollo <span style="color:#999;font-weight:500">使用指南</span></a>
+    <a class="open" href="/">打开 Apollo</a>
+  </header>
+  <div class="layout">
+    <nav aria-label="文档目录">
+      <p>开始使用</p>
+      <a href="#start">快速开始</a>
+      <a href="#chat">对话与任务</a>
+      <a href="#files">文件与文档</a>
+      <a href="#sites">创建站点</a>
+      <a href="#browser">浏览器操作</a>
+      <a href="#safety">权限与隐私</a>
+      <a href="#faq">常见问题</a>
+    </nav>
+    <main>
+      <div class="hero">
+        <p class="eyebrow">Apollo · 个人超级助手</p>
+        <h1>把想法、文件和网页交给 Apollo，让工作真正完成。</h1>
+        <p class="lead">Apollo 能持续对话、处理文件、编辑文档、操作浏览器并创建可发布的网站。你只需要说明目标，过程和结果会在同一个工作区里完成。</p>
+        <div class="actions"><a class="button primary" href="/">立即使用</a><a class="button" href="#start">阅读快速开始</a></div>
+      </div>
+
+      <section id="start">
+        <h2>快速开始</h2>
+        <p class="muted">从一个清晰目标开始，不需要学习特殊提示词。</p>
+        <ol class="steps">
+          <li><strong>登录 Apollo</strong><br><span class="muted">使用管理员提供的账号，或在开放注册时使用邀请码创建账号。</span></li>
+          <li><strong>创建新对话</strong><br><span class="muted">直接描述要完成的工作，也可以上传图片、文档或数据文件。</span></li>
+          <li><strong>确认必要操作</strong><br><span class="muted">涉及写文件、浏览器点击等操作时，根据当前审批模式确认后继续。</span></li>
+          <li><strong>查看并继续修改</strong><br><span class="muted">产出的文件、网站和浏览器过程会留在工作区，可继续对话迭代。</span></li>
+        </ol>
+        <div class="note">推荐描述方式：说明“目标、已有资料、希望的输出”。例如：<strong>“整理这份会议记录，生成一份带负责人和截止日期的行动清单。”</strong></div>
+      </section>
+
+      <section id="chat">
+        <h2>对话与任务</h2>
+        <div class="grid">
+          <div class="card"><h3>新对话</h3><p>每个对话拥有独立上下文，适合处理一个明确主题或项目。</p></div>
+          <div class="card"><h3>助理</h3><p>用于长期协作。Apollo 会在允许的范围内使用个人配置、技能和记忆。</p></div>
+          <div class="card"><h3>附件</h3><p>可随消息上传图片、PDF、Word、表格、文本、Markdown 和 JSON。</p></div>
+          <div class="card"><h3>持续执行</h3><p>离开当前对话不会自动中断任务，侧栏会显示仍在运行的对话。</p></div>
+        </div>
+        <h3>常用操作</h3>
+        <table><thead><tr><th>操作</th><th>用途</th></tr></thead><tbody>
+          <tr><td>停止</td><td>中断当前正在生成或执行的回合。</td></tr>
+          <tr><td><code>/clear</code></td><td>清理当前对话上下文，保留其他对话。</td></tr>
+          <tr><td>重命名 / 归档 / 删除</td><td>在侧栏的对话菜单中管理历史记录。</td></tr>
+        </tbody></table>
+      </section>
+
+      <section id="files">
+        <h2>文件库与文档工作台</h2>
+        <p>“文件库”集中展示 Apollo 生成的文件，也可以连接浏览器授权的本地文件夹。</p>
+        <div class="grid">
+          <div class="card"><h3>Word</h3><p>直接在网页内预览、编辑、问答并保存；复杂排版仍可手动调整。</p></div>
+          <div class="card"><h3>Markdown / JSON</h3><p>支持阅读、编辑、保存和下载，Markdown 可渲染常见安全 HTML。</p></div>
+          <div class="card"><h3>PDF</h3><p>支持预览、提取文本、搜索内容和向 Apollo 提问。</p></div>
+          <div class="card"><h3>图片</h3><p>可在工作区预览，并作为对话附件交给任务使用。</p></div>
+        </div>
+        <div class="note">本地目录句柄保存在当前浏览器。手动查看和编辑时，原文件不会自动上传；只有你要求云端 Apollo 理解或修改内容时，相关正文或清单才会参与任务。</div>
+      </section>
+
+      <section id="sites">
+        <h2>创建并发布站点</h2>
+        <p>打开侧栏“站点”，先进入已有站点预览页。点击“创建站点”后，就能在左侧持续对话、右侧实时查看结果。</p>
+        <ol class="steps">
+          <li>发送参考网页、资料或直接描述用途、内容和风格。</li>
+          <li>Apollo 创建第一版后，右侧会出现可点击的实时预览。</li>
+          <li>继续描述修改，确认后重新部署。</li>
+          <li>发布成功后获得可直接分享的公开 URL。</li>
+        </ol>
+      </section>
+
+      <section id="browser">
+        <h2>浏览器操作</h2>
+        <p>Apollo 有两条隔离的浏览器链路。默认使用托管浏览器；只有任务意图明确需要你的浏览器、登录状态或当前标签页时，才使用用户 Chrome。</p>
+        <div class="grid">
+          <div class="card"><h3>托管浏览器</h3><p>无个人 Cookie 的隔离环境，适合公开网页搜索、资料整理和常规网页任务。过程会显示在右侧实时画面。</p></div>
+          <div class="card"><h3>用户 Chrome</h3><p>通过 Apollo Browser Bridge 操作你明确选择的标签页，可复用当前登录状态。接管期间页面会显示鼠标和发光边缘。</p></div>
+        </div>
+        <h3>使用自己的浏览器</h3>
+        <ol class="steps">
+          <li>安装管理员提供的 Apollo Browser Bridge 扩展。</li>
+          <li>打开要操作的网页，并点击扩展图标连接当前标签页。</li>
+          <li>在任务中明确表达使用自己的浏览器，例如“用我的浏览器整理当前页面”。后续连续指令会结合当前任务意图判断。</li>
+          <li>任务完成或停止后，Apollo 会结束接管提示。</li>
+        </ol>
+      </section>
+
+      <section id="safety">
+        <h2>权限与隐私</h2>
+        <div class="grid">
+          <div class="card"><h3>账号隔离</h3><p>不同用户不共享配置、对话、记忆、会话路径和文件工作区。</p></div>
+          <div class="card"><h3>审批模式</h3><p>审批模式会在关键操作前询问；全自动模式仅在管理员允许时可用。</p></div>
+          <div class="card"><h3>浏览器边界</h3><p>扩展只操作已连接的 HTTP/HTTPS 标签页，托管浏览器不共享你的 Chrome Cookie。</p></div>
+          <div class="card"><h3>系统边界</h3><p>网页端永久拒绝系统命令、工作区越界、敏感文件读取和未授权的扩展能力。</p></div>
+        </div>
+      </section>
+
+      <section id="faq">
+        <h2>常见问题</h2>
+        <h3>为什么 Apollo 没有直接操作我的浏览器？</h3>
+        <p class="muted">默认会使用隔离的托管浏览器。需要登录状态或当前页面时，请确保扩展已连接，并在任务中表达使用自己浏览器的意图。</p>
+        <h3>关闭页面后任务会停止吗？</h3>
+        <p class="muted">切换页面或对话通常不会停止运行；主动点击“停止”或服务重启才会中断当前回合。</p>
+        <h3>生成的网站在哪里？</h3>
+        <p class="muted">发布后会显示在“我的站点”中。点击站点卡片可以继续预览和修改，也可以在新窗口打开公开链接。</p>
+        <h3>文档修改会覆盖原文件吗？</h3>
+        <p class="muted">保存操作会写回当前文件。重要文件建议保留备份；遇到不兼容的复杂 Word 内容时，系统会降级为只读，避免破坏原文件。</p>
+      </section>
+
+      <footer>Apollo 使用指南 · <a href="/">返回 Apollo</a></footer>
+    </main>
+  </div>
+</body>
+</html>
