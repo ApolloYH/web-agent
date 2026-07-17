@@ -173,10 +173,10 @@ export function BrowserViewport({ view, className = '' }: { view: ManagedBrowser
         />
       ) : (
         <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-8 text-center">
-          <div className="flex size-12 items-center justify-center rounded-2xl bg-[#f2f3f4] text-[#777]"><BrowserIcon large /></div>
+          <img src="/assets/browser-preview-empty.png" alt="" aria-hidden="true" className="h-auto w-40 select-none sm:w-48" />
           <div>
             <p className="text-[12px] font-medium text-[#3b3b3b]">{view?.status === 'failed' ? '浏览器任务未完成' : '正在准备浏览器画面'}</p>
-            <p className="mt-1 text-[10px] leading-5 text-[#777]">{view?.error || '把参考网页发给 Apollo 后，实时画面会显示在这里。'}</p>
+            <p className="mt-1 text-[10px] leading-5 text-[#777]">{view?.error || '把参考网页发送给 Apollo 后，实时画面会显示在这里。'}</p>
           </div>
         </div>
       )}
@@ -222,8 +222,8 @@ function viewStatus(view: ManagedBrowserView | null) {
   return { label: '正在启动', dot: 'bg-[#fbbc05]', pulse: true };
 }
 
-function BrowserIcon({ large = false }: { large?: boolean }) {
-  return <svg viewBox="0 0 24 24" width={large ? 25 : 18} height={large ? 25 : 18} fill="none" className="shrink-0" aria-hidden="true"><circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="1.7"/><path d="M3.8 9h16.4M3.8 15h16.4M12 3.5c2 2.3 3 5.1 3 8.5s-1 6.2-3 8.5c-2-2.3-3-5.1-3-8.5s1-6.2 3-8.5Z" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round"/></svg>;
+function BrowserIcon() {
+  return <svg viewBox="0 0 24 24" width="18" height="18" fill="none" className="shrink-0" aria-hidden="true"><circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="1.7"/><path d="M3.8 9h16.4M3.8 15h16.4M12 3.5c2 2.3 3 5.1 3 8.5s-1 6.2-3 8.5c-2-2.3-3-5.1-3-8.5s1-6.2 3-8.5Z" stroke="currentColor" strokeWidth="1.45" strokeLinecap="round"/></svg>;
 }
 
 function LockIcon() {

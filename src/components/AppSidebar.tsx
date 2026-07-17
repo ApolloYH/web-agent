@@ -42,10 +42,10 @@ export default function AppSidebar({
 }) {
   return (
     <>
-      {open && <button aria-label="关闭侧栏" onClick={onToggle} className="fixed inset-0 z-30 cursor-default bg-black/25 lg:hidden" />}
+      <button aria-label="关闭侧栏" aria-hidden={!open} tabIndex={open ? 0 : -1} onClick={onToggle} className={`fixed inset-0 z-30 cursor-default bg-black/25 transition-opacity duration-[260ms] ease-out motion-reduce:transition-none lg:hidden ${open ? 'opacity-100' : 'pointer-events-none opacity-0'}`} />
       <aside
         style={{ '--sidebar-width': `${width}px` } as CSSProperties}
-        className={`fixed inset-y-0 left-0 z-40 flex shrink-0 flex-col bg-[#f9f9f9] p-1.5 transition-transform duration-200 lg:static ${open ? 'w-[210px] translate-x-0 lg:w-[var(--sidebar-width)]' : 'w-[210px] -translate-x-full lg:w-[50px] lg:translate-x-0'}`}
+        className={`fixed inset-y-0 left-0 z-40 flex shrink-0 flex-col overflow-hidden bg-[#f9f9f9] p-1.5 transition-[width,transform] duration-[260ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none lg:static ${open ? 'w-[210px] translate-x-0 lg:w-[var(--sidebar-width)]' : 'w-[210px] -translate-x-full lg:w-[50px] lg:translate-x-0'}`}
       >
         <div className={`flex h-10 items-center justify-between ${open ? 'px-1.5' : 'px-0.5'}`}>
           <div className={`flex items-center gap-2 overflow-hidden ${open ? '' : 'lg:w-0'}`}>

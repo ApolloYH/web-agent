@@ -186,13 +186,6 @@ export default function SitesWorkspace({
           className="flex h-[52dvh] min-h-[360px] w-full shrink-0 flex-col border-b border-black/[0.07] lg:h-auto lg:min-h-0 lg:w-[var(--site-chat-width)] lg:border-b-0"
           aria-label="站点对话"
         >
-          <div className="flex h-11 shrink-0 items-center justify-between border-b border-black/[0.06] px-4">
-            <div>
-              <p className="text-[11px] font-medium text-[#303030]">与 Apollo 一起构建</p>
-              <p className="mt-0.5 text-[9px] text-[#888]">发链接、上传资料，或继续描述修改</p>
-            </div>
-            <span className="rounded-full bg-[#f2f2f2] px-2 py-1 text-[9px] text-[#666]">持续对话</span>
-          </div>
           <div className="min-h-0 flex-1">{chat}</div>
         </aside>
 
@@ -208,10 +201,14 @@ export default function SitesWorkspace({
         />
 
         <section className="flex h-[52dvh] min-h-[360px] min-w-0 flex-1 flex-col bg-[#f7f7f8] lg:h-auto lg:min-h-0" aria-label="站点实时预览">
-          <header className="flex h-11 shrink-0 items-center justify-between border-b border-black/[0.07] bg-white px-3">
+          <div className="flex min-h-11 shrink-0 items-center gap-2 border-b border-black/[0.06] bg-white px-3">
             <div className="flex items-center gap-1 rounded-lg bg-[#f3f3f3] p-0.5">
               <PreviewTab active={preview === 'site'} onClick={() => setPreview('site')}>网站预览</PreviewTab>
               <PreviewTab active={preview === 'browser'} onClick={() => setPreview('browser')}>参考网页</PreviewTab>
+            </div>
+            <span className="shrink-0 text-[#858585]" aria-hidden="true"><LockIcon /></span>
+            <div className="min-w-0 flex-1 truncate rounded-lg border border-black/[0.08] bg-[#f7f7f8] px-3 py-1.5 text-[9px] text-[#666]">
+              {preview === 'browser' ? browserView?.url || '参考网页将在这里打开' : selectedSite?.url || '站点发布后会自动出现在这里'}
             </div>
             <div className="flex items-center gap-1.5">
               {notice && <span aria-live="polite" className="hidden max-w-48 truncate text-[9px] text-[#666] sm:block">{notice}</span>}
@@ -219,13 +216,6 @@ export default function SitesWorkspace({
                 <button type="button" disabled={busySlug === selectedSite.slug} onClick={() => { void deploy(); }} className="h-7 cursor-pointer rounded-full px-2.5 text-[9px] font-medium text-[#555] transition-colors hover:bg-[#f2f2f2] disabled:cursor-wait disabled:opacity-50">{busySlug === selectedSite.slug ? '部署中…' : '重新部署'}</button>
                 <a href={selectedSite.url} target="_blank" rel="noreferrer" className="inline-flex h-7 cursor-pointer items-center rounded-full bg-[#171717] px-3 text-[9px] font-medium text-white transition-colors hover:bg-[#343434]">新窗口打开</a>
               </>}
-            </div>
-          </header>
-
-          <div className="flex h-10 shrink-0 items-center gap-2 border-b border-black/[0.06] bg-white px-3">
-            <span className="text-[#858585]" aria-hidden="true"><LockIcon /></span>
-            <div className="min-w-0 flex-1 truncate rounded-lg border border-black/[0.08] bg-[#f7f7f8] px-3 py-1.5 text-[9px] text-[#666]">
-              {preview === 'browser' ? browserView?.url || '参考网页将在这里打开' : selectedSite?.url || '站点发布后会自动出现在这里'}
             </div>
           </div>
 

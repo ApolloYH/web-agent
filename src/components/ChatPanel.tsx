@@ -223,8 +223,8 @@ export default function ChatPanel({
         )}
       </div>
 
-      <div className={embedded ? 'shrink-0 border-t border-black/[0.07] bg-white px-4 py-3' : 'pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-white via-white to-transparent px-[10px] pb-5 pt-8 md:px-6 md:pb-10'}>
-        <div className={embedded ? 'relative mx-auto max-w-3xl bg-white' : 'pointer-events-auto relative mx-auto max-w-3xl rounded-[19px] border border-[#e5e5e5] bg-white p-2.5 shadow-[0_2px_12px_rgba(0,0,0,0.07)] transition-colors focus-within:border-[#b8b8b8]'}>
+      <div className={embedded ? 'shrink-0 bg-white px-4 pb-4 pt-3' : 'pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-white via-white to-transparent px-[10px] pb-5 pt-8 md:px-6 md:pb-10'}>
+        <div className={`${embedded ? '' : 'pointer-events-auto'} relative mx-auto max-w-3xl rounded-[19px] border border-[#e5e5e5] bg-white p-2.5 shadow-[0_2px_12px_rgba(0,0,0,0.07)] transition-colors focus-within:border-[#b8b8b8]`}>
           {files.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-1.5 px-1">
               {files.map((file, index) => (
@@ -263,7 +263,7 @@ export default function ChatPanel({
             rows={1}
             placeholder={placeholder}
             aria-label="消息内容"
-            className="block max-h-[200px] min-h-5 w-full resize-none overflow-y-auto border-0 bg-transparent px-1 text-[12px] leading-[18px] text-[#0d0d0d] outline-none placeholder:text-[#8f8f8f] focus-visible:outline-none"
+            className="block max-h-[200px] min-h-11 w-full resize-none overflow-y-auto border-0 bg-transparent px-1 text-[12px] leading-[18px] text-[#0d0d0d] outline-none placeholder:text-[#8f8f8f] focus-visible:outline-none"
           />
           {matchingCommands.length > 0 && (
             <div ref={commandMenuRef} role="listbox" className="absolute inset-x-0 bottom-full mb-2 max-h-[min(360px,calc(100dvh-180px))] touch-pan-y overflow-y-scroll overscroll-contain rounded-2xl border border-black/10 bg-white p-1.5 [scrollbar-gutter:stable] shadow-[0_12px_36px_rgba(0,0,0,0.14)]">

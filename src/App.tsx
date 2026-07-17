@@ -880,7 +880,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
         width={sidebarWidth}
       />
 
-      {sidebarOpen && (
+      <div className={`hidden shrink-0 overflow-hidden transition-[width,opacity] duration-[260ms] ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none lg:flex ${sidebarOpen ? 'w-2 opacity-100' : 'pointer-events-none w-0 opacity-0'}`}>
         <ResizeDivider
           value={sidebarWidth}
           min={SIDEBAR_WIDTH.min}
@@ -889,7 +889,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
           label="调整左侧导航宽度"
           onChange={setSidebarWidth}
         />
-      )}
+      </div>
 
       {deleteConversationId && <DeleteConversationDialog
         title={conversationList.find((item) => item.id === deleteConversationId)?.title || '这个对话'}
