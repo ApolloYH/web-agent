@@ -363,6 +363,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
       setRunningConversationIds((current) => new Set(current).add(targetConversationId));
 
       let raw = '';
+      let userBrowserActive = false;
       const onDelta = (chunk: string) => {
         raw += chunk;
         const { cleanText } = extractArtifacts(raw);
@@ -456,12 +457,18 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
               })().catch((error) => respondApollo(event.id, JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })));
             }
             if (event.type === 'browser_request') {
-              void runBrowserAction(event.action, event.input)
-                .then(async (result) => {
-                  await respondApollo(event.id, JSON.stringify(result));
-                  refreshBrowserStatus();
-                })
-                .catch((error) => respondApollo(event.id, JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })));
+              void (async () => {
+                if (!['status', 'list_tabs', 'open_url', 'switch_tab', 'close_tab'].includes(event.action)) userBrowserActive = true;
+                const result = await runBrowserAction(event.action, event.input);
+                if (result.ok === true && (event.action === 'open_url' || event.action === 'switch_tab')) {
+                  userBrowserActive = true;
+                  await runBrowserAction('control_start', {}).catch(() => undefined);
+                } else if (result.ok === true && event.action === 'close_tab') {
+                  userBrowserActive = false;
+                }
+                await respondApollo(event.id, JSON.stringify(result));
+                refreshBrowserStatus();
+              })().catch((error) => respondApollo(event.id, JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })));
             }
             if (assistantSurface && (event.type === 'status' || event.type === 'done')) setRuntimeStatus(event.status);
             if (event.type === 'trace' || event.type === 'interaction') {
@@ -514,6 +521,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
           ),
         );
       } finally {
+        if (userBrowserActive) await runBrowserAction('control_end', {}).catch(() => undefined);
         finishRun(targetConversationId);
         await initialSave;
         const current = await getConversationIfExists(targetConversationId).catch(() => null);

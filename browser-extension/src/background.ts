@@ -15,7 +15,7 @@ const ALLOWED_APOLLO_ORIGINS = new Set([
   'http://localhost:5173',
 ]);
 const ACTIONS = new Set<BrowserAction>([
-  'status', 'list_tabs', 'get_state', 'open_url', 'switch_tab', 'close_tab', 'click', 'type', 'select', 'scroll',
+  'status', 'list_tabs', 'get_state', 'open_url', 'switch_tab', 'close_tab', 'click', 'type', 'select', 'scroll', 'control_start', 'control_end',
 ]);
 const TARGET_TAB_KEY = 'apolloTargetTabId';
 
@@ -133,7 +133,10 @@ async function storedTargetTabId(): Promise<number | undefined> {
 
 async function setTargetTab(tabId: number): Promise<void> {
   const previous = await storedTargetTabId();
-  if (previous && previous !== tabId) await chrome.action.setBadgeText({ text: '', tabId: previous }).catch(() => undefined);
+  if (previous && previous !== tabId) {
+    await chrome.tabs.sendMessage(previous, { type: APOLLO_PAGE_MESSAGE, action: 'control_end', input: {} }).catch(() => undefined);
+    await chrome.action.setBadgeText({ text: '', tabId: previous }).catch(() => undefined);
+  }
   await chrome.storage.session.set({ [TARGET_TAB_KEY]: tabId });
   await chrome.action.setBadgeBackgroundColor({ color: '#2563eb' });
   await chrome.action.setBadgeText({ text: 'ON', tabId });

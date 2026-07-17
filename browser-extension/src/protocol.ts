@@ -13,7 +13,9 @@ export type BrowserAction =
   | 'click'
   | 'type'
   | 'select'
-  | 'scroll';
+  | 'scroll'
+  | 'control_start'
+  | 'control_end';
 
 export interface BrowserRequest {
   type: typeof APOLLO_BROWSER_MESSAGE;

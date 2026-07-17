@@ -7,7 +7,7 @@ let controlIndicator: ControlIndicator | undefined;
 type ControlIndicator = {
   show(label: string): void;
   moveTo(x: number, y: number): void;
-  hideSoon(): void;
+  hide(): void;
 };
 
 if (['https://apollo.yh521.top', 'http://127.0.0.1:5173', 'http://localhost:5173'].includes(location.origin)) {
@@ -35,6 +35,14 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse): 
 });
 
 async function handlePageAction(action: string, input: Record<string, unknown>): Promise<BrowserResponse> {
+  if (action === 'control_start') {
+    (controlIndicator ??= createControlIndicator()).show('正在操作');
+    return { ok: true };
+  }
+  if (action === 'control_end') {
+    controlIndicator?.hide();
+    return { ok: true };
+  }
   const controller = pageController ??= new PageController({
     enableMask: false,
     viewportExpansion: 400,
@@ -83,7 +91,7 @@ async function withIndicator<T>(label: string, index: number | undefined, operat
   indicator.show(label);
   const target = index === undefined ? undefined : indexedElement(index);
   if (target) indicator.moveTo(...elementCenter(target));
-  try { return await operation(); } finally { indicator.hideSoon(); }
+  return operation();
 }
 
 function createControlIndicator(): ControlIndicator {
@@ -100,31 +108,39 @@ function createControlIndicator(): ControlIndicator {
   const root = host.attachShadow({ mode: 'closed' });
   root.innerHTML = `
     <style>
-      .control { position: absolute; inset: 0; opacity: 0; transition: opacity 200ms ease-in; }
+      .control { position: absolute; inset: 0; opacity: 0; transition: opacity 240ms ease-in; }
       .control.active { opacity: 1; transition-timing-function: ease-out; }
-      .edge { position: absolute; inset: 3px; border-radius: 15px;
-        box-shadow: inset 0 0 24px rgba(96, 115, 255, .18), 0 0 20px rgba(123, 92, 255, .58);
-        animation: apollo-edge-pulse 1.35s ease-in-out infinite; will-change: opacity; }
-      .edge::before { content: ""; position: absolute; inset: 0; padding: 3px; border-radius: inherit;
-        background: conic-gradient(from 80deg, #51e3ff, #5b6cff, #ed64ff, #ff8f70, #ffd45c, #51e3ff);
+      .edge { position: absolute; inset: 6px; border-radius: 18px;
+        box-shadow: inset 0 0 38px rgba(56, 189, 248, .16);
+        animation: apollo-edge-pulse 2.4s ease-in-out infinite; will-change: opacity; }
+      .edge::before, .edge::after { content: ""; position: absolute; inset: 0; padding: 5px; border-radius: inherit;
+        background: linear-gradient(115deg, #67e8f9, #60a5fa, #a78bfa, #f0abfc, #fda4af, #fde68a, #67e8f9);
+        background-size: 300% 300%;
         -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-        -webkit-mask-composite: xor; mask-composite: exclude; }
+        -webkit-mask-composite: xor; mask-composite: exclude;
+        animation: apollo-edge-shimmer 5s ease-in-out infinite; }
+      .edge::before { opacity: .82; }
+      .edge::after { inset: -2px; padding: 8px; opacity: .62; filter: blur(7px); }
       .status { position: absolute; left: 50%; bottom: 18px; display: flex; align-items: center; gap: 8px;
-        transform: translateX(-50%); padding: 8px 13px; border: 1px solid rgba(255,255,255,.28); border-radius: 999px;
-        background: rgba(18, 22, 38, .88); color: white; box-shadow: 0 8px 28px rgba(0,0,0,.28);
+        transform: translateX(-50%); padding: 9px 15px; border: 1px solid rgba(125, 211, 252, .56); border-radius: 999px;
+        background: rgba(15, 23, 42, .92); color: white; box-shadow: 0 8px 28px rgba(15, 23, 42, .34), 0 0 18px rgba(14, 165, 233, .24);
         font: 600 12px/16px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         letter-spacing: .01em; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
-      .dot { width: 7px; height: 7px; border-radius: 50%; background: #62e6ff; box-shadow: 0 0 10px #62e6ff; }
-      .cursor { position: absolute; left: 0; top: 0; width: 75px; height: 75px;
-        transform: translate3d(calc(64vw - 11px), calc(50vh - 6px), 0);
-        will-change: transform;
-        filter: drop-shadow(0 5px 8px rgba(24, 31, 70, .35)); }
-      .ripple { position: absolute; left: 0; top: 0; width: 38px; height: 38px; border: 3px solid #64d9ff;
-        border-radius: 50%; opacity: 0; transform: translate3d(calc(64vw - 19px), calc(50vh - 19px), 0); scale: .25; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: #67e8f9; box-shadow: 0 0 12px #38bdf8; }
+      .cursor { position: absolute; left: 0; top: 0; width: 64px; height: 64px;
+        transform: translate3d(calc(64vw - 8px), calc(50vh - 15px), 0) rotate(-135deg) scale(1.06);
+        transform-origin: center; will-change: transform;
+        filter: drop-shadow(0 4px 6px rgba(15, 23, 42, .38)) drop-shadow(0 0 7px rgba(56, 189, 248, .36)); }
+      .ripple { position: absolute; left: 0; top: 0; width: 36px; height: 36px; border: 3px solid #38bdf8;
+        border-radius: 50%; opacity: 0; transform: translate3d(calc(64vw - 18px), calc(50vh - 18px), 0); scale: .25; }
       .ripple.click { animation: apollo-click 300ms ease-out; }
       @keyframes apollo-edge-pulse {
-        0%, 100% { opacity: .58; }
+        0%, 100% { opacity: .68; }
         50% { opacity: 1; }
+      }
+      @keyframes apollo-edge-shimmer {
+        0%, 100% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
       }
       @keyframes apollo-click {
         0% { opacity: .95; scale: 0; }
@@ -132,7 +148,7 @@ function createControlIndicator(): ControlIndicator {
       }
       @media (prefers-reduced-motion: reduce) {
         .control { transition: none; }
-        .edge, .ripple.click { animation: none; }
+        .edge, .edge::before, .edge::after, .ripple.click { animation: none; }
         .edge { opacity: 1; }
       }
     </style>
@@ -140,9 +156,9 @@ function createControlIndicator(): ControlIndicator {
       <div class="edge"></div>
       <div class="status"><span class="dot"></span><span class="label">Apollo 正在操作</span></div>
       <div class="ripple"></div>
-      <svg class="cursor" viewBox="0 0 54 54" aria-hidden="true">
-        <defs><linearGradient id="apollo-cursor-gradient" x1="8" y1="5" x2="32" y2="47" gradientUnits="userSpaceOnUse"><stop stop-color="#42d7ff"/><stop offset=".5" stop-color="#5b6cff"/><stop offset="1" stop-color="#e265ff"/></linearGradient></defs>
-        <path d="M8 4.5v35.2l9.1-8.2 7 15.8 8-3.6-7-15.4 12.1-.8L8 4.5Z" fill="#fff" stroke="url(#apollo-cursor-gradient)" stroke-width="4" stroke-linejoin="round"/>
+      <svg class="cursor" width="64" height="64" viewBox="0 0 100 100" aria-hidden="true">
+        <defs><linearGradient id="apollo-cursor-gradient" x1="15" y1="17" x2="78" y2="67" gradientUnits="userSpaceOnUse"><stop stop-color="#67e8f9"/><stop offset=".55" stop-color="#38bdf8"/><stop offset="1" stop-color="#2563eb"/></linearGradient></defs>
+        <path d="M15 42v-5.01q0-5 8.7-5h4.35q4.36 0 4.36-10V17q0-5 8.68-.05l35.22 20.1q8.69 4.95 0 9.9l-35.22 20.1q-8.68 4.95-8.68-5.04v-5q0-5-8.71-5h-4.35Q15 52.01 15 47.01Z" fill="#fff" stroke="url(#apollo-cursor-gradient)" stroke-width="7" stroke-linejoin="round"/>
       </svg>
     </div>`;
   document.documentElement.appendChild(host);
@@ -156,11 +172,10 @@ function createControlIndicator(): ControlIndicator {
   let targetX = x;
   let targetY = y;
   let animationFrame = 0;
-  let hideTimer: ReturnType<typeof setTimeout> | undefined;
 
   const renderPosition = () => {
-    cursor.style.transform = `translate3d(${x - 11}px, ${y - 6}px, 0)`;
-    ripple.style.transform = `translate3d(${x - 19}px, ${y - 19}px, 0)`;
+    cursor.style.transform = `translate3d(${x - 8}px, ${y - 15}px, 0) rotate(-135deg) scale(1.06)`;
+    ripple.style.transform = `translate3d(${x - 18}px, ${y - 18}px, 0)`;
   };
   const animatePointer = () => {
     animationFrame = 0;
@@ -203,14 +218,12 @@ function createControlIndicator(): ControlIndicator {
 
   return {
     show(text) {
-      if (hideTimer) clearTimeout(hideTimer);
       label.textContent = `Apollo ${text}`;
       control.classList.add('active');
     },
     moveTo,
-    hideSoon() {
-      if (hideTimer) clearTimeout(hideTimer);
-      hideTimer = setTimeout(() => control.classList.remove('active'), 420);
+    hide() {
+      control.classList.remove('active');
     },
   };
 }

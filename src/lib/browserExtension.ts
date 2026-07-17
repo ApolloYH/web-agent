@@ -24,7 +24,7 @@ export async function runBrowserAction(action: string, input: Record<string, unk
         ? message.response as Record<string, unknown>
         : { ok: false, error: '浏览器扩展返回格式无效' });
     };
-    const timeout = action === 'status' ? 2_000 : 30_000;
+    const timeout = action === 'status' || action.startsWith('control_') ? 2_000 : 60_000;
     const timer = window.setTimeout(() => finish({
       ok: false,
       error: action === 'status' ? '未检测到 Apollo Browser Bridge 扩展' : '浏览器操作超时',
