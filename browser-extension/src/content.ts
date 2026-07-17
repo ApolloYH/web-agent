@@ -110,17 +110,17 @@ function createControlIndicator(): ControlIndicator {
     <style>
       .control { position: absolute; inset: 0; opacity: 0; transition: opacity 240ms ease-in; }
       .control.active { opacity: 1; transition-timing-function: ease-out; }
-      .edge { position: absolute; inset: 6px; border-radius: 18px;
-        box-shadow: inset 0 0 38px rgba(56, 189, 248, .16);
+      .edge { position: absolute; inset: 0; border-radius: 14px;
+        box-shadow: inset 0 0 72px rgba(56, 189, 248, .22), inset 0 0 34px rgba(192, 132, 252, .18);
         animation: apollo-edge-pulse 2.4s ease-in-out infinite; will-change: opacity; }
       .edge::before, .edge::after { content: ""; position: absolute; inset: 0; padding: 5px; border-radius: inherit;
-        background: linear-gradient(115deg, #67e8f9, #60a5fa, #a78bfa, #f0abfc, #fda4af, #fde68a, #67e8f9);
-        background-size: 300% 300%;
+        background: linear-gradient(115deg, #22d3ee, #60a5fa, #a78bfa, #f472b6, #fb7185, #fbbf24, #22d3ee);
+        background-size: 220% 220%;
         -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
         -webkit-mask-composite: xor; mask-composite: exclude;
-        animation: apollo-edge-shimmer 5s ease-in-out infinite; }
-      .edge::before { opacity: .82; }
-      .edge::after { inset: -2px; padding: 8px; opacity: .62; filter: blur(7px); }
+        animation: apollo-edge-flow 2.8s linear infinite; will-change: background-position; }
+      .edge::before { opacity: .96; }
+      .edge::after { padding: 14px; opacity: .72; filter: blur(14px); }
       .status { position: absolute; left: 50%; bottom: 18px; display: flex; align-items: center; gap: 8px;
         transform: translateX(-50%); padding: 9px 15px; border: 1px solid rgba(125, 211, 252, .56); border-radius: 999px;
         background: rgba(15, 23, 42, .92); color: white; box-shadow: 0 8px 28px rgba(15, 23, 42, .34), 0 0 18px rgba(14, 165, 233, .24);
@@ -135,12 +135,14 @@ function createControlIndicator(): ControlIndicator {
         border-radius: 50%; opacity: 0; transform: translate3d(calc(64vw - 18px), calc(50vh - 18px), 0); scale: .25; }
       .ripple.click { animation: apollo-click 300ms ease-out; }
       @keyframes apollo-edge-pulse {
-        0%, 100% { opacity: .68; }
+        0%, 100% { opacity: .84; }
         50% { opacity: 1; }
       }
-      @keyframes apollo-edge-shimmer {
-        0%, 100% { background-position: 0% 50%; }
-        50% { background-position: 100% 50%; }
+      @keyframes apollo-edge-flow {
+        0%, 100% { background-position: 0% 0%; }
+        25% { background-position: 100% 0%; }
+        50% { background-position: 100% 100%; }
+        75% { background-position: 0% 100%; }
       }
       @keyframes apollo-click {
         0% { opacity: .95; scale: 0; }
