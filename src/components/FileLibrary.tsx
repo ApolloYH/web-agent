@@ -52,7 +52,7 @@ export default function FileLibrary({ files, localFiles, loading, localFolderNam
         </div>
 
         {source === 'local' && (
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#e8e8e8] bg-[#fafafa] px-4 py-3">
+          <div className="app-state-motion mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#e8e8e8] bg-[#fafafa] px-4 py-3">
             <div className="min-w-0">
               <p className="truncate text-[11px] font-medium text-[#303030]">{localFolderName || '尚未连接本地文件夹'}</p>
               <p className="mt-0.5 text-[10px] text-[#777]">打开和手动编辑不上传；向云端 Apollo 提问或修改时，相关文档文字会发送给模型。仅桌面版 Chrome / Edge 支持。</p>
@@ -72,7 +72,7 @@ export default function FileLibrary({ files, localFiles, loading, localFolderNam
           ))}
         </div>
 
-        <div className="mt-8">
+        <div key={`${source}:${kind}`} className="app-state-motion mt-8">
           <div className="grid grid-cols-[minmax(0,1fr)_100px] gap-4 px-3 pb-2 text-[10px] text-[#999] sm:grid-cols-[minmax(0,1fr)_120px_90px]">
             <span>名称</span><span>修改时间</span><span className="hidden sm:block">大小</span>
           </div>

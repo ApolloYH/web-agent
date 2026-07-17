@@ -31,7 +31,7 @@ import {
 import ChatPanel from '@/components/ChatPanel';
 import AppSidebar from '@/components/AppSidebar';
 import FileLibrary from '@/components/FileLibrary';
-import SettingsBar from '@/components/SettingsBar';
+import SettingsBar, { UserCenterDialog } from '@/components/SettingsBar';
 import RuntimeStatusBar from '@/components/RuntimeStatusBar';
 import { MenuIcon } from '@/components/Icons';
 import LoginScreen from '@/components/LoginScreen';
@@ -115,6 +115,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   const [conversationGroup, setConversationGroup] = useState<'最近' | '已归档'>('最近');
   const [conversationList, setConversationList] = useState<ConversationSummary[]>([]);
   const [deleteConversationId, setDeleteConversationId] = useState<string | null>(null);
+  const [userCenterOpen, setUserCenterOpen] = useState(false);
   const [historyReady, setHistoryReady] = useState(false);
   const [activeView, setActiveView] = useState<'assistant' | 'chat' | 'library' | 'sites' | 'rag' | 'document'>(initialWorkspaceRef.current.view);
   const [siteConversationId, setSiteConversationId] = useState<string | null>(() => initialWorkspaceRef.current.view === 'sites'
@@ -886,7 +887,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
         onMoveChat={moveConversation}
         onDeleteChat={setDeleteConversationId}
         username={user.username}
-        onLogout={onLogout}
+        onOpenUserCenter={() => setUserCenterOpen(true)}
         width={sidebarWidth}
       />
 
@@ -911,6 +912,16 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
         }}
       />}
 
+      {userCenterOpen && <UserCenterDialog
+        username={user.username}
+        admin={user.admin}
+        permissionMode={permissionMode}
+        browserStatus={browserStatus}
+        onRefreshBrowser={refreshBrowserStatus}
+        onClose={() => setUserCenterOpen(false)}
+        onLogout={onLogout}
+      />}
+
       <main className="relative flex min-w-0 flex-1">
         <section className="relative flex min-w-0 flex-1 flex-col">
           {activeView !== 'document' && <button
@@ -922,14 +933,11 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
             <MenuIcon />
           </button>}
           {activeView === 'assistant' ? <SettingsBar
-              apolloPermissionMode={permissionMode}
-              canManageConfig={user.admin}
               workspaceLabel={workspaceLabel}
               onWorkspaceToggle={toggleWorkspace}
-              browserStatus={browserStatus}
-              onRefreshBrowser={refreshBrowserStatus}
             /> : activeView !== 'document' && activeView !== 'sites' && activeView !== 'rag' && <WorkspaceBar label={workspaceLabel} onToggle={toggleWorkspace} />}
           {activeView === 'assistant' && <RuntimeStatusBar status={runtimeStatus} />}
+          <div key={activeView === 'document' ? `${activeView}:${activeDocument?.id ?? ''}` : activeView} className="app-view-motion flex min-h-0 flex-1">
           {activeView === 'sites' ? (
             <SitesWorkspace
               chat={<ChatPanel
@@ -992,7 +1000,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
                   />
                   <aside
                     style={{ '--document-panel-width': `${documentPanelWidth}px` } as CSSProperties}
-                    className="relative z-30 flex w-[min(var(--document-panel-width),calc(100%_-_420px))] shrink-0 flex-col bg-white max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:w-[min(360px,100%)] max-lg:border-l max-lg:border-black/[0.07] max-lg:shadow-[-12px_0_40px_rgba(0,0,0,0.12)]"
+                    className="app-panel-motion relative z-30 flex w-[min(var(--document-panel-width),calc(100%_-_420px))] shrink-0 flex-col bg-white max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:w-[min(360px,100%)] max-lg:border-l max-lg:border-black/[0.07] max-lg:shadow-[-12px_0_40px_rgba(0,0,0,0.12)]"
                     aria-label="Apollo 对话"
                   >
                     <header className="flex h-12 shrink-0 items-center justify-between border-b border-black/[0.06] px-4">
@@ -1036,6 +1044,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
               surface={activeView === 'assistant' ? 'assistant' : 'entry'}
             />
           )}
+          </div>
         </section>
         {browserPanelOpen && activeView !== 'sites' && (
           <ResizeDivider

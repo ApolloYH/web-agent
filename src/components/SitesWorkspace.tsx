@@ -97,7 +97,7 @@ export default function SitesWorkspace({
 
   if (view === 'gallery') {
     return (
-      <div className="flex min-h-0 flex-1 flex-col bg-white">
+      <div key="gallery" className="app-view-motion flex min-h-0 flex-1 flex-col bg-white">
         <header className="flex h-12 shrink-0 items-center justify-between border-b border-black/[0.07] pl-12 pr-3 lg:px-4">
           <h1 className="text-[13px] font-semibold text-[#202020]">站点</h1>
           <button type="button" disabled={!available} onClick={startNew} className="h-8 cursor-pointer rounded-full bg-[#171717] px-4 text-[11px] font-medium text-white transition-colors duration-200 hover:bg-[#343434] disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717]">创建站点</button>
@@ -158,7 +158,7 @@ export default function SitesWorkspace({
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-white">
+    <div key="builder" className="app-view-motion flex min-h-0 flex-1 flex-col bg-white">
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-black/[0.07] pl-12 pr-3 lg:px-4">
         <div className="flex min-w-0 items-center gap-3">
           <button type="button" onClick={() => setView('gallery')} className="flex h-8 cursor-pointer items-center gap-1.5 rounded-lg px-1.5 text-[11px] font-medium text-[#333] transition-colors duration-200 hover:bg-[#f3f3f3] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#171717]" aria-label="返回我的站点"><BackIcon /><span className="hidden sm:inline">我的站点</span></button>
@@ -221,17 +221,17 @@ export default function SitesWorkspace({
 
           <div className="relative min-h-0 flex-1 overflow-hidden p-3">
             {preview === 'browser' ? (
-              <BrowserViewport view={browserView} className="h-full w-full rounded-xl border border-black/[0.09] shadow-[0_10px_30px_rgba(0,0,0,0.08)]" />
+              <BrowserViewport view={browserView} className="app-state-motion h-full w-full rounded-xl border border-black/[0.09] shadow-[0_10px_30px_rgba(0,0,0,0.08)]" />
             ) : selectedSite ? (
               <iframe
                 key={`${selectedSite.slug}:${selectedSite.publishedAt}`}
                 src={selectedSite.url}
                 title={`${selectedSite.name} 可交互预览`}
                 sandbox="allow-scripts allow-forms allow-popups allow-modals allow-downloads"
-                className={`h-full w-full rounded-xl border border-black/[0.09] bg-white shadow-[0_10px_30px_rgba(0,0,0,0.08)] ${resizing ? 'pointer-events-none' : ''}`}
+                className={`app-state-motion h-full w-full rounded-xl border border-black/[0.09] bg-white shadow-[0_10px_30px_rgba(0,0,0,0.08)] ${resizing ? 'pointer-events-none' : ''}`}
               />
             ) : (
-              <div className="flex h-full min-h-64 flex-col items-center justify-center rounded-xl border border-dashed border-black/[0.14] bg-white px-6 text-center">
+              <div className="app-state-motion flex h-full min-h-64 flex-col items-center justify-center rounded-xl border border-dashed border-black/[0.14] bg-white px-6 text-center">
                 <PreviewIcon />
                 <h2 className="mt-4 text-[15px] font-semibold text-[#242424]">边聊边做，实时查看</h2>
                 <p className="mt-2 max-w-sm text-[10px] leading-5 text-[#777]">在左侧发网页链接或描述需求。Apollo 发布第一版后，预览会自动刷新，并且可以直接点击操作。</p>

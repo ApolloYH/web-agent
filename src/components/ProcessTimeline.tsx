@@ -67,7 +67,7 @@ function ProcessStepRow({
         : step.title;
 
   return (
-    <div className={`text-[12px] leading-[18px] ${step.kind === 'thought' ? 'max-w-[640px]' : ''}`}>
+    <div className={`app-state-motion text-[12px] leading-[18px] ${step.kind === 'thought' ? 'max-w-[640px]' : ''}`}>
       <button
         type="button"
         onClick={() => hasBody && setOpen((value) => !value)}
@@ -84,7 +84,7 @@ function ProcessStepRow({
       </button>
 
       {open && hasBody && (
-        <div className="ml-5 mb-2 mt-1 space-y-2 pl-3">
+        <div className="app-state-motion ml-5 mb-2 mt-1 space-y-2 pl-3">
           {step.command && (
             <pre className="max-h-64 overflow-auto rounded-lg bg-[#171717] px-3 py-2 font-mono text-[11px] leading-[18px] text-[#d4d4d4]">
               {step.command}

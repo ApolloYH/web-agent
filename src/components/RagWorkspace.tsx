@@ -1,4 +1,21 @@
 import { useEffect, useRef, useState } from 'react';
+import ReactFlow, {
+  Background,
+  Controls,
+  Handle,
+  MarkerType,
+  MiniMap,
+  Position,
+  addEdge,
+  useEdgesState,
+  useNodesState,
+  type Connection,
+  type Edge,
+  type Node,
+  type NodeProps,
+  type ReactFlowInstance,
+} from 'reactflow';
+import 'reactflow/dist/style.css';
 import {
   createRagCollection,
   deleteRagCollection,
@@ -6,11 +23,14 @@ import {
   listRagCollections,
   listRagDocuments,
   searchRag,
+  updateRagCollection,
   uploadRagDocuments,
-  type RagCollection,
   type RagChunkMethod,
+  type RagCollection,
   type RagDocument,
   type RagHit,
+  type RagPipelineTemplate,
+  type RagPipelineGraph,
 } from '@/lib/rag';
 
 const CHUNK_METHODS: Array<{ value: RagChunkMethod; label: string; description: string }> = [
@@ -20,246 +40,261 @@ const CHUNK_METHODS: Array<{ value: RagChunkMethod; label: string; description: 
   { value: 'table', label: '表格 / 清单', description: '逐行保留表格和清单语义' },
   { value: 'paper', label: '学术论文', description: '识别摘要、章节、结论和参考文献' },
   { value: 'book', label: '书籍章节', description: '按章、节、卷组织长文档' },
-  { value: 'laws', label: '法规条款', description: '按第几条拆分并保留条款上下文' },
+  { value: 'laws', label: '法规条款', description: '按条款拆分并保留上下文' },
   { value: 'presentation', label: '演示文稿', description: '按页面和页面标题切分' },
   { value: 'one', label: '整篇文档', description: '全文作为一个分段，适合短文' },
 ];
+
+type PipelineNode = { id: string; label: string; caption: string; description: string };
+type PipelineDefinition = { label: string; category: string; description: string; method: RagChunkMethod; nodes: PipelineNode[] };
+const node = (id: string, label: string, caption: string, description: string): PipelineNode => ({ id, label, caption, description });
+const PIPELINES: Record<RagPipelineTemplate, PipelineDefinition> = {
+  general: { label: 'General Mode', category: '通用', description: '标准文本提取、语义分段与混合索引。', method: 'general', nodes: [node('source', '数据源', '文件 / 网页', '接收本地文件和结构化资料。'), node('extract', '内容提取', '本地解析 + MinerU', '优先本地解析，复杂文档自动交给 MinerU。'), node('chunk', '语义分段', '通用模板', '沿语义边界切分并保留重叠上下文。'), node('index', '知识索引', 'BGE-M3', '写入全文索引和向量索引。')] },
+  parent_child: { label: 'Parent-child HQ', category: '父子', description: '按章节保留父级上下文，再生成细粒度子分段。', method: 'manual', nodes: [node('source', '数据源', '长文档', '接收具有标题层级的长文档。'), node('extract', '结构提取', '标题与章节', '识别标题、章节和段落边界。'), node('chunk', '父子分段', '章节 + 子块', '每个子块携带所属章节上下文。'), node('index', '知识索引', '混合检索', '建立关键词和语义向量索引。')] },
+  qa: { label: 'Simple Q&A', category: '问答', description: '识别已有问题与答案，形成可直接召回的问答分段。', method: 'qa', nodes: [node('source', '数据源', 'FAQ / 表格', '导入已有问答资料。'), node('extract', '字段提取', '问题与答案', '识别问题和对应答案。'), node('chunk', '问答分段', '一问一答', '保持每组问答完整。'), node('index', '知识索引', '问答检索', '针对用户问题建立索引。')] },
+  contextual: { label: 'Contextual Enrichment', category: '增强', description: '为每个分段补充来源文档上下文，减少脱离语境的召回。', method: 'general', nodes: [node('source', '数据源', '混合文档', '导入需要上下文增强的资料。'), node('extract', '内容提取', '正文与元信息', '提取正文和来源名称。'), node('enrich', '上下文增强', '来源注入', '把来源上下文写入每个分段。'), node('chunk', '语义分段', '增强分段', '切分增强后的正文。'), node('index', '知识索引', '混合检索', '建立全文和向量索引。')] },
+  markdown: { label: 'Convert to Markdown', category: '转换', description: '把 Office、PDF 与网页统一解析为 Markdown 后索引。', method: 'manual', nodes: [node('source', '数据源', 'Office / PDF', '接收不同格式的办公文档。'), node('extract', 'Markdown 转换', '本地 + MinerU', '统一转换为保留标题层级的文本。'), node('chunk', '结构分段', '标题感知', '按 Markdown 标题和章节切分。'), node('index', '知识索引', '混合检索', '写入关键词和向量索引。')] },
+  llm_qa: { label: 'LLM Generated Q&A', category: '问答', description: '使用已配置的 GLM 从资料中生成问答对，再建立索引。', method: 'qa', nodes: [node('source', '数据源', '原始资料', '导入需要转成问答的资料。'), node('extract', '内容提取', '正文', '清理并提取可读正文。'), node('generate', '生成问答', 'GLM', '只根据原文生成关键问答对。'), node('chunk', '问答分段', '一问一答', '整理生成的问答对。'), node('index', '知识索引', '问答检索', '针对自然语言问题建立索引。')] },
+  complex_pdf: { label: 'Complex PDF', category: '父子', description: '强制使用 MinerU 解析复杂 PDF、图片和表格，再进行父子分段。', method: 'paper', nodes: [node('source', '数据源', '复杂 PDF', '接收扫描件、图表和复杂排版 PDF。'), node('mineru', '版面解析', 'MinerU VLM', '识别正文、标题、图片和表格。'), node('chunk', '父子分段', '章节 + 子块', '保留章节层级并生成细粒度分段。'), node('index', '知识索引', 'BGE-M3', '建立全文、向量和重排检索。')] },
+};
+
+type DetailTab = 'documents' | 'pipeline' | 'testing' | 'settings';
 
 export default function RagWorkspace() {
   const [collections, setCollections] = useState<RagCollection[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [documents, setDocuments] = useState<RagDocument[]>([]);
+  const [tab, setTab] = useState<DetailTab>('documents');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
-  const [query, setQuery] = useState('');
-  const [hits, setHits] = useState<RagHit[]>([]);
-  const [searched, setSearched] = useState(false);
-  const fileInput = useRef<HTMLInputElement>(null);
+  const [filter, setFilter] = useState('');
   const selected = collections.find((item) => item.id === selectedId);
 
   const refreshCollections = async (preferredId?: string) => {
     const next = await listRagCollections();
     setCollections(next);
-    setSelectedId((current) => preferredId || (next.some((item) => item.id === current) ? current : next[0]?.id ?? ''));
+    if (preferredId) setSelectedId(preferredId);
+    else setSelectedId((current) => next.some((item) => item.id === current) ? current : '');
   };
 
-  useEffect(() => {
-    refreshCollections().catch((reason) => setError(messageOf(reason))).finally(() => setLoading(false));
-  }, []);
-
+  useEffect(() => { refreshCollections().catch((reason) => setError(messageOf(reason))).finally(() => setLoading(false)); }, []);
   useEffect(() => {
     if (!selectedId) return setDocuments([]);
     let cancelled = false;
     setLoading(true);
-    listRagDocuments(selectedId)
-      .then((items) => { if (!cancelled) setDocuments(items); })
-      .catch((reason) => { if (!cancelled) setError(messageOf(reason)); })
-      .finally(() => { if (!cancelled) setLoading(false); });
+    listRagDocuments(selectedId).then((items) => { if (!cancelled) setDocuments(items); }).catch((reason) => { if (!cancelled) setError(messageOf(reason)); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [selectedId]);
 
-  const upload = async (files: FileList | null) => {
-    if (!selectedId || !files?.length) return;
+  const updateSelected = async (patch: Partial<Pick<RagCollection, 'name' | 'description' | 'chunkMethod' | 'pipelineTemplate' | 'pipelineGraph'>>) => {
+    if (!selected) return;
     setBusy(true);
     setError('');
     try {
-      await uploadRagDocuments(selectedId, [...files]);
-      await Promise.all([refreshCollections(selectedId), listRagDocuments(selectedId).then(setDocuments)]);
-    } catch (reason) {
-      setError(messageOf(reason));
-    } finally {
-      setBusy(false);
-      if (fileInput.current) fileInput.current.value = '';
-    }
+      const next = await updateRagCollection(selected.id, patch);
+      setCollections((items) => items.map((item) => item.id === next.id ? next : item));
+    } catch (reason) { setError(messageOf(reason)); }
+    finally { setBusy(false); }
   };
 
-  const removeCollection = async () => {
-    if (!selected || !window.confirm(`删除知识库“${selected.name}”及其中所有文档？`)) return;
+  if (selected) return <CollectionDetail collection={selected} documents={documents} tab={tab} loading={loading} busy={busy} error={error} onTab={setTab} onBack={() => { setSelectedId(''); setError(''); }} onRefresh={async () => { await Promise.all([refreshCollections(selected.id), listRagDocuments(selected.id).then(setDocuments)]); }} onBusy={setBusy} onError={setError} onUpdate={updateSelected} onDelete={async () => {
+    if (!window.confirm(`删除知识库“${selected.name}”及其中所有文档？`)) return;
     setBusy(true);
-    try {
-      await deleteRagCollection(selected.id);
-      setHits([]);
-      await refreshCollections();
-    } catch (reason) {
-      setError(messageOf(reason));
-    } finally {
-      setBusy(false);
-    }
-  };
+    try { await deleteRagCollection(selected.id); setSelectedId(''); await refreshCollections(); }
+    catch (reason) { setError(messageOf(reason)); }
+    finally { setBusy(false); }
+  }} />;
 
-  const removeDocument = async (document: RagDocument) => {
-    if (!window.confirm(`从知识库删除“${document.name}”？`)) return;
-    setBusy(true);
-    try {
-      await deleteRagDocument(document.id);
-      await Promise.all([refreshCollections(selectedId), listRagDocuments(selectedId).then(setDocuments)]);
-    } catch (reason) {
-      setError(messageOf(reason));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const search = async () => {
-    if (!query.trim()) return;
-    setBusy(true);
-    setError('');
-    setSearched(false);
-    try {
-      setHits(await searchRag(query.trim(), selectedId || undefined));
-      setSearched(true);
-    } catch (reason) {
-      setError(messageOf(reason));
-    } finally {
-      setBusy(false);
-    }
-  };
-
+  const visible = collections.filter((item) => `${item.name} ${item.description}`.toLowerCase().includes(filter.trim().toLowerCase()));
   return (
-    <section className="min-h-0 flex-1 overflow-y-auto bg-white px-4 pb-10 pt-7 md:px-8 md:pt-9">
-      <div className="mx-auto w-full max-w-6xl">
-        <header className="flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-[24px] font-semibold tracking-[-0.04em] text-[#171717]">RAG</h1>
-            <p className="mt-1.5 text-[11px] leading-5 text-[#6f6f6f]">把自己的资料变成 Apollo 可检索、可引用的知识。</p>
-          </div>
-          <button type="button" onClick={() => setCreating(true)} className="h-8 cursor-pointer rounded-full bg-[#171717] px-4 text-[11px] font-medium text-white transition-colors duration-200 hover:bg-[#333] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717]">新建知识库</button>
-        </header>
-
-        {error && <div role="alert" className="mt-5 rounded-xl bg-red-50 px-3.5 py-2.5 text-[11px] text-red-700">{error}</div>}
-
-        <div className="mt-7 grid min-h-[560px] gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
-          <aside className="rounded-2xl border border-black/[0.07] bg-[#fafafa] p-2" aria-label="知识库列表">
-            {loading && !collections.length ? <p className="px-3 py-10 text-center text-[11px] text-[#888]">正在读取…</p> : collections.length ? (
-              <div className="space-y-1">
-                {collections.map((collection) => (
-                  <button key={collection.id} type="button" onClick={() => { setSelectedId(collection.id); setHits([]); setSearched(false); }} className={`w-full cursor-pointer rounded-xl px-3 py-3 text-left transition-colors duration-200 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#171717] ${selectedId === collection.id ? 'bg-white shadow-sm ring-1 ring-black/[0.07]' : 'hover:bg-white/80'}`}>
-                    <span className="block truncate text-[12px] font-medium text-[#262626]">{collection.name}</span>
-                    <span className="mt-1 block text-[10px] text-[#858585]">{methodLabel(collection.chunkMethod)} · {collection.documentCount} 个文档 · {collection.chunkCount} 个分段</span>
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="flex h-full min-h-48 flex-col items-center justify-center px-5 text-center">
-                <DatabaseIcon />
-                <p className="mt-3 text-[12px] font-medium text-[#444]">还没有知识库</p>
-                <button type="button" onClick={() => setCreating(true)} className="mt-3 cursor-pointer rounded-lg border border-[#ddd] bg-white px-3 py-1.5 text-[11px] text-[#444] hover:border-[#bbb]">创建第一个</button>
-              </div>
-            )}
-          </aside>
-
-          {selected ? (
-            <div className="min-w-0 rounded-2xl border border-black/[0.07] bg-white p-4 sm:p-6">
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <h2 className="truncate text-[18px] font-semibold tracking-[-0.025em] text-[#202020]">{selected.name}</h2>
-                  <p className="mt-1 text-[11px] leading-5 text-[#777]">{selected.description || '未填写说明'}</p>
-                  <p className="mt-1 text-[10px] text-[#999]">处理模板：{methodLabel(selected.chunkMethod)}</p>
-                </div>
-                <button type="button" disabled={busy} onClick={removeCollection} className="shrink-0 cursor-pointer rounded-lg px-2.5 py-1.5 text-[10px] text-[#888] transition-colors hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40">删除知识库</button>
-              </div>
-
-              <button type="button" disabled={busy} onClick={() => fileInput.current?.click()} className="mt-6 flex min-h-28 w-full cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-[#d8d8d8] bg-[#fcfcfc] px-5 text-center transition-colors duration-200 hover:border-[#aaa] hover:bg-[#fafafa] disabled:cursor-wait disabled:opacity-60">
-                <UploadIcon />
-                <span className="mt-2 text-[11px] font-medium text-[#444]">{busy ? '正在处理文档…' : '上传资料'}</span>
-                <span className="mt-1 text-[10px] text-[#888]">PDF、Office、图片、TXT、Markdown、CSV、HTML、JSON；单个不超过 20MB</span>
-              </button>
-              <input ref={fileInput} type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.webp,.txt,.md,.markdown,.csv,.html,.htm,.json" onChange={(event) => { void upload(event.target.files); }} className="sr-only" />
-
-              <div className="mt-7">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-[12px] font-semibold text-[#333]">文档</h3>
-                  <span className="text-[10px] text-[#999]">使用“{methodLabel(selected.chunkMethod)}”模板处理</span>
-                </div>
-                <div className="mt-2 divide-y divide-black/[0.05]">
-                  {documents.length ? documents.map((document) => (
-                    <div key={document.id} className="group flex min-h-14 items-center gap-3 py-2.5">
-                      <span className="flex size-8 shrink-0 items-center justify-center rounded-[10px] bg-[#f4f4f4] text-[#666]"><DocumentIcon /></span>
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[11px] font-medium text-[#333]">{document.name}</span>
-                        <span className="mt-0.5 block text-[10px] text-[#909090]">{document.chunkCount} 个分段 · {formatSize(document.size)}</span>
-                      </span>
-                      <button type="button" disabled={busy} onClick={() => { void removeDocument(document); }} className="cursor-pointer rounded-lg px-2 py-1 text-[10px] text-[#aaa] opacity-0 transition-colors hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 focus:opacity-100 disabled:cursor-not-allowed">删除</button>
-                    </div>
-                  )) : <p className="py-8 text-center text-[11px] text-[#999]">上传文档后会显示在这里</p>}
-                </div>
-              </div>
-
-              <div className="mt-7 border-t border-black/[0.06] pt-6">
-                <h3 className="text-[12px] font-semibold text-[#333]">召回测试</h3>
-                <p className="mt-1 text-[10px] text-[#888]">输入一个真实问题，检查 Apollo 会找到哪些原文。</p>
-                <form onSubmit={(event) => { event.preventDefault(); void search(); }} className="mt-3 flex gap-2">
-                  <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="例如：公司的报销标准是什么？" className="h-9 min-w-0 flex-1 rounded-xl border border-[#dedede] px-3 text-[11px] outline-none transition-shadow focus:border-[#aaa] focus:ring-2 focus:ring-black/[0.06]" aria-label="召回测试问题" />
-                  <button type="submit" disabled={busy || !query.trim()} className="cursor-pointer rounded-xl bg-[#171717] px-4 text-[11px] font-medium text-white hover:bg-[#333] disabled:cursor-not-allowed disabled:opacity-35">检索</button>
-                </form>
-                {searched && (
-                  <div className="mt-4 space-y-2" aria-live="polite">
-                    {hits.length ? hits.map((hit, index) => (
-                      <article key={hit.id} className="rounded-xl bg-[#f7f7f7] px-3.5 py-3">
-                        <p className="text-[10px] font-medium text-[#666]">{index + 1}. {hit.documentName} · 分段 {hit.position + 1}</p>
-                        <p className="mt-1.5 line-clamp-4 whitespace-pre-wrap text-[11px] leading-5 text-[#333]">{hit.content}</p>
-                      </article>
-                    )) : <p className="rounded-xl bg-[#f7f7f7] px-3.5 py-5 text-center text-[11px] text-[#888]">没有召回相关内容</p>}
-                  </div>
-                )}
-              </div>
-            </div>
-          ) : (
-            <div className="flex min-h-80 items-center justify-center rounded-2xl border border-dashed border-[#ddd] text-center">
-              <div><DatabaseIcon /><p className="mt-3 text-[12px] font-medium text-[#555]">选择或新建一个知识库</p></div>
-            </div>
-          )}
-        </div>
+    <section className="min-h-0 flex-1 overflow-y-auto bg-[#f7f8fa] px-4 pb-10 pt-7 md:px-9 md:pt-9">
+      <div className="mx-auto w-full max-w-7xl">
+        <header className="flex items-center justify-between gap-4"><div><h1 className="text-[24px] font-semibold tracking-[-0.04em] text-[#171717]">知识库</h1><p className="mt-1 text-[11px] text-[#707070]">管理 Apollo 可检索、可引用的私人知识。</p></div><button type="button" onClick={() => setCreating(true)} className="h-9 rounded-xl bg-[#155eef] px-4 text-[11px] font-medium text-white hover:bg-[#004eeb]">新建知识库</button></header>
+        <div className="mt-7 flex max-w-lg items-center rounded-xl border border-black/[0.07] bg-white px-3 shadow-sm"><SearchIcon /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索知识库" aria-label="搜索知识库" className="h-10 min-w-0 flex-1 border-0 bg-transparent px-2 text-[11px] outline-none" /></div>
+        {error && <div role="alert" className="mt-4 rounded-xl bg-red-50 px-3.5 py-2.5 text-[11px] text-red-700">{error}</div>}
+        {loading && !collections.length ? <p className="py-24 text-center text-[11px] text-[#888]">正在读取…</p> : visible.length ? (
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{visible.map((collection) => <CollectionCard key={collection.id} collection={collection} onOpen={() => { setSelectedId(collection.id); setTab('documents'); }} onDelete={async () => {
+            if (!window.confirm(`删除知识库“${collection.name}”及其中所有文档？`)) return;
+            setBusy(true); setError('');
+            try { await deleteRagCollection(collection.id); await refreshCollections(); }
+            catch (reason) { setError(messageOf(reason)); }
+            finally { setBusy(false); }
+          }} />)}</div>
+        ) : (
+          <div className="mt-6 flex min-h-[420px] flex-col items-center justify-center rounded-2xl border border-dashed border-[#d8dce4] bg-white text-center"><DatabaseIcon /><p className="mt-4 text-[13px] font-semibold text-[#333]">{collections.length ? '没有匹配的知识库' : '还没有知识库'}</p><p className="mt-1.5 text-[10px] text-[#888]">从处理模板创建，或从空白流水线开始。</p>{!collections.length && <button type="button" onClick={() => setCreating(true)} className="mt-4 rounded-lg bg-[#171717] px-4 py-2 text-[11px] text-white">创建知识库</button>}</div>
+        )}
       </div>
-
-      {creating && <CreateCollectionDialog onClose={() => setCreating(false)} onCreated={async (name, description, chunkMethod) => {
-        setBusy(true);
-        setError('');
-        try {
-          const collection = await createRagCollection(name, description, chunkMethod);
-          await refreshCollections(collection.id);
-          setCreating(false);
-        } catch (reason) {
-          setError(messageOf(reason));
-        } finally {
-          setBusy(false);
-        }
-      }} busy={busy} />}
+      {creating && <CreateCollectionDialog busy={busy} onClose={() => setCreating(false)} onCreated={async (name, description, template) => {
+        setBusy(true); setError('');
+        try { const collection = await createRagCollection(name, description, PIPELINES[template].method, template); await refreshCollections(collection.id); setCreating(false); setTab('documents'); }
+        catch (reason) { setError(messageOf(reason)); }
+        finally { setBusy(false); }
+      }} />}
     </section>
   );
 }
 
-function CreateCollectionDialog({ onClose, onCreated, busy }: { onClose: () => void; onCreated: (name: string, description: string, chunkMethod: RagChunkMethod) => void; busy: boolean }) {
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [chunkMethod, setChunkMethod] = useState<RagChunkMethod>('general');
-  const method = CHUNK_METHODS.find((item) => item.value === chunkMethod)!;
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 p-4" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <form onSubmit={(event) => { event.preventDefault(); onCreated(name, description, chunkMethod); }} className="w-full max-w-md rounded-2xl border border-black/[0.08] bg-white p-5 shadow-[0_24px_70px_rgba(0,0,0,0.18)]" role="dialog" aria-modal="true" aria-labelledby="create-rag-title">
-        <h2 id="create-rag-title" className="text-[16px] font-semibold text-[#222]">新建知识库</h2>
-        <label className="mt-5 block text-[11px] font-medium text-[#555]">名称<input autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={80} placeholder="例如：公司制度" className="mt-1.5 h-9 w-full rounded-xl border border-[#ddd] px-3 font-normal outline-none focus:border-[#aaa] focus:ring-2 focus:ring-black/[0.06]" /></label>
-        <label className="mt-4 block text-[11px] font-medium text-[#555]">说明<textarea value={description} onChange={(event) => setDescription(event.target.value)} maxLength={500} rows={3} placeholder="这个知识库包含什么资料" className="mt-1.5 w-full resize-none rounded-xl border border-[#ddd] px-3 py-2 font-normal leading-5 outline-none focus:border-[#aaa] focus:ring-2 focus:ring-black/[0.06]" /></label>
-        <label className="mt-4 block text-[11px] font-medium text-[#555]">文档处理模板
-          <select value={chunkMethod} onChange={(event) => setChunkMethod(event.target.value as RagChunkMethod)} className="mt-1.5 h-10 w-full cursor-pointer rounded-xl border border-[#ddd] bg-white px-3 font-normal text-[#333] outline-none focus:border-[#aaa] focus:ring-2 focus:ring-black/[0.06]">
-            {CHUNK_METHODS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-          </select>
-        </label>
-        <p className="mt-1.5 text-[10px] leading-4 text-[#888]">{method.description}</p>
-        <div className="mt-5 flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="cursor-pointer rounded-lg px-3 py-2 text-[11px] text-[#666] hover:bg-[#f4f4f4]">取消</button>
-          <button type="submit" disabled={busy || !name.trim()} className="cursor-pointer rounded-lg bg-[#171717] px-4 py-2 text-[11px] font-medium text-white hover:bg-[#333] disabled:cursor-not-allowed disabled:opacity-35">创建</button>
-        </div>
-      </form>
-    </div>
-  );
+function CollectionCard({ collection, onOpen, onDelete }: { collection: RagCollection; onOpen: () => void; onDelete: () => Promise<void> }) {
+  return <article className="group relative min-h-48 rounded-2xl border border-black/[0.07] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.02)] transition-[border-color,box-shadow,transform] hover:-translate-y-0.5 hover:border-black/[0.14] hover:shadow-[0_10px_30px_rgba(0,0,0,0.07)]">
+    <button type="button" onClick={onOpen} className="h-full min-h-48 w-full p-5 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#155eef]">
+    <span className="flex size-11 items-center justify-center rounded-xl bg-[#eef4ff] text-[#155eef]"><DatabaseIcon small /></span>
+    <span className="mt-4 block truncate text-[14px] font-semibold text-[#252525]">{collection.name}</span>
+    <span className="mt-1.5 line-clamp-2 min-h-8 text-[10px] leading-4 text-[#777]">{collection.description || '未填写知识库说明'}</span>
+    <span className="mt-5 flex items-center justify-between border-t border-black/[0.05] pt-3 text-[9px] text-[#999]"><span>切段模板 · {methodLabel(collection.chunkMethod)}</span><span>{collection.documentCount} 文档 · {collection.chunkCount} 分段</span></span>
+    </button>
+    <button type="button" onClick={(event) => { event.stopPropagation(); void onDelete(); }} aria-label={`删除知识库 ${collection.name}`} className="absolute right-3 top-3 flex size-8 items-center justify-center rounded-lg text-[#aaa] opacity-0 hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 focus:opacity-100"><TrashIcon /></button>
+  </article>;
+}
+
+function CollectionDetail({ collection, documents, tab, loading, busy, error, onTab, onBack, onRefresh, onBusy, onError, onUpdate, onDelete }: {
+  collection: RagCollection; documents: RagDocument[]; tab: DetailTab; loading: boolean; busy: boolean; error: string; onTab: (tab: DetailTab) => void; onBack: () => void; onRefresh: () => Promise<void>; onBusy: (busy: boolean) => void; onError: (error: string) => void; onUpdate: (patch: Partial<Pick<RagCollection, 'name' | 'description' | 'chunkMethod' | 'pipelineTemplate' | 'pipelineGraph'>>) => Promise<void>; onDelete: () => Promise<void>;
+}) {
+  return <section className="flex min-h-0 flex-1 flex-col bg-[#f7f8fa]">
+    <header className="shrink-0 border-b border-black/[0.06] bg-white px-4 pt-3 md:px-7"><div className="flex items-center gap-3"><button type="button" onClick={onBack} aria-label="返回知识库" className="flex size-8 items-center justify-center rounded-lg text-[#666] hover:bg-[#f3f3f3]"><BackIcon /></button><span className="flex size-8 items-center justify-center rounded-lg bg-[#eef4ff] text-[#155eef]"><DatabaseIcon small /></span><div className="min-w-0"><h1 className="truncate text-[14px] font-semibold text-[#252525]">{collection.name}</h1><p className="truncate text-[9px] text-[#999]">{PIPELINES[collection.pipelineTemplate]?.label ?? 'General Mode'} · {collection.documentCount} 个文档</p></div></div>
+      <nav className="mt-3 flex gap-5" aria-label="知识库功能">{([['documents', '文档'], ['pipeline', '流水线'], ['testing', '召回测试'], ['settings', '设置']] as Array<[DetailTab, string]>).map(([value, label]) => <button type="button" key={value} onClick={() => onTab(value)} className={`border-b-2 px-1 pb-2.5 text-[11px] font-medium ${tab === value ? 'border-[#155eef] text-[#155eef]' : 'border-transparent text-[#777] hover:text-[#333]'}`}>{label}</button>)}</nav>
+    </header>
+    <div key={tab} className="app-view-motion min-h-0 flex-1 overflow-y-auto p-4 md:p-7">{error && <div role="alert" className="mx-auto mb-4 max-w-6xl rounded-xl bg-red-50 px-3.5 py-2.5 text-[11px] text-red-700">{error}</div>}{tab === 'documents' ? <DocumentsPanel collection={collection} documents={documents} loading={loading} busy={busy} onRefresh={onRefresh} onBusy={onBusy} onError={onError} /> : tab === 'pipeline' ? <PipelinePanel collection={collection} busy={busy} onUpdate={onUpdate} /> : tab === 'testing' ? <TestingPanel collection={collection} /> : <CollectionSettings collection={collection} busy={busy} onUpdate={onUpdate} onDelete={onDelete} />}</div>
+  </section>;
+}
+
+function DocumentsPanel({ collection, documents, loading, busy, onRefresh, onBusy, onError }: { collection: RagCollection; documents: RagDocument[]; loading: boolean; busy: boolean; onRefresh: () => Promise<void>; onBusy: (busy: boolean) => void; onError: (error: string) => void }) {
+  const input = useRef<HTMLInputElement>(null);
+  const upload = async (files: FileList | null) => { if (!files?.length) return; onBusy(true); onError(''); try { await uploadRagDocuments(collection.id, [...files]); await onRefresh(); } catch (reason) { onError(messageOf(reason)); } finally { onBusy(false); if (input.current) input.current.value = ''; } };
+  const remove = async (document: RagDocument) => { if (!window.confirm(`从知识库删除“${document.name}”？`)) return; onBusy(true); try { await deleteRagDocument(document.id); await onRefresh(); } catch (reason) { onError(messageOf(reason)); } finally { onBusy(false); } };
+  return <div className="mx-auto max-w-6xl"><div className="flex items-end justify-between"><div><h2 className="text-[18px] font-semibold text-[#222]">文档</h2><p className="mt-1 text-[10px] text-[#888]">上传后按当前流水线自动解析和索引。</p></div><button type="button" disabled={busy} onClick={() => input.current?.click()} className="rounded-lg bg-[#155eef] px-4 py-2 text-[11px] font-medium text-white hover:bg-[#004eeb] disabled:opacity-40">上传文档</button></div><input ref={input} type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.webp,.txt,.md,.markdown,.csv,.html,.htm,.json" onChange={(event) => { void upload(event.target.files); }} className="sr-only" />
+    <div className="mt-5 overflow-hidden rounded-2xl border border-black/[0.07] bg-white"><div className="grid grid-cols-[minmax(0,1fr)_100px_100px_44px] gap-3 border-b border-black/[0.06] bg-[#fafafa] px-4 py-2.5 text-[9px] font-medium text-[#888]"><span>名称</span><span>分段</span><span>大小</span><span /></div>{loading ? <p className="py-16 text-center text-[11px] text-[#999]">正在读取…</p> : documents.length ? documents.map((document) => <div key={document.id} className="app-state-motion group grid min-h-14 grid-cols-[minmax(0,1fr)_100px_100px_44px] items-center gap-3 border-b border-black/[0.05] px-4 last:border-0"><span className="flex min-w-0 items-center gap-3"><span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[#f3f4f6] text-[#666]"><DocumentIcon /></span><span className="truncate text-[11px] font-medium text-[#333]">{document.name}</span></span><span className="text-[10px] text-[#777]">{document.chunkCount}</span><span className="text-[10px] text-[#777]">{formatSize(document.size)}</span><button type="button" disabled={busy} onClick={() => { void remove(document); }} aria-label={`删除 ${document.name}`} className="rounded-lg py-1 text-[10px] text-[#aaa] opacity-0 hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 focus:opacity-100">删除</button></div>) : <div className="flex min-h-64 flex-col items-center justify-center text-center"><UploadIcon /><p className="mt-3 text-[12px] font-medium text-[#555]">上传第一份资料</p><p className="mt-1 text-[10px] text-[#999]">支持 PDF、Office、图片、Markdown 等格式，单个不超过 20MB。</p></div>}</div>
+  </div>;
+}
+
+type PipelineNodeData = { executionType: string; label: string; description: string; required?: boolean };
+const NODE_CATALOG: Array<{ type: string; label: string; description: string }> = [
+  { type: 'extract', label: '内容提取', description: '提取文档正文与结构。' },
+  { type: 'mineru', label: 'MinerU 解析', description: '解析复杂 PDF、图片和表格。' },
+  { type: 'chunk', label: '通用切段', description: '使用当前切段模板处理正文。' },
+  { type: 'parent_child', label: '父子切段', description: '保留章节父级上下文和子块。' },
+  { type: 'qa', label: '问答切段', description: '保持问题与答案完整对应。' },
+  { type: 'contextual', label: '上下文增强', description: '为分段注入来源文档上下文。' },
+  { type: 'llm_qa', label: 'LLM 生成问答', description: '使用 GLM 根据原文生成问答对。' },
+];
+const pipelineNodeTypes = { pipeline: PipelineFlowNode };
+
+function PipelinePanel({ collection, busy, onUpdate }: { collection: RagCollection; busy: boolean; onUpdate: (patch: Partial<Pick<RagCollection, 'chunkMethod' | 'pipelineTemplate' | 'pipelineGraph'>>) => Promise<void> }) {
+  const initial = collection.pipelineGraph ?? graphForTemplate(collection.pipelineTemplate);
+  const [nodes, setNodes, onNodesChange] = useNodesState<PipelineNodeData>(flowNodes(initial));
+  const [edges, setEdges, onEdgesChange] = useEdgesState(flowEdges(initial));
+  const [selectedId, setSelectedId] = useState('');
+  const [dirty, setDirty] = useState(false);
+  const instance = useRef<ReactFlowInstance<PipelineNodeData> | null>(null);
+  const active = nodes.find((item) => item.id === selectedId);
+
+  useEffect(() => {
+    const graph = collection.pipelineGraph ?? graphForTemplate(collection.pipelineTemplate);
+    setNodes(flowNodes(graph)); setEdges(flowEdges(graph)); setSelectedId(''); setDirty(false);
+  }, [collection.id, collection.pipelineGraph, collection.pipelineTemplate, setEdges, setNodes]);
+
+  const connect = (connection: Connection) => { setEdges((items) => addEdge({ ...connection, type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed, color: '#7b9de5' }, style: { stroke: '#7b9de5' } }, items)); setDirty(true); };
+  const addNode = (type: string) => {
+    const item = NODE_CATALOG.find((entry) => entry.type === type); if (!item) return;
+    const id = `${type}-${Date.now()}`;
+    setNodes((items) => [...items, { id, type: 'pipeline', position: { x: 160 + items.length * 28, y: 120 + items.length * 24 }, data: { executionType: item.type, label: item.label, description: item.description } }]);
+    setSelectedId(id); setDirty(true);
+  };
+  const updateActive = (patch: Partial<PipelineNodeData>) => { setNodes((items) => items.map((item) => item.id === selectedId ? { ...item, data: { ...item.data, ...patch } } : item)); setDirty(true); };
+  const removeActive = () => {
+    if (!active || active.data.required) return;
+    setNodes((items) => items.filter((item) => item.id !== active.id));
+    setEdges((items) => items.filter((edge) => edge.source !== active.id && edge.target !== active.id));
+    setSelectedId(''); setDirty(true);
+  };
+  const save = async () => {
+    const viewport = instance.current?.getViewport();
+    await onUpdate({ pipelineGraph: { nodes: nodes.map((item) => ({ id: item.id, type: item.data.executionType, label: item.data.label, description: item.data.description, position: item.position })), edges: edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })), ...(viewport ? { viewport } : {}) } });
+    setDirty(false);
+  };
+  const changeTemplate = async (template: RagPipelineTemplate) => {
+    if (dirty && !window.confirm('切换预设会覆盖尚未保存的画布，继续吗？')) return;
+    const graph = graphForTemplate(template);
+    await onUpdate({ pipelineTemplate: template, chunkMethod: PIPELINES[template].method, pipelineGraph: graph });
+  };
+
+  return <div className="mx-auto flex h-full min-h-[640px] max-w-[1600px] flex-col"><div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-[18px] font-semibold text-[#222]">知识流水线</h2><p className="mt-1 text-[10px] text-[#888]">拖动节点与画布，连接端点；滚轮缩放，Delete 删除选中内容。</p></div><div className="flex items-center gap-2"><label className="text-[10px] font-medium text-[#666]">预设<select disabled={busy} value={collection.pipelineTemplate} onChange={(event) => { void changeTemplate(event.target.value as RagPipelineTemplate); }} className="ml-2 h-9 rounded-lg border border-[#d8d8d8] bg-white px-3 text-[10px] outline-none focus:border-[#999]">{Object.entries(PIPELINES).map(([value, item]) => <option key={value} value={value}>{item.label}</option>)}</select></label><label className="sr-only" htmlFor="pipeline-add-node">添加节点</label><select id="pipeline-add-node" value="" onChange={(event) => addNode(event.target.value)} className="h-9 rounded-lg border border-[#d8d8d8] bg-white px-3 text-[10px] text-[#555] outline-none"><option value="">＋ 添加节点</option>{NODE_CATALOG.map((item) => <option key={item.type} value={item.type}>{item.label}</option>)}</select><button type="button" disabled={busy || !dirty} onClick={() => { void save(); }} className="h-9 rounded-lg bg-[#155eef] px-4 text-[10px] font-medium text-white hover:bg-[#004eeb] disabled:opacity-35">{busy ? '保存中…' : dirty ? '保存流水线' : '已保存'}</button></div></div>
+    <div className="mt-4 grid min-h-0 flex-1 overflow-hidden rounded-2xl border border-black/[0.07] bg-white lg:grid-cols-[minmax(0,1fr)_300px]"><div className="min-h-[560px] min-w-0"><ReactFlow
+      nodes={nodes}
+      edges={edges}
+      nodeTypes={pipelineNodeTypes}
+      onInit={(flow) => { instance.current = flow; }}
+      onNodesChange={(changes) => { onNodesChange(changes); if (changes.some((change) => change.type !== 'select')) setDirty(true); }}
+      onEdgesChange={(changes) => { onEdgesChange(changes); if (changes.some((change) => change.type !== 'select')) setDirty(true); }}
+      onConnect={connect}
+      onSelectionChange={({ nodes: selected }) => setSelectedId(selected[0]?.id ?? '')}
+      onMoveEnd={() => setDirty(true)}
+      defaultViewport={initial.viewport ?? { x: 80, y: 120, zoom: 0.9 }}
+      minZoom={0.2}
+      maxZoom={2.5}
+      fitView={!initial.viewport}
+      fitViewOptions={{ padding: 0.25 }}
+      panOnDrag
+      zoomOnScroll
+      zoomOnPinch
+      deleteKeyCode={['Backspace', 'Delete']}
+      selectionOnDrag={false}
+      proOptions={{ hideAttribution: true }}
+    ><Background color="#cbd5e1" gap={20} size={1} /><Controls position="bottom-left" showInteractive /><MiniMap position="bottom-right" pannable zoomable nodeColor={(item) => item.selected ? '#155eef' : '#b9c7df'} maskColor="rgba(248,250,252,.72)" /></ReactFlow></div><aside className="min-h-0 overflow-y-auto border-t border-black/[0.07] bg-white p-5 lg:border-l lg:border-t-0">{active ? <><div className="flex items-center justify-between"><span className="inline-flex rounded-full bg-[#eef4ff] px-2 py-1 text-[9px] font-medium text-[#155eef]">节点设置</span>{!active.data.required && <button type="button" onClick={removeActive} className="rounded-lg px-2 py-1 text-[9px] text-red-600 hover:bg-red-50">删除节点</button>}</div><label className="mt-5 block text-[10px] font-medium text-[#555]">节点名称<input value={active.data.label} onChange={(event) => updateActive({ label: event.target.value })} maxLength={80} className="mt-1.5 h-9 w-full rounded-lg border border-[#ddd] px-2.5 text-[10px] outline-none focus:border-[#999]" /></label><label className="mt-4 block text-[10px] font-medium text-[#555]">处理类型<select disabled={active.data.required} value={active.data.executionType} onChange={(event) => { const next = NODE_CATALOG.find((item) => item.type === event.target.value); updateActive({ executionType: event.target.value, ...(next ? { label: next.label, description: next.description } : {}) }); }} className="mt-1.5 h-9 w-full rounded-lg border border-[#ddd] bg-white px-2.5 text-[10px] outline-none disabled:bg-[#f5f5f5]">{active.data.required && <option value={active.data.executionType}>{active.data.executionType === 'source' ? '数据源' : '知识索引'}</option>}{NODE_CATALOG.map((item) => <option key={item.type} value={item.type}>{item.label}</option>)}</select></label><label className="mt-4 block text-[10px] font-medium text-[#555]">说明<textarea value={active.data.description} onChange={(event) => updateActive({ description: event.target.value })} maxLength={500} rows={5} className="mt-1.5 w-full resize-none rounded-lg border border-[#ddd] px-2.5 py-2 text-[10px] leading-4 outline-none focus:border-[#999]" /></label><p className="mt-4 text-[9px] leading-4 text-[#999]">从节点两侧的圆点拖动即可建立连接。数据源和知识索引是必需节点，不能删除。</p></> : <div className="flex h-full min-h-48 flex-col items-center justify-center text-center"><NodeIcon /><p className="mt-3 text-[11px] font-medium text-[#555]">选择一个节点</p><p className="mt-1 text-[9px] leading-4 text-[#999]">在这里编辑名称、类型和处理说明。</p></div>}{collection.documentCount > 0 && <p className="mt-5 rounded-xl bg-amber-50 p-3 text-[9px] leading-4 text-amber-700">流水线修改仅作用于后续上传的文档；已有文档不会自动重新索引。</p>}</aside></div>
+  </div>;
+}
+
+function PipelineFlowNode({ data, selected }: NodeProps<PipelineNodeData>) {
+  return <div className={`w-[196px] rounded-2xl border bg-white p-4 shadow-[0_8px_24px_rgba(25,40,72,0.08)] transition-[border-color,box-shadow] ${selected ? 'border-[#155eef] shadow-[0_0_0_3px_rgba(21,94,239,0.12)]' : 'border-black/[0.09]'}`}><Handle type="target" position={Position.Left} className="!size-3 !border-2 !border-white !bg-[#7b9de5]" /><span className="flex size-8 items-center justify-center rounded-lg bg-[#eef4ff] text-[#155eef]"><NodeIcon /></span><p className="mt-3 truncate text-[11px] font-semibold text-[#303030]">{data.label}</p><p className="mt-1 truncate text-[9px] text-[#888]">{data.description}</p><Handle type="source" position={Position.Right} className="!size-3 !border-2 !border-white !bg-[#155eef]" /></div>;
+}
+
+function graphForTemplate(template: RagPipelineTemplate): RagPipelineGraph {
+  const definition = PIPELINES[template] ?? PIPELINES.general;
+  const nodes = definition.nodes.map((item, index) => ({ id: item.id, type: executionType(template, item.id), label: item.label, description: item.description, position: { x: index * 270, y: 120 } }));
+  return { nodes, edges: nodes.slice(1).map((item, index) => ({ id: `edge-${nodes[index]!.id}-${item.id}`, source: nodes[index]!.id, target: item.id })) };
+}
+
+function executionType(template: RagPipelineTemplate, id: string): string {
+  if (id === 'source' || id === 'index' || id === 'mineru') return id;
+  if (id === 'enrich') return 'contextual';
+  if (id === 'generate') return 'llm_qa';
+  if (id === 'chunk') return template === 'parent_child' || template === 'complex_pdf' ? 'parent_child' : template === 'qa' || template === 'llm_qa' ? 'qa' : 'chunk';
+  return 'extract';
+}
+
+function flowNodes(graph: RagPipelineGraph): Array<Node<PipelineNodeData>> {
+  return graph.nodes.map((item) => ({ id: item.id, type: 'pipeline', position: item.position, deletable: !['source', 'index'].includes(item.type), data: { executionType: item.type, label: item.label, description: item.description, required: ['source', 'index'].includes(item.type) } }));
+}
+
+function flowEdges(graph: RagPipelineGraph): Edge[] {
+  return graph.edges.map((item) => ({ ...item, type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed, color: '#7b9de5' }, style: { stroke: '#7b9de5' } }));
+}
+
+function TestingPanel({ collection }: { collection: RagCollection }) {
+  const [query, setQuery] = useState(''); const [hits, setHits] = useState<RagHit[]>([]); const [busy, setBusy] = useState(false); const [searched, setSearched] = useState(false); const [error, setError] = useState('');
+  const run = async () => { if (!query.trim()) return; setBusy(true); setError(''); try { setHits(await searchRag(query.trim(), collection.id)); setSearched(true); } catch (reason) { setError(messageOf(reason)); } finally { setBusy(false); } };
+  return <div className="mx-auto max-w-4xl"><h2 className="text-[18px] font-semibold text-[#222]">召回测试</h2><p className="mt-1 text-[10px] text-[#888]">输入真实问题，检查 Apollo 会引用哪些原文。</p><form onSubmit={(event) => { event.preventDefault(); void run(); }} className="mt-5 flex gap-2 rounded-2xl border border-black/[0.07] bg-white p-2 shadow-sm"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="例如：公司的报销标准是什么？" aria-label="召回测试问题" className="h-10 min-w-0 flex-1 rounded-xl px-3 text-[11px] outline-none" /><button type="submit" disabled={busy || !query.trim()} className="rounded-xl bg-[#155eef] px-5 text-[11px] font-medium text-white disabled:opacity-35">{busy ? '检索中…' : '检索'}</button></form>{error && <p role="alert" className="mt-3 text-[10px] text-red-600">{error}</p>}{searched && <div className="mt-5 space-y-3">{hits.length ? hits.map((hit, index) => <article key={hit.id} className="app-state-motion rounded-2xl border border-black/[0.06] bg-white p-4"><p className="text-[10px] font-medium text-[#666]">{index + 1}. {hit.documentName} · 分段 {hit.position + 1}</p><p className="mt-2 line-clamp-6 whitespace-pre-wrap text-[11px] leading-5 text-[#333]">{hit.content}</p></article>) : <p className="rounded-2xl bg-white py-14 text-center text-[11px] text-[#888]">没有召回相关内容</p>}</div>}</div>;
+}
+
+function CollectionSettings({ collection, busy, onUpdate, onDelete }: { collection: RagCollection; busy: boolean; onUpdate: (patch: Partial<Pick<RagCollection, 'name' | 'description' | 'chunkMethod'>>) => Promise<void>; onDelete: () => Promise<void> }) {
+  const [name, setName] = useState(collection.name); const [description, setDescription] = useState(collection.description); const [method, setMethod] = useState(collection.chunkMethod);
+  return <div className="mx-auto max-w-3xl"><h2 className="text-[18px] font-semibold text-[#222]">知识库设置</h2><div className="mt-5 space-y-5 rounded-2xl border border-black/[0.07] bg-white p-5"><label className="block text-[10px] font-medium text-[#555]">名称<input value={name} onChange={(event) => setName(event.target.value)} maxLength={80} className="mt-2 h-10 w-full rounded-xl border border-[#ddd] px-3 text-[11px] outline-none focus:border-[#999]" /></label><label className="block text-[10px] font-medium text-[#555]">说明<textarea value={description} onChange={(event) => setDescription(event.target.value)} maxLength={500} rows={3} className="mt-2 w-full resize-none rounded-xl border border-[#ddd] px-3 py-2 text-[11px] leading-5 outline-none focus:border-[#999]" /></label><fieldset><legend className="text-[10px] font-medium text-[#555]">切段模板</legend><div className="mt-2 grid gap-2 sm:grid-cols-2">{CHUNK_METHODS.map((item) => <button type="button" key={item.value} onClick={() => setMethod(item.value)} className={`rounded-xl border p-3 text-left ${method === item.value ? 'border-[#155eef] bg-[#f5f8ff]' : 'border-black/[0.07] hover:border-black/[0.15]'}`}><span className="block text-[10px] font-medium text-[#333]">{item.label}</span><span className="mt-1 block text-[9px] leading-4 text-[#888]">{item.description}</span></button>)}</div></fieldset><div className="flex justify-end"><button type="button" disabled={busy || !name.trim()} onClick={() => { void onUpdate({ name, description, chunkMethod: method }); }} className="rounded-lg bg-[#171717] px-4 py-2 text-[11px] font-medium text-white disabled:opacity-40">保存设置</button></div></div><div className="mt-5 flex items-center justify-between rounded-2xl border border-red-100 bg-white p-5"><div><p className="text-[11px] font-medium text-[#333]">删除知识库</p><p className="mt-1 text-[9px] text-[#999]">会永久删除全部文档和索引。</p></div><button type="button" disabled={busy} onClick={() => { void onDelete(); }} className="rounded-lg px-3 py-2 text-[10px] text-red-600 hover:bg-red-50">删除</button></div></div>;
+}
+
+function CreateCollectionDialog({ onClose, onCreated, busy }: { onClose: () => void; onCreated: (name: string, description: string, template: RagPipelineTemplate) => void; busy: boolean }) {
+  const [name, setName] = useState(''); const [description, setDescription] = useState(''); const [template, setTemplate] = useState<RagPipelineTemplate>('general');
+  return <div className="app-overlay-motion fixed inset-0 z-50 flex items-center justify-center bg-black/25 p-4" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><form onSubmit={(event) => { event.preventDefault(); onCreated(name, description, template); }} role="dialog" aria-modal="true" aria-labelledby="create-rag-title" className="app-dialog-motion max-h-[calc(100dvh-2rem)] w-full max-w-5xl overflow-y-auto rounded-2xl border border-black/[0.08] bg-[#f8f9fb] p-5 shadow-[0_24px_70px_rgba(0,0,0,0.18)]"><div className="flex items-start justify-between"><div><h2 id="create-rag-title" className="text-[18px] font-semibold text-[#222]">创建知识库</h2><p className="mt-1 text-[10px] text-[#888]">选择一条处理流水线，创建后仍可修改。</p></div><button type="button" onClick={onClose} aria-label="关闭" className="flex size-8 items-center justify-center rounded-lg text-xl text-[#999] hover:bg-black/5">×</button></div><div className="mt-5 grid gap-2 md:grid-cols-2"><label className="text-[10px] font-medium text-[#555]">名称<input autoFocus value={name} onChange={(event) => setName(event.target.value)} maxLength={80} placeholder="例如：公司制度" className="mt-1.5 h-10 w-full rounded-xl border border-[#ddd] bg-white px-3 text-[11px] outline-none focus:border-[#999]" /></label><label className="text-[10px] font-medium text-[#555]">说明<input value={description} onChange={(event) => setDescription(event.target.value)} maxLength={500} placeholder="这个知识库包含什么资料" className="mt-1.5 h-10 w-full rounded-xl border border-[#ddd] bg-white px-3 text-[11px] outline-none focus:border-[#999]" /></label></div><fieldset className="mt-6"><legend className="text-[11px] font-semibold text-[#444]">知识流水线模板</legend><div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><button type="button" onClick={() => setTemplate('general')} className={`min-h-40 rounded-2xl border border-dashed p-4 text-left ${template === 'general' ? 'border-[#155eef] bg-[#f2f6ff] ring-2 ring-[#155eef]/10' : 'border-[#ccd3df] bg-white hover:border-[#9ba7b8]'}`}><span className="flex size-9 items-center justify-center rounded-xl bg-[#eef4ff] text-[#155eef]"><PlusPipelineIcon /></span><span className="mt-3 block text-[11px] font-semibold text-[#333]">通用知识流水线</span><span className="mt-2 block text-[9px] leading-4 text-[#777]">从标准解析、分段与混合检索开始。</span></button>{(Object.entries(PIPELINES) as Array<[RagPipelineTemplate, PipelineDefinition]>).filter(([value]) => value !== 'general').map(([value, item]) => <button type="button" key={value} onClick={() => setTemplate(value)} className={`min-h-40 rounded-2xl border p-4 text-left ${template === value ? 'border-[#155eef] bg-[#f2f6ff] ring-2 ring-[#155eef]/10' : 'border-black/[0.07] bg-white hover:border-black/[0.16]'}`}><span className="flex size-9 items-center justify-center rounded-xl bg-[#eef4ff] text-[#155eef]"><NodeIcon /></span><span className="mt-3 block truncate text-[11px] font-semibold text-[#333]">{item.label}</span><span className="mt-1 block text-[9px] font-medium text-[#155eef]">{item.category}</span><span className="mt-2 line-clamp-3 text-[9px] leading-4 text-[#777]">{item.description}</span></button>)}</div></fieldset><div className="mt-6 flex justify-end gap-2"><button type="button" onClick={onClose} className="rounded-lg px-3 py-2 text-[11px] text-[#666] hover:bg-black/5">取消</button><button type="submit" disabled={busy || !name.trim()} className="rounded-lg bg-[#155eef] px-5 py-2 text-[11px] font-medium text-white hover:bg-[#004eeb] disabled:opacity-35">{busy ? '创建中…' : '创建'}</button></div></form></div>;
 }
 
 function messageOf(reason: unknown): string { return reason instanceof Error ? reason.message : String(reason); }
 function methodLabel(method: RagChunkMethod): string { return CHUNK_METHODS.find((item) => item.value === method)?.label ?? '通用文档'; }
 function formatSize(bytes: number): string { return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`; }
-function DatabaseIcon() { return <svg viewBox="0 0 24 24" width="28" height="28" fill="none" className="mx-auto text-[#888]" aria-hidden="true"><ellipse cx="12" cy="5.5" rx="7.5" ry="3" stroke="currentColor" strokeWidth="1.6"/><path d="M4.5 5.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6m-15 6v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6" stroke="currentColor" strokeWidth="1.6"/></svg>; }
-function UploadIcon() { return <svg viewBox="0 0 24 24" width="22" height="22" fill="none" className="text-[#777]" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 15.5v3A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5v-3" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
+function DatabaseIcon({ small = false }: { small?: boolean }) { return <svg viewBox="0 0 24 24" width={small ? 20 : 30} height={small ? 20 : 30} fill="none" className={small ? '' : 'text-[#888]'} aria-hidden="true"><ellipse cx="12" cy="5.5" rx="7.5" ry="3" stroke="currentColor" strokeWidth="1.6"/><path d="M4.5 5.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6m-15 6v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6" stroke="currentColor" strokeWidth="1.6"/></svg>; }
+function UploadIcon() { return <svg viewBox="0 0 24 24" width="24" height="24" fill="none" className="text-[#888]" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 15.5v3A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5v-3" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
 function DocumentIcon() { return <svg viewBox="0 0 24 24" width="17" height="17" fill="none" aria-hidden="true"><path d="M6.5 3.5h7l4 4v13h-11v-17Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/><path d="M13.5 3.5v4h4M9 12h6m-6 3.5h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>; }
+function SearchIcon() { return <svg viewBox="0 0 24 24" width="16" height="16" fill="none" className="text-[#999]" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6" stroke="currentColor" strokeWidth="1.7"/><path d="m15 15 4 4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></svg>; }
+function BackIcon() { return <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true"><path d="m14.5 5-7 7 7 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
+function NodeIcon() { return <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="2" stroke="currentColor" strokeWidth="1.6"/><circle cx="18" cy="12" r="2" stroke="currentColor" strokeWidth="1.6"/><circle cx="6" cy="18" r="2" stroke="currentColor" strokeWidth="1.6"/><path d="M8 6h3a3 3 0 0 1 3 3v0a3 3 0 0 0 3 3M8 18h3a3 3 0 0 0 3-3v0" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>; }
+function PlusPipelineIcon() { return <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="1.6"/><path d="M12 8v8m-4-4h8" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>; }
+function TrashIcon() { return <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true"><path d="M5 7h14M9 7V4.5h6V7m2 0-.7 12H7.7L7 7m3 3v6m4-6v6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>; }

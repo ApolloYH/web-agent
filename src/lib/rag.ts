@@ -3,6 +3,8 @@ export type RagCollection = {
   name: string;
   description: string;
   chunkMethod: RagChunkMethod;
+  pipelineTemplate: RagPipelineTemplate;
+  pipelineGraph: RagPipelineGraph | null;
   documentCount: number;
   chunkCount: number;
   createdAt: string;
@@ -10,6 +12,12 @@ export type RagCollection = {
 };
 
 export type RagChunkMethod = 'general' | 'qa' | 'manual' | 'table' | 'paper' | 'book' | 'laws' | 'presentation' | 'one';
+export type RagPipelineTemplate = 'general' | 'parent_child' | 'qa' | 'contextual' | 'markdown' | 'llm_qa' | 'complex_pdf';
+export type RagPipelineGraph = {
+  nodes: Array<{ id: string; type: string; label: string; description: string; position: { x: number; y: number } }>;
+  edges: Array<{ id: string; source: string; target: string }>;
+  viewport?: { x: number; y: number; zoom: number };
+};
 
 export type RagDocument = {
   id: string;
@@ -43,11 +51,19 @@ export async function listRagCollections(): Promise<RagCollection[]> {
   return (await request<{ collections: RagCollection[] }>('/apollo-api/rag')).collections;
 }
 
-export async function createRagCollection(name: string, description: string, chunkMethod: RagChunkMethod): Promise<RagCollection> {
+export async function createRagCollection(name: string, description: string, chunkMethod: RagChunkMethod, pipelineTemplate: RagPipelineTemplate = 'general'): Promise<RagCollection> {
   return (await request<{ collection: RagCollection }>('/apollo-api/rag', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, description, chunkMethod }),
+    body: JSON.stringify({ name, description, chunkMethod, pipelineTemplate }),
+  })).collection;
+}
+
+export async function updateRagCollection(id: string, patch: Partial<Pick<RagCollection, 'name' | 'description' | 'chunkMethod' | 'pipelineTemplate' | 'pipelineGraph'>>): Promise<RagCollection> {
+  return (await request<{ collection: RagCollection }>(`/apollo-api/rag/${encodeURIComponent(id)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
   })).collection;
 }
 

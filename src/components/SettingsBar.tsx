@@ -13,47 +13,54 @@ import {
   verifyWeixinLogin,
 } from '@/lib/apolloAgent';
 import type { ApolloMemory, ApolloPermissionMode, ImChannelSettings, WeixinLoginState } from '@/lib/apolloAgent';
-import { useDismissDetails } from '@/lib/useDismissDetails';
 import type { BrowserConnectionStatus } from '@/lib/browserExtension';
 
 export default function SettingsBar({
-  apolloPermissionMode,
-  canManageConfig = true,
   workspaceLabel,
   onWorkspaceToggle,
-  browserStatus,
-  onRefreshBrowser,
 }: {
-  apolloPermissionMode: ApolloPermissionMode;
-  canManageConfig?: boolean;
   workspaceLabel: string;
   onWorkspaceToggle: () => void;
+}) {
+  return (
+    <header className="relative flex h-12 shrink-0 items-center bg-white pl-12 pr-3 lg:px-3">
+      <WorkspaceLocation label={workspaceLabel} onToggle={onWorkspaceToggle} />
+    </header>
+  );
+}
+
+export function UserCenterDialog({ username, admin, permissionMode, browserStatus, onRefreshBrowser, onClose, onLogout }: {
+  username: string;
+  admin: boolean;
+  permissionMode: ApolloPermissionMode;
   browserStatus: BrowserConnectionStatus;
   onRefreshBrowser: () => void;
+  onClose: () => void;
+  onLogout: () => void;
 }) {
-  const detailsRef = useDismissDetails();
-
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
+    window.addEventListener('keydown', close);
+    return () => window.removeEventListener('keydown', close);
+  }, [onClose]);
   return (
-    <header className="relative flex h-12 shrink-0 items-center justify-between bg-white pl-12 pr-3 lg:px-3">
-      <WorkspaceLocation label={workspaceLabel} onToggle={onWorkspaceToggle} />
-
-      <details ref={detailsRef} className="group relative z-30">
-        <summary
-          aria-label="打开设置"
-          className="flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-lg text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gray-900 focus-visible:ring-offset-2 [&::-webkit-details-marker]:hidden"
-        >
-          <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-[18px] w-[18px]">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M10.3 2.9h3.4l.5 2a7.5 7.5 0 0 1 1.5.9l2-.6 1.7 3-1.5 1.4a7.4 7.4 0 0 1 0 1.8l1.5 1.4-1.7 3-2-.6a7.5 7.5 0 0 1-1.5.9l-.5 2h-3.4l-.5-2a7.5 7.5 0 0 1-1.5-.9l-2 .6-1.7-3 1.5-1.4a7.4 7.4 0 0 1 0-1.8L4.6 8.2l1.7-3 2 .6a7.5 7.5 0 0 1 1.5-.9l.5-2Z" />
-            <circle cx="12" cy="10.5" r="2.5" />
-          </svg>
-        </summary>
-          <div className="absolute right-0 z-30 mt-2 max-h-[calc(100dvh-5rem)] w-[min(24rem,calc(100vw-1.5rem))] overflow-y-auto rounded-2xl border border-black/[0.08] bg-white p-4 shadow-[0_18px_48px_rgba(0,0,0,0.12)]">
-            <h2 className="mb-3 text-[13px] font-semibold text-gray-900">用户中心</h2>
-            <BrowserConnection status={browserStatus} onRefresh={onRefreshBrowser} />
-            <ApolloPanel permissionMode={apolloPermissionMode} canManageConfig={canManageConfig} />
+    <div className="app-overlay-motion fixed inset-0 z-[70] flex items-center justify-center bg-black/25 p-4" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section role="dialog" aria-modal="true" aria-labelledby="user-center-title" className="app-dialog-motion flex max-h-[min(760px,calc(100dvh-2rem))] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-black/[0.08] bg-white shadow-[0_28px_90px_rgba(0,0,0,0.2)]">
+        <header className="flex items-center justify-between border-b border-black/[0.06] px-5 py-4">
+          <div><h2 id="user-center-title" className="text-[16px] font-semibold text-gray-900">用户中心</h2><p className="mt-0.5 text-[10px] text-gray-400">账号、连接与 Apollo 通用设置</p></div>
+          <button autoFocus type="button" onClick={onClose} aria-label="关闭用户中心" className="flex size-8 items-center justify-center rounded-lg text-xl text-gray-400 hover:bg-gray-100 hover:text-gray-700">×</button>
+        </header>
+        <div className="min-h-0 overflow-y-auto p-5">
+          <div className="mb-4 flex items-center gap-3 rounded-xl border border-black/[0.07] p-3">
+            <span className="flex size-10 items-center justify-center rounded-full bg-gray-100 text-[14px] font-semibold text-gray-600">{username.slice(0, 1).toUpperCase()}</span>
+            <div className="min-w-0 flex-1"><p className="truncate text-[12px] font-semibold text-gray-800">{username}</p><p className="mt-0.5 text-[10px] text-gray-400">{admin ? '管理员' : '成员'}</p></div>
+            <button type="button" onClick={onLogout} className="rounded-lg px-3 py-2 text-[11px] text-red-600 hover:bg-red-50">退出登录</button>
           </div>
-      </details>
-    </header>
+          <BrowserConnection status={browserStatus} onRefresh={onRefreshBrowser} />
+          <ApolloPanel permissionMode={permissionMode} canManageConfig={admin} />
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -97,7 +104,9 @@ function ApolloPanel({ permissionMode, canManageConfig }: { permissionMode: Apol
           </button>
         ))}
       </div>
-      {tab === 'im' ? <ImChannelsPanel /> : tab === 'config' && canManageConfig ? <ApolloConfigPanel permissionMode={permissionMode} /> : <MemoryPanel />}
+      <div key={tab} className="app-state-motion">
+        {tab === 'im' ? <ImChannelsPanel /> : tab === 'config' && canManageConfig ? <ApolloConfigPanel permissionMode={permissionMode} /> : <MemoryPanel />}
+      </div>
     </div>
   );
 }
@@ -261,7 +270,7 @@ function ImChannelsPanel() {
   } as const;
 
   return (
-    <div className="space-y-3 text-[11px]">
+    <div key={selected} className="app-state-motion space-y-3 text-[11px]">
       <div className="grid grid-cols-3 gap-1 rounded-xl bg-gray-100 p-1">
         {(Object.keys(imLabels) as ImPlatform[]).map((platform) => (
           <button key={platform} type="button" onClick={() => { setSelected(platform); setError(''); setNotice(''); }} className={`rounded-lg px-2 py-1.5 transition-all ${selected === platform ? 'bg-white font-medium text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}>

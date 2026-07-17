@@ -171,7 +171,7 @@ export default function ChatPanel({
             {messages.map((message) => (
               <div
                 key={message.id}
-                className={message.role === 'user' ? 'flex justify-end' : 'w-full'}
+                className={`app-state-motion ${message.role === 'user' ? 'flex justify-end' : 'w-full'}`}
               >
                 {message.role === 'assistant' ? (
                   <div className="min-w-0 text-[13px] leading-5 text-[#0d0d0d]">
@@ -228,7 +228,7 @@ export default function ChatPanel({
           {files.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-1.5 px-1">
               {files.map((file, index) => (
-                <span key={`${file.name}-${file.lastModified}`} className="inline-flex max-w-[220px] items-center gap-1 rounded-lg bg-[#f2f2f2] px-2 py-1 text-[10px] text-[#555]">
+                <span key={`${file.name}-${file.lastModified}`} className="app-state-motion inline-flex max-w-[220px] items-center gap-1 rounded-lg bg-[#f2f2f2] px-2 py-1 text-[10px] text-[#555]">
                   <span className="truncate">{file.name}</span>
                   <button type="button" aria-label={`移除 ${file.name}`} onClick={() => setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))} className="text-[#888] hover:text-[#222]">×</button>
                 </span>
@@ -266,7 +266,7 @@ export default function ChatPanel({
             className="block max-h-[200px] min-h-11 w-full resize-none overflow-y-auto border-0 bg-transparent px-1 text-[12px] leading-[18px] text-[#0d0d0d] outline-none placeholder:text-[#8f8f8f] focus-visible:outline-none"
           />
           {matchingCommands.length > 0 && (
-            <div ref={commandMenuRef} role="listbox" className="absolute inset-x-0 bottom-full mb-2 max-h-[min(360px,calc(100dvh-180px))] touch-pan-y overflow-y-scroll overscroll-contain rounded-2xl border border-black/10 bg-white p-1.5 [scrollbar-gutter:stable] shadow-[0_12px_36px_rgba(0,0,0,0.14)]">
+            <div ref={commandMenuRef} role="listbox" className="app-state-motion absolute inset-x-0 bottom-full mb-2 max-h-[min(360px,calc(100dvh-180px))] touch-pan-y overflow-y-scroll overscroll-contain rounded-2xl border border-black/10 bg-white p-1.5 [scrollbar-gutter:stable] shadow-[0_12px_36px_rgba(0,0,0,0.14)]">
               {matchingCommands.map((item, index) => (
                 <button
                   key={item.command}
@@ -314,25 +314,27 @@ export default function ChatPanel({
                   </select>
                 </label>}
               {surface === 'assistant' && runtimeMode !== 'normal' && (
-                <span className="rounded-md bg-blue-50 px-1.5 py-1 text-[10px] text-blue-700">{modeLabel(runtimeMode)}</span>
+                <span className="app-state-motion rounded-md bg-blue-50 px-1.5 py-1 text-[10px] text-blue-700">{modeLabel(runtimeMode)}</span>
               )}
             </div>
             {streaming ? (
               <button
+                key="stop"
                 type="button"
                 onClick={onStop}
                 aria-label="停止生成"
-                className="flex size-7 items-center justify-center rounded-full bg-[#0d0d0d] text-white transition-colors hover:bg-[#303030] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0d0d0d]"
+                className="app-state-motion flex size-7 items-center justify-center rounded-full bg-[#0d0d0d] text-white transition-colors hover:bg-[#303030] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0d0d0d]"
               >
                 <StopIcon />
               </button>
             ) : (
               <button
+                key="send"
                 type="button"
                 onClick={() => send(input)}
                 aria-label="发送消息"
                 disabled={!input.trim() && !files.length}
-                className="flex size-7 items-center justify-center rounded-full bg-[#0d0d0d] text-white transition-colors hover:bg-[#303030] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0d0d0d] disabled:cursor-default disabled:bg-[#d7d7d7]"
+                className="app-state-motion flex size-7 items-center justify-center rounded-full bg-[#0d0d0d] text-white transition-colors hover:bg-[#303030] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0d0d0d] disabled:cursor-default disabled:bg-[#d7d7d7]"
               >
                 <SendIcon />
               </button>

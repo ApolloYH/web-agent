@@ -19,7 +19,7 @@ import { createDocumentTools } from './document-tools.js';
 import { createBrowserTools } from './browser-tools.js';
 import { createManagedBrowserTools } from './managed-browser-tools.js';
 import { createSiteTools, deletePublishedSite, listPublishedSites, publishSite, servePublishedSite } from './site-tools.js';
-import { createRagCollection, createRagTools, deleteRagCollection, deleteRagDocument, ensureRagSchema, ingestRagDocument, listRagCollections, listRagDocuments, searchRag, type RagChunkMethod, type RagServices } from './rag.js';
+import { createRagCollection, createRagTools, deleteRagCollection, deleteRagDocument, ensureRagSchema, ingestRagDocument, listRagCollections, listRagDocuments, searchRag, updateRagCollection, type RagChunkMethod, type RagPipelineGraph, type RagPipelineTemplate, type RagServices } from './rag.js';
 import { agentRunKey, capacityReason, consumeFixedWindow, pruneExpiredWindows, type RateLimitWindow } from './concurrency.js';
 import { inspectTelegramBot, TelegramGateway, type TelegramChannelConfig } from './telegram-gateway.js';
 import {
@@ -564,9 +564,9 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       if (req.method === 'GET') return json(res, 200, { collections: listRagCollections(database, user.id) });
       if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
       try {
-        const body = JSON.parse(await readBody(req, 8 * 1024)) as { name?: unknown; description?: unknown; chunkMethod?: unknown };
-        if (typeof body.name !== 'string' || (body.description !== undefined && typeof body.description !== 'string') || (body.chunkMethod !== undefined && typeof body.chunkMethod !== 'string')) throw new Error('知识库参数无效');
-        return json(res, 201, { collection: createRagCollection(database, user.id, body.name, body.description ?? '', (body.chunkMethod || 'general') as RagChunkMethod) });
+        const body = JSON.parse(await readBody(req, 8 * 1024)) as { name?: unknown; description?: unknown; chunkMethod?: unknown; pipelineTemplate?: unknown };
+        if (typeof body.name !== 'string' || (body.description !== undefined && typeof body.description !== 'string') || (body.chunkMethod !== undefined && typeof body.chunkMethod !== 'string') || (body.pipelineTemplate !== undefined && typeof body.pipelineTemplate !== 'string')) throw new Error('知识库参数无效');
+        return json(res, 201, { collection: createRagCollection(database, user.id, body.name, body.description ?? '', (body.chunkMethod || 'general') as RagChunkMethod, (body.pipelineTemplate || 'general') as RagPipelineTemplate) });
       } catch (error) {
         return jsonError(res, 400, error instanceof Error ? error.message : String(error));
       }
@@ -626,9 +626,19 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
 
     const ragCollection = apiPath.match(/^\/apollo-api\/rag\/([^/]+)$/);
     if (ragCollection) {
+      const collectionId = decodeURIComponent(ragCollection[1]!);
+      if (req.method === 'PATCH') {
+        try {
+          const body = JSON.parse(await readBody(req, 72 * 1024)) as { name?: unknown; description?: unknown; chunkMethod?: unknown; pipelineTemplate?: unknown; pipelineGraph?: unknown };
+          if ((body.name !== undefined && typeof body.name !== 'string') || (body.description !== undefined && typeof body.description !== 'string') || (body.chunkMethod !== undefined && typeof body.chunkMethod !== 'string') || (body.pipelineTemplate !== undefined && typeof body.pipelineTemplate !== 'string')) throw new Error('知识库参数无效');
+          return json(res, 200, { collection: updateRagCollection(database, user.id, collectionId, body as { name?: string; description?: string; chunkMethod?: RagChunkMethod; pipelineTemplate?: RagPipelineTemplate; pipelineGraph?: RagPipelineGraph | null }) });
+        } catch (error) {
+          return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+        }
+      }
       if (req.method !== 'DELETE') return jsonError(res, 405, 'Method not allowed');
       try {
-        deleteRagCollection(database, user.id, decodeURIComponent(ragCollection[1]!));
+        deleteRagCollection(database, user.id, collectionId);
         return json(res, 200, { ok: true });
       } catch (error) {
         return jsonError(res, 404, error instanceof Error ? error.message : String(error));

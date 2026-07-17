@@ -20,7 +20,7 @@ export default function AppSidebar({
   onMoveChat,
   onDeleteChat,
   username,
-  onLogout,
+  onOpenUserCenter,
   width,
 }: {
   open: boolean;
@@ -39,7 +39,7 @@ export default function AppSidebar({
   onMoveChat: (id: string) => void;
   onDeleteChat: (id: string) => void;
   username: string;
-  onLogout: () => void;
+  onOpenUserCenter: () => void;
   width: number;
 }) {
   return (
@@ -129,10 +129,10 @@ export default function AppSidebar({
           })}
         </div>
         <div className="mt-1 border-t border-black/[0.05] pt-1">
-          <button type="button" onClick={onLogout} className="sidebar-item" title={`${username} · 退出登录`}>
+          <button type="button" onClick={onOpenUserCenter} className="sidebar-item" title={`${username} · 用户中心`}>
             <span className="flex size-[18px] shrink-0 items-center justify-center rounded-full bg-[#dedede] text-[9px] font-semibold text-[#555]">{username.slice(0, 1).toUpperCase()}</span>
             <span className={`min-w-0 flex-1 truncate text-left ${open ? '' : 'lg:hidden'}`}>{username}</span>
-            <span className={`text-[9px] text-[#999] ${open ? '' : 'lg:hidden'}`}>退出</span>
+            <span className={`text-[9px] text-[#999] ${open ? '' : 'lg:hidden'}`}>设置</span>
           </button>
         </div>
       </aside>

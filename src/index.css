@@ -12,6 +12,9 @@
   --palette-red: #ea4335;
   --palette-yellow: #fbbc05;
   --palette-green: #34a853;
+  --motion-fast: 160ms;
+  --motion-base: 260ms;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 html,
@@ -48,6 +51,47 @@ button,
 summary,
 select {
   cursor: pointer;
+}
+
+#root :where(button, a, summary, select, input, textarea, [role='tab'], [role='switch']) {
+  transition-property: color, background-color, border-color, box-shadow, opacity, transform, filter;
+  transition-duration: var(--motion-fast);
+  transition-timing-function: var(--motion-ease);
+}
+
+.app-view-motion { animation: app-view-in var(--motion-base) var(--motion-ease) backwards; }
+.app-state-motion { animation: app-state-in 200ms var(--motion-ease) backwards; }
+.app-panel-motion { animation: app-panel-in var(--motion-base) var(--motion-ease) backwards; }
+.app-overlay-motion { animation: app-overlay-in 180ms ease-out backwards; }
+.app-dialog-motion { animation: app-dialog-in var(--motion-base) var(--motion-ease) backwards; }
+
+#root details[open] > :not(summary),
+#root :where([role='alert'], [aria-live='polite'], [aria-live='assertive']) {
+  animation: app-state-in 180ms var(--motion-ease) backwards;
+}
+
+#root dialog[open] { animation: app-dialog-in var(--motion-base) var(--motion-ease) backwards; }
+#root dialog[open]::backdrop { animation: app-overlay-in 180ms ease-out backwards; }
+
+@keyframes app-view-in {
+  from { opacity: 0; transform: translate3d(0, 8px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes app-state-in {
+  from { opacity: 0; transform: translate3d(0, 4px, 0) scale(0.995); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+@keyframes app-panel-in {
+  from { opacity: 0; transform: translate3d(16px, 0, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes app-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes app-dialog-in {
+  from { opacity: 0; transform: translate3d(0, 10px, 0) scale(0.98); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
 }
 
 button:focus-visible,
