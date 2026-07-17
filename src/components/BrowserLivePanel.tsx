@@ -85,7 +85,15 @@ export default function BrowserLivePanel({
 
       <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_50%_20%,#ffffff_0%,#f5f5f6_56%,#eeeeef_100%)] p-3">
         <div className="relative flex aspect-video max-h-full w-full min-h-52 items-center justify-center overflow-hidden rounded-xl border border-black/[0.09] bg-white shadow-[0_12px_34px_rgba(0,0,0,0.10)]">
-          {frameUrl ? (
+          {view?.live_view_url ? (
+            <iframe
+              src={view.live_view_url}
+              title={view?.title ? `托管浏览器：${view.title}` : '托管浏览器实时画面'}
+              sandbox="allow-same-origin allow-scripts"
+              allow="clipboard-read; clipboard-write"
+              className="absolute inset-0 h-full w-full border-0"
+            />
+          ) : frameUrl ? (
             <img src={frameUrl} decoding="async" alt={view?.title ? `托管浏览器：${view.title}` : '托管浏览器实时画面'} className="absolute inset-0 h-full w-full object-contain object-center" />
           ) : (
             <div className="flex h-full w-full flex-col items-center justify-center gap-3 px-8 text-center">

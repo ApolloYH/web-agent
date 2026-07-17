@@ -42,6 +42,7 @@ import { chooseLocalFolder, ensureFolderPermission, listLocalFiles, restoreLocal
 import { getBrowserConnectionStatus, runBrowserAction, type BrowserConnectionStatus } from '@/lib/browserExtension';
 import ResizeDivider from '@/components/ResizeDivider';
 import BrowserLivePanel from '@/components/BrowserLivePanel';
+import SitesWorkspace from '@/components/SitesWorkspace';
 
 let idSeq = 0;
 const nextId = (p: string) => `${p}-${Date.now()}-${idSeq++}`;
@@ -63,11 +64,12 @@ function storedPaneWidth(key: string, fallback: number, min: number, max: number
     return fallback;
   }
 }
-const initialWorkspace = (): { view: 'assistant' | 'chat' | 'library'; conversationId?: string } => {
+const initialWorkspace = (): { view: 'assistant' | 'chat' | 'library' | 'sites'; conversationId?: string } => {
   try {
     const saved = JSON.parse(sessionStorage.getItem(LAST_WORKSPACE_KEY) || '{}');
     if (saved.view === 'chat' && typeof saved.conversationId === 'string') return saved;
     if (saved.view === 'library') return { view: 'library' };
+    if (saved.view === 'sites') return { view: 'sites' };
   } catch { /* Ignore stale browser state. */ }
   return { view: 'assistant' };
 };
@@ -110,7 +112,8 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   const [conversationList, setConversationList] = useState<ConversationSummary[]>([]);
   const [deleteConversationId, setDeleteConversationId] = useState<string | null>(null);
   const [historyReady, setHistoryReady] = useState(false);
-  const [activeView, setActiveView] = useState<'assistant' | 'chat' | 'library' | 'document'>(initialWorkspaceRef.current.view);
+  const [activeView, setActiveView] = useState<'assistant' | 'chat' | 'library' | 'sites' | 'document'>(initialWorkspaceRef.current.view);
+  const [queuedSitePrompt, setQueuedSitePrompt] = useState('');
   const [storedArtifacts, setStoredArtifacts] = useState<StoredArtifact[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [localFolder, setLocalFolder] = useState<DirectoryHandle | null>(null);
@@ -556,6 +559,18 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
     setActiveView('chat');
   }, [conversationGroup, conversationId, conversationTitle, messages, rememberConversation]);
 
+  useEffect(() => {
+    if (!queuedSitePrompt || activeView !== 'chat' || messages.length || streaming) return;
+    const prompt = queuedSitePrompt;
+    setQueuedSitePrompt('');
+    void handleSend(`请创建并发布一个轻量静态网站：${prompt}`);
+  }, [activeView, handleSend, messages.length, queuedSitePrompt, streaming]);
+
+  const startSiteCreation = useCallback((description: string) => {
+    handleNewChat();
+    setQueuedSitePrompt(description);
+  }, [handleNewChat]);
+
   const openAssistant = useCallback(async () => {
     if (activeView === 'assistant') return;
     setHistoryReady(false);
@@ -684,6 +699,10 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
     setActiveView('library');
   }, [activeView]);
 
+  const openSites = useCallback(() => {
+    setActiveView('sites');
+  }, []);
+
   useEffect(() => {
     if (activeView !== 'library') return;
     let cancelled = false;
@@ -697,7 +716,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
 
   const openDocument = useCallback(async (file: LibraryFile) => {
     try {
-      documentOriginViewRef.current = activeView === 'document' ? documentOriginViewRef.current : activeView;
+      documentOriginViewRef.current = activeView === 'document' ? documentOriginViewRef.current : activeView === 'sites' ? 'library' : activeView;
       const opened = await openLibraryFile(file);
       await activateDocumentConversation(file.id, file.title);
       setLibrarySource(file.source);
@@ -839,6 +858,10 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
           void openLibrary();
           if (window.innerWidth < 1024) setSidebarOpen(false);
         }}
+        onOpenSites={() => {
+          openSites();
+          if (window.innerWidth < 1024) setSidebarOpen(false);
+        }}
         onRenameChat={renameConversation}
         onMoveChat={moveConversation}
         onDeleteChat={setDeleteConversationId}
@@ -885,9 +908,11 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
               onWorkspaceToggle={toggleWorkspace}
               browserStatus={browserStatus}
               onRefreshBrowser={refreshBrowserStatus}
-            /> : activeView !== 'document' && <WorkspaceBar label={workspaceLabel} onToggle={toggleWorkspace} />}
+            /> : activeView !== 'document' && activeView !== 'sites' && <WorkspaceBar label={workspaceLabel} onToggle={toggleWorkspace} />}
           {activeView === 'assistant' && <RuntimeStatusBar status={runtimeStatus} />}
-          {activeView === 'library' ? (
+          {activeView === 'sites' ? (
+            <SitesWorkspace onCreate={startSiteCreation} />
+          ) : activeView === 'library' ? (
             <FileLibrary
               files={storedArtifacts.map((file) => ({ ...file, source: 'server' as const }))}
               localFiles={localFiles}

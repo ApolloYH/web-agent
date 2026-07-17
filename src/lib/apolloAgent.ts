@@ -28,6 +28,7 @@ export interface ManagedBrowserView {
   step: number;
   updated_at: number;
   frame_version: string;
+  live_view_url?: string;
   error?: string;
 }
 

@@ -18,6 +18,7 @@ import { createEntryTools } from './entry-tools.js';
 import { createDocumentTools } from './document-tools.js';
 import { createBrowserTools } from './browser-tools.js';
 import { createManagedBrowserTools } from './managed-browser-tools.js';
+import { createSiteTools, deletePublishedSite, listPublishedSites, publishSite, servePublishedSite } from './site-tools.js';
 import { agentRunKey, capacityReason, consumeFixedWindow, pruneExpiredWindows, type RateLimitWindow } from './concurrency.js';
 
 const ARTIFACT_EXTENSIONS = new Set(['.docx', '.pdf', '.jpg', '.jpeg', '.png', '.webp', '.md', '.markdown', '.json']);
@@ -78,7 +79,7 @@ type EntryConfig = {
   projects: Record<string, string>;
 };
 
-export function createApolloMiddleware({ workspaceRoot, envPath, registrationInvite, adminUsername, allowUnrestricted = false, maxConcurrentRuns = 8, maxRunsPerUser = 3, minFreeDiskBytes = 512 * 1024 * 1024, userStorageQuotaBytes = 2 * 1024 * 1024 * 1024, uploadRetentionDays = 7, trustedProxyAddresses = [], managedBrowser, entry }: { workspaceRoot: string; envPath: string; registrationInvite: string; adminUsername: string; allowUnrestricted?: boolean; maxConcurrentRuns?: number; maxRunsPerUser?: number; minFreeDiskBytes?: number; userStorageQuotaBytes?: number; uploadRetentionDays?: number; trustedProxyAddresses?: string[]; managedBrowser?: { url: string; token: string }; entry: EntryConfig }) {
+export function createApolloMiddleware({ workspaceRoot, envPath, registrationInvite, adminUsername, allowUnrestricted = false, maxConcurrentRuns = 8, maxRunsPerUser = 3, minFreeDiskBytes = 512 * 1024 * 1024, userStorageQuotaBytes = 2 * 1024 * 1024 * 1024, uploadRetentionDays = 7, trustedProxyAddresses = [], managedBrowser, sitesBaseUrl = '', entry }: { workspaceRoot: string; envPath: string; registrationInvite: string; adminUsername: string; allowUnrestricted?: boolean; maxConcurrentRuns?: number; maxRunsPerUser?: number; minFreeDiskBytes?: number; userStorageQuotaBytes?: number; uploadRetentionDays?: number; trustedProxyAddresses?: string[]; managedBrowser?: { url: string; token: string }; sitesBaseUrl?: string; entry: EntryConfig }) {
   minFreeDiskBytes = Number.isFinite(minFreeDiskBytes) && minFreeDiskBytes >= 0 ? minFreeDiskBytes : 512 * 1024 * 1024;
   userStorageQuotaBytes = Number.isFinite(userStorageQuotaBytes) && userStorageQuotaBytes >= 0 ? userStorageQuotaBytes : 2 * 1024 * 1024 * 1024;
   uploadRetentionDays = Number.isFinite(uploadRetentionDays) && uploadRetentionDays >= 1 ? uploadRetentionDays : 7;
@@ -86,6 +87,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
   const entryConfigPath = path.join(workspaceRoot, '.apollo', 'web-entry-config.json');
   const assistantConfigTemplatePath = path.join(workspaceRoot, 'config', 'web-assistant-apollo.json');
   const databasePath = path.join(workspaceRoot, '.apollo', 'web-agent.sqlite');
+  const publicSitesRoot = path.join(workspaceRoot, '.apollo', 'published-sites');
   const database = openConversationDatabase(databasePath);
   const runs = new Map<string, RunContext>();
   const interactions = new Map<string, PendingInteraction>();
@@ -177,6 +179,11 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
         if (run) managedBrowserViews.set(run.userId, { id, updatedAt: Date.now() });
       },
     } : undefined),
+    ...createSiteTools(sitesBaseUrl && runs.get(runKey) ? {
+      publicRoot: publicSitesRoot,
+      baseUrl: sitesBaseUrl,
+      ownerId: runs.get(runKey)!.userId,
+    } : { publicRoot: publicSitesRoot, baseUrl: '', ownerId: '' }),
   ];
 
   const handleManagedBrowserView = async (req: IncomingMessage, res: ServerResponse, userId: string) => {
@@ -365,6 +372,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
   };
 
   const handleRequest = async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
+    if (sitesBaseUrl && await servePublishedSite(req, res, publicSitesRoot, sitesBaseUrl)) return;
     if (!req.url?.startsWith('/apollo-api/')) return next();
     if (closing) return jsonError(res, 503, '服务正在重启，请稍后重试');
     if (isHttps(req)) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
@@ -388,6 +396,28 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
 
     if (req.url === '/apollo-api/respond') return handleResponse(req, res, user.id, interactions);
     if (req.url.startsWith('/apollo-api/browser-view')) return handleManagedBrowserView(req, res, user.id);
+    if (req.url === '/apollo-api/sites' && req.method === 'GET') {
+      return json(res, 200, { available: Boolean(sitesBaseUrl), sites: await listPublishedSites(publicSitesRoot, user.id) });
+    }
+    if (req.url === '/apollo-api/sites/publish' && req.method === 'POST') {
+      if (!sitesBaseUrl) return jsonError(res, 503, '站点发布尚未配置');
+      try {
+        const body = JSON.parse(await readBody(req)) as { sourceDir?: unknown; name?: unknown; slug?: unknown };
+        if (typeof body.sourceDir !== 'string' || typeof body.name !== 'string') throw new Error('站点参数无效');
+        const site = await publishSite({ workspaceRoot: userWorkspaceRoot, publicRoot: publicSitesRoot, baseUrl: sitesBaseUrl, ownerId: user.id, sourceDir: body.sourceDir, name: body.name, slug: typeof body.slug === 'string' ? body.slug : undefined });
+        return json(res, 200, { site });
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
+    }
+    if (req.url.startsWith('/apollo-api/sites/') && req.method === 'DELETE') {
+      try {
+        await deletePublishedSite(publicSitesRoot, user.id, decodeURIComponent(req.url.slice('/apollo-api/sites/'.length).split('?', 1)[0]!));
+        return json(res, 200, { ok: true });
+      } catch (error) {
+        return jsonError(res, 404, error instanceof Error ? error.message : String(error));
+      }
+    }
     if (req.url === '/apollo-api/uploads' || req.url === '/apollo-api/artifacts/import') {
       const expectedBytes = req.url === '/apollo-api/uploads' ? MAX_UPLOAD_REQUEST_BYTES : 40 * 1024 * 1024;
       if (!hasDiskCapacity(workspaceRoot, minFreeDiskBytes + expectedBytes)) return jsonError(res, 507, '服务器存储空间不足，请联系管理员清理后重试');

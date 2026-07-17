@@ -14,6 +14,7 @@ export default function AppSidebar({
   activeView,
   onOpenChat,
   onOpenLibrary,
+  onOpenSites,
   onRenameChat,
   onMoveChat,
   onDeleteChat,
@@ -28,9 +29,10 @@ export default function AppSidebar({
   conversations: ConversationSummary[];
   runningConversationIds: Set<string>;
   activeConversationId: string;
-  activeView: 'assistant' | 'chat' | 'library';
+  activeView: 'assistant' | 'chat' | 'library' | 'sites';
   onOpenChat: (id: string) => void;
   onOpenLibrary: () => void;
+  onOpenSites: () => void;
   onRenameChat: (id: string, title: string) => void;
   onMoveChat: (id: string) => void;
   onDeleteChat: (id: string) => void;
@@ -66,6 +68,16 @@ export default function AppSidebar({
         >
           {runningConversationIds.has('assistant') ? <RunningIcon /> : <AssistantIcon />}
           <span className={open ? '' : 'lg:hidden'}>助理</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenSites}
+          className={`sidebar-item mt-0.5 ${activeView === 'sites' ? 'bg-[#ececec]' : ''}`}
+          title="站点"
+        >
+          <SitesIcon />
+          <span className={open ? '' : 'lg:hidden'}>站点</span>
         </button>
 
         <button
@@ -196,6 +208,15 @@ function LibraryIcon() {
       <rect x="3" y="4" width="5" height="16" rx="1.5" stroke="currentColor" strokeWidth="1.7" />
       <rect x="9.5" y="4" width="5" height="16" rx="1.5" stroke="currentColor" strokeWidth="1.7" />
       <path d="m16 5.5 3.4-1 3.1 14.2-3.4.8L16 5.5Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function SitesIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+      <rect x="3.5" y="4" width="17" height="16" rx="2" stroke="currentColor" strokeWidth="1.7" />
+      <path d="M3.5 8h17M7 6h.01M10 6h.01M13 6h.01" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
     </svg>
   );
 }

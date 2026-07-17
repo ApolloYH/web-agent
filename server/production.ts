@@ -25,6 +25,7 @@ const apollo = createApolloMiddleware({
     url: process.env.APOLLO_BROWSER_WORKER_URL,
     token: process.env.APOLLO_BROWSER_WORKER_TOKEN || '',
   } : undefined,
+  sitesBaseUrl: process.env.APOLLO_SITES_BASE_URL || '',
   entry: {
     langcoreApiKey: process.env.LANGCORE_API_KEY || '',
     langhubApiKey: process.env.NOUMI_API_KEY || '',
