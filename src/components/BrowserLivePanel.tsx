@@ -34,8 +34,8 @@ export default function BrowserLivePanel({
     const image = new Image();
     let cancelled = false;
     image.decoding = 'async';
-    image.fetchPriority = 'low';
-    image.onload = () => { if (!cancelled) setFrameUrl(next); };
+    image.fetchPriority = 'high';
+    image.onload = () => { void image.decode().catch(() => undefined).then(() => { if (!cancelled) setFrameUrl(next); }); };
     image.src = next;
     return () => { cancelled = true; };
   }, [view?.frame_version]);

@@ -46,43 +46,34 @@ async function handlePageAction(action: string, input: Record<string, unknown>):
   }
   const controller = pageController ??= new PageController({
     enableMask: false,
-    viewportExpansion: 400,
+    viewportExpansion: 100,
     keepSemanticTags: true,
     highlightOpacity: 0,
     highlightLabelOpacity: 0,
   });
   if (action === 'get_state') {
-    const state = await withIndicator('正在查看页面', undefined, async () => {
-      try { return await controller.getBrowserState(); }
-      finally { await controller.cleanUpHighlights(); }
-    });
-    return {
-      ok: true,
-      ...state,
-      content: sanitizePageContent(state.content).slice(0, MAX_PAGE_CONTENT),
-      truncated: state.content.length > MAX_PAGE_CONTENT,
-    };
+    return withIndicator('正在查看页面', undefined, () => browserStateResult(controller));
   }
   if (action === 'click') {
     const index = integer(input.index, 'index');
-    return actionResult(await withIndicator('正在点击', index, () => controller.clickElement(index)));
+    return actionResult(controller, await withIndicator('正在点击', index, () => controller.clickElement(index)));
   }
   if (action === 'type') {
     if (typeof input.text !== 'string' || input.text.length > 10_000) throw new Error('text 无效或过长');
     const index = integer(input.index, 'index');
-    return actionResult(await withIndicator('正在输入', index, () => controller.inputText(index, input.text as string)));
+    return actionResult(controller, await withIndicator('正在输入', index, () => controller.inputText(index, input.text as string)));
   }
   if (action === 'select') {
     if (typeof input.option !== 'string' || input.option.length > 1_000) throw new Error('option 无效或过长');
     const index = integer(input.index, 'index');
-    return actionResult(await withIndicator('正在选择', index, () => controller.selectOption(index, input.option as string)));
+    return actionResult(controller, await withIndicator('正在选择', index, () => controller.selectOption(index, input.option as string)));
   }
   if (action === 'scroll') {
     const direction = input.direction;
     if (direction !== 'up' && direction !== 'down') throw new Error('direction 无效');
     const pages = input.pages === undefined ? 1 : integer(input.pages, 'pages', 1, 10);
     const index = input.index === undefined ? undefined : integer(input.index, 'index');
-    return actionResult(await withIndicator(direction === 'down' ? '正在向下滚动' : '正在向上滚动', index, () => controller.scroll({ down: direction === 'down', numPages: pages, index })));
+    return actionResult(controller, await withIndicator(direction === 'down' ? '正在向下滚动' : '正在向上滚动', index, () => controller.scroll({ down: direction === 'down', numPages: pages, index })));
   }
   throw new Error(`不支持的页面动作：${action}`);
 }
@@ -112,7 +103,7 @@ function createControlIndicator(): ControlIndicator {
       .control { position: absolute; inset: 0; opacity: 0; transition: opacity 240ms ease-in; }
       .control.active { opacity: 1; transition-timing-function: ease-out; }
       .edge { position: absolute; inset: 0; border-radius: 18px; overflow: hidden; opacity: .78; }
-      .edge.fallback { box-shadow: inset 0 0 32px rgba(57, 182, 255, .4), inset 0 0 56px rgba(189, 69, 251, .22); }
+      .edge.fallback { box-shadow: inset 0 0 24px rgba(57, 182, 255, .4), inset 0 0 40px rgba(189, 69, 251, .22); }
       .status { position: absolute; left: 50%; bottom: 18px; display: flex; align-items: center; gap: 8px;
         transform: translateX(-50%); padding: 9px 15px; border: 1px solid rgba(125, 211, 252, .56); border-radius: 999px;
         background: rgba(15, 23, 42, .92); color: white; box-shadow: 0 8px 28px rgba(15, 23, 42, .34), 0 0 18px rgba(14, 165, 233, .24);
@@ -162,7 +153,7 @@ function createControlIndicator(): ControlIndicator {
     edge.classList.add('fallback');
   } else {
     try {
-      motion = new Motion({ mode: 'light', borderWidth: 3, borderRadius: 18, glowWidth: 72, styles: { position: 'absolute', inset: '0' }, skipGreeting: true });
+      motion = new Motion({ mode: 'light', borderWidth: 3, borderRadius: 18, glowWidth: 48, styles: { position: 'absolute', inset: '0' }, skipGreeting: true });
       edge.appendChild(motion.element);
       motion.autoResize(edge);
     } catch {
@@ -248,8 +239,27 @@ function elementCenter(element: HTMLElement): [number, number] {
   return [x, y];
 }
 
-function actionResult(value: { success: boolean; message: string }): BrowserResponse {
-  return value.success ? { ok: true, message: redact(value.message) } : { ok: false, error: redact(value.message) };
+async function actionResult(controller: PageController, value: { success: boolean; message: string }): Promise<BrowserResponse> {
+  if (!value.success) return { ok: false, error: redact(value.message) };
+  try {
+    return { ...await browserStateResult(controller), message: redact(value.message) };
+  } catch {
+    return { ok: true, message: redact(value.message), state_unavailable: true };
+  }
+}
+
+async function browserStateResult(controller: PageController): Promise<BrowserResponse> {
+  try {
+    const state = await controller.getBrowserState();
+    return {
+      ok: true,
+      ...state,
+      content: sanitizePageContent(state.content).slice(0, MAX_PAGE_CONTENT),
+      truncated: state.content.length > MAX_PAGE_CONTENT,
+    };
+  } finally {
+    await controller.cleanUpHighlights();
+  }
 }
 
 function sanitizePageContent(value: string): string {

@@ -1,7 +1,7 @@
 import type { JsonObject, ToolDefinition } from '@apolloyh/apollo-agent';
 
 type RequestBrowser = (action: string, input: JsonObject) => Promise<JsonObject>;
-const USER_BROWSER_ROUTING = '用户浏览器工具。当用户要求使用自己的浏览器，或当前请求明显延续正在进行的用户浏览器任务时使用。要结合对话上下文判断，不要要求用户每轮重复“用我的浏览器”。其他网页任务默认使用 browser_managed_task。操作用户浏览器时：页面变化后必须重新读取状态，不得复用旧元素编号；每次最多滚动 1 页；失败后先重新读取状态，不得重复相同失败调用或声称成功。';
+const USER_BROWSER_ROUTING = '用户浏览器工具。当用户要求使用自己的浏览器，或当前请求明显延续正在进行的用户浏览器任务时使用。要结合对话上下文判断，不要要求用户每轮重复“用我的浏览器”。其他网页任务默认使用 browser_managed_task。操作用户浏览器时：首次操作前读取状态；成功的点击、输入、选择和滚动结果已附带最新页面状态，直接使用，不要重复调用 browser_get_state；仅当结果标记 state_unavailable 时重新读取。不得复用更早的元素编号；每次最多滚动 1 页；失败后先重新读取状态，不得重复相同失败调用或声称成功。';
 
 export function createBrowserTools(requestBrowser: RequestBrowser): ToolDefinition[] {
   return [

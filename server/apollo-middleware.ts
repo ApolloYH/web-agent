@@ -197,7 +197,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       res.writeHead(200, {
         'Content-Type': response.headers.get('content-type') || 'image/jpeg',
         'Content-Length': bytes.length,
-        'Cache-Control': 'no-store',
+        'Cache-Control': 'private, max-age=10, immutable',
       });
       res.end(bytes);
     } catch {

@@ -1,7 +1,7 @@
 export const APOLLO_BROWSER_MESSAGE = 'APOLLO_BROWSER_REQUEST';
 export const APOLLO_BROWSER_RESPONSE = 'APOLLO_BROWSER_RESPONSE';
 export const APOLLO_PAGE_MESSAGE = 'APOLLO_PAGE_REQUEST';
-export const MAX_PAGE_CONTENT = 100_000;
+export const MAX_PAGE_CONTENT = 24_000;
 
 export type BrowserAction =
   | 'status'

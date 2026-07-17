@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import asyncio
-import base64
 import contextlib
 import ipaddress
 import json
@@ -225,17 +224,17 @@ async def run_browser(task, allowed_domains, max_steps, session_id):
     browser_ready = asyncio.Event()
 
     async def on_step(state, _output, step):
-        frame = None
-        if state.screenshot:
-            with contextlib.suppress(ValueError):
-                frame = base64.b64decode(state.screenshot)
-        update_session(session_id, frame=frame, frame_mime="image/png", status="running", url=state.url, title=state.title, step=step)
+        update_session(session_id, status="running", url=state.url, title=state.title, step=step)
         browser_ready.set()
 
     agent = Agent(
         task=task,
         llm=llm,
         browser_profile=profile,
+        use_vision="auto",
+        use_thinking=False,
+        flash_mode=True,
+        use_judge=False,
         enable_signal_handler=False,
         register_new_step_callback=on_step,
     )
