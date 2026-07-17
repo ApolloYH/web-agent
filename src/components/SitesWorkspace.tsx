@@ -21,6 +21,8 @@ export default function SitesWorkspace({
 }) {
   const [sites, setSites] = useState<PublishedSite[]>([]);
   const [selectedSlug, setSelectedSlug] = useState('');
+  const [view, setView] = useState<'gallery' | 'builder'>('gallery');
+  const [loadingSites, setLoadingSites] = useState(true);
   const [available, setAvailable] = useState(true);
   const [busySlug, setBusySlug] = useState('');
   const [notice, setNotice] = useState('');
@@ -31,6 +33,7 @@ export default function SitesWorkspace({
 
   useEffect(() => {
     let cancelled = false;
+    setLoadingSites(true);
     void getPublishedSites().then((result) => {
       if (cancelled) return;
       setAvailable(result.available);
@@ -49,6 +52,8 @@ export default function SitesWorkspace({
       }
     }).catch((error) => {
       if (!cancelled) setNotice(error instanceof Error ? error.message : String(error));
+    }).finally(() => {
+      if (!cancelled) setLoadingSites(false);
     });
     return () => { cancelled = true; };
   }, [refreshKey]);
@@ -62,7 +67,16 @@ export default function SitesWorkspace({
     setSelectedSlug('');
     setPreview('site');
     setNotice('');
+    setView('builder');
     onNewConversation();
+  };
+
+  const openSite = (site: PublishedSite) => {
+    newSiteAfterRef.current = 0;
+    setSelectedSlug(site.slug);
+    setPreview('site');
+    setNotice('');
+    setView('builder');
   };
 
   const deploy = async () => {
@@ -80,11 +94,74 @@ export default function SitesWorkspace({
     }
   };
 
+  if (view === 'gallery') {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col bg-white">
+        <header className="flex h-12 shrink-0 items-center justify-between border-b border-black/[0.07] pl-12 pr-3 lg:px-4">
+          <h1 className="text-[13px] font-semibold text-[#202020]">站点</h1>
+          <button type="button" disabled={!available} onClick={startNew} className="h-8 cursor-pointer rounded-full bg-[#171717] px-4 text-[11px] font-medium text-white transition-colors duration-200 hover:bg-[#343434] disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717]">创建站点</button>
+        </header>
+
+        <main className="min-h-0 flex-1 overflow-y-auto px-5 py-8 sm:px-8 lg:px-12 lg:py-10">
+          <div className="mx-auto w-full max-w-6xl">
+            <div className="mb-7">
+              <h2 className="text-[26px] font-semibold tracking-[-0.035em] text-[#171717] sm:text-[30px]">我的站点</h2>
+              <p className="mt-2 text-[12px] text-[#777]">预览已经发布的站点，或与 Apollo 一起创建一个新站点。</p>
+            </div>
+
+            {notice && <p aria-live="polite" className="mb-4 rounded-xl bg-[#f6f6f6] px-4 py-3 text-[11px] text-[#666]">{notice}</p>}
+
+            {loadingSites ? (
+              <div className="flex min-h-[320px] items-center justify-center rounded-3xl border border-black/[0.07] bg-[#fcfcfc] text-[11px] text-[#888]" aria-live="polite">正在加载站点…</div>
+            ) : sites.length > 0 ? (
+              <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+                {sites.map((site) => (
+                  <article
+                    key={site.slug}
+                    className="group relative min-w-0 overflow-hidden rounded-2xl border border-black/[0.09] bg-white text-left transition duration-200 hover:-translate-y-0.5 hover:border-black/[0.16] hover:shadow-[0_14px_35px_rgba(0,0,0,0.08)] focus-within:outline-2 focus-within:outline-offset-3 focus-within:outline-[#171717] motion-reduce:transform-none motion-reduce:transition-none"
+                  >
+                    <div className="relative aspect-[16/10] overflow-hidden border-b border-black/[0.07] bg-[#f5f5f5]">
+                      <iframe
+                        src={site.url}
+                        title={`${site.name} 缩略预览`}
+                        tabIndex={-1}
+                        aria-hidden="true"
+                        sandbox="allow-scripts"
+                        className="pointer-events-none h-[160%] w-[160%] origin-top-left scale-[0.625] bg-white"
+                      />
+                      <span className="absolute right-3 top-3 rounded-full bg-white/90 px-2.5 py-1 text-[9px] font-medium text-[#333] opacity-0 shadow-sm backdrop-blur transition-opacity duration-200 group-hover:opacity-100 group-focus-visible:opacity-100">打开编辑</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-4 p-4">
+                      <div className="min-w-0">
+                        <h3 className="truncate text-[13px] font-semibold text-[#222]">{site.name}</h3>
+                        <p className="mt-1 truncate text-[10px] text-[#8a8a8a]">{site.url}</p>
+                      </div>
+                      <span className="shrink-0 text-[#888] transition-transform duration-200 group-hover:translate-x-0.5 motion-reduce:transform-none" aria-hidden="true"><ArrowIcon /></span>
+                    </div>
+                    <button type="button" onClick={() => openSite(site)} className="absolute inset-0 z-10 cursor-pointer focus:outline-none" aria-label={`打开并编辑站点：${site.name}`} />
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="flex min-h-[420px] flex-col items-center justify-center rounded-3xl border border-dashed border-black/[0.14] bg-[#fcfcfc] px-6 text-center">
+                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#f0f0f0] text-[#666]" aria-hidden="true"><PreviewIcon /></span>
+                <h3 className="mt-5 text-[16px] font-semibold text-[#222]">你还没有创建任何站点</h3>
+                <p className="mt-2 max-w-sm text-[11px] leading-5 text-[#777]">和 Apollo 聊聊你的想法，边构建边预览，确认后即可一键发布。</p>
+                <button type="button" disabled={!available} onClick={startNew} className="mt-6 h-9 cursor-pointer rounded-full bg-[#171717] px-5 text-[11px] font-medium text-white transition-colors duration-200 hover:bg-[#343434] disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717]">创建网站</button>
+              </div>
+            )}
+          </div>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-white">
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-black/[0.07] pl-12 pr-3 lg:px-4">
         <div className="flex min-w-0 items-center gap-3">
-          <h1 className="shrink-0 text-[13px] font-semibold text-[#202020]">站点</h1>
+          <button type="button" onClick={() => setView('gallery')} className="flex h-8 cursor-pointer items-center gap-1.5 rounded-lg px-1.5 text-[11px] font-medium text-[#333] transition-colors duration-200 hover:bg-[#f3f3f3] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#171717]" aria-label="返回我的站点"><BackIcon /><span className="hidden sm:inline">我的站点</span></button>
+          <span className="h-4 w-px bg-black/10" aria-hidden="true" />
           {sites.length > 0 && (
             <label className="min-w-0">
               <span className="sr-only">当前站点</span>
@@ -186,4 +263,12 @@ function LockIcon() {
 
 function PreviewIcon() {
   return <svg viewBox="0 0 24 24" width="28" height="28" fill="none" className="text-[#777]" aria-hidden="true"><rect x="3.5" y="4" width="17" height="16" rx="2.5" stroke="currentColor" strokeWidth="1.6"/><path d="M3.5 8h17M7 6h.01M10 6h.01" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>;
+}
+
+function BackIcon() {
+  return <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true"><path d="m14.5 6-6 6 6 6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>;
+}
+
+function ArrowIcon() {
+  return <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg>;
 }
