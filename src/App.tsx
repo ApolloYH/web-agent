@@ -43,6 +43,7 @@ import { getBrowserConnectionStatus, runBrowserAction, type BrowserConnectionSta
 import ResizeDivider from '@/components/ResizeDivider';
 import BrowserLivePanel from '@/components/BrowserLivePanel';
 import SitesWorkspace from '@/components/SitesWorkspace';
+import RagWorkspace from '@/components/RagWorkspace';
 import type { PublishedSite } from '@/lib/sites';
 
 let idSeq = 0;
@@ -65,11 +66,12 @@ function storedPaneWidth(key: string, fallback: number, min: number, max: number
     return fallback;
   }
 }
-const initialWorkspace = (): { view: 'assistant' | 'chat' | 'library' | 'sites'; conversationId?: string } => {
+const initialWorkspace = (): { view: 'assistant' | 'chat' | 'library' | 'sites' | 'rag'; conversationId?: string } => {
   try {
     const saved = JSON.parse(sessionStorage.getItem(LAST_WORKSPACE_KEY) || '{}');
     if (saved.view === 'chat' && typeof saved.conversationId === 'string') return saved;
     if (saved.view === 'library') return { view: 'library' };
+    if (saved.view === 'rag') return { view: 'rag' };
     if (saved.view === 'sites' && typeof saved.conversationId === 'string') return saved;
   } catch { /* Ignore stale browser state. */ }
   return { view: 'assistant' };
@@ -114,7 +116,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   const [conversationList, setConversationList] = useState<ConversationSummary[]>([]);
   const [deleteConversationId, setDeleteConversationId] = useState<string | null>(null);
   const [historyReady, setHistoryReady] = useState(false);
-  const [activeView, setActiveView] = useState<'assistant' | 'chat' | 'library' | 'sites' | 'document'>(initialWorkspaceRef.current.view);
+  const [activeView, setActiveView] = useState<'assistant' | 'chat' | 'library' | 'sites' | 'rag' | 'document'>(initialWorkspaceRef.current.view);
   const [siteConversationId, setSiteConversationId] = useState<string | null>(() => initialWorkspaceRef.current.view === 'sites'
     ? initialWorkspaceRef.current.conversationId ?? null
     : sessionStorage.getItem(siteConversationKey));
@@ -127,7 +129,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   const [librarySource, setLibrarySource] = useState<'server' | 'local'>('server');
   const [activeDocument, setActiveDocument] = useState<OpenDocument | null>(null);
   const [documentApolloOpen, setDocumentApolloOpen] = useState(false);
-  const documentOriginViewRef = useRef<'assistant' | 'chat' | 'library'>('library');
+  const documentOriginViewRef = useRef<'assistant' | 'chat' | 'library' | 'rag'>('library');
   const documentChannelRef = useRef<'assistant' | 'entry'>('entry');
   const documentPreviousConversationRef = useRef<{
     id: string;
@@ -713,6 +715,10 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
     setActiveView('sites');
   }, []);
 
+  const openRag = useCallback(() => {
+    setActiveView('rag');
+  }, []);
+
   useEffect(() => {
     if (activeView !== 'library') return;
     let cancelled = false;
@@ -872,6 +878,10 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
           openSites();
           if (window.innerWidth < 1024) setSidebarOpen(false);
         }}
+        onOpenRag={() => {
+          openRag();
+          if (window.innerWidth < 1024) setSidebarOpen(false);
+        }}
         onRenameChat={renameConversation}
         onMoveChat={moveConversation}
         onDeleteChat={setDeleteConversationId}
@@ -918,7 +928,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
               onWorkspaceToggle={toggleWorkspace}
               browserStatus={browserStatus}
               onRefreshBrowser={refreshBrowserStatus}
-            /> : activeView !== 'document' && activeView !== 'sites' && <WorkspaceBar label={workspaceLabel} onToggle={toggleWorkspace} />}
+            /> : activeView !== 'document' && activeView !== 'sites' && activeView !== 'rag' && <WorkspaceBar label={workspaceLabel} onToggle={toggleWorkspace} />}
           {activeView === 'assistant' && <RuntimeStatusBar status={runtimeStatus} />}
           {activeView === 'sites' ? (
             <SitesWorkspace
@@ -945,6 +955,8 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
               onNewConversation={() => handleNewChat('sites')}
               onSiteChange={setActiveSite}
             />
+          ) : activeView === 'rag' ? (
+            <RagWorkspace />
           ) : activeView === 'library' ? (
             <FileLibrary
               files={storedArtifacts.map((file) => ({ ...file, source: 'server' as const }))}

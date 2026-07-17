@@ -148,6 +148,98 @@ test('regular users cannot read or replace agent runtime configuration', async (
   }
 });
 
+test('IM settings are user-scoped, secret-safe, and deny unsafe defaults', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'apollo-im-settings-'));
+  await fs.mkdir(path.join(root, 'config'), { recursive: true });
+  await fs.mkdir(path.join(root, 'entry-skills'), { recursive: true });
+  await fs.writeFile(path.join(root, 'config', 'web-entry-apollo.json'), '{}');
+  await fs.writeFile(path.join(root, 'config', 'web-assistant-apollo.json'), JSON.stringify({ skills: { directories: ['./assistant-skills'] } }));
+  const middleware = createApolloMiddleware({
+    workspaceRoot: root,
+    envPath: path.join(root, '.env'),
+    registrationInvite: 'test-invite',
+    adminUsername: 'member',
+    minFreeDiskBytes: 0,
+    entry: { langcoreApiKey: '', langhubApiKey: '', langhubBaseUrl: '', projects: {} },
+  });
+  const server = createServer((req, res) => middleware.handle(req, res, () => res.writeHead(404).end()));
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const base = `http://127.0.0.1:${address.port}`;
+  try {
+    const registration = await fetch(`${base}/apollo-api/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: base },
+      body: JSON.stringify({ username: 'member', password: 'secure-password', inviteCode: 'test-invite' }),
+    });
+    const cookie = registration.headers.get('set-cookie')?.split(';', 1)[0];
+    assert.ok(cookie);
+    const settings = await fetch(`${base}/apollo-api/im/telegram`, { headers: { Cookie: cookie } });
+    const payload = await settings.json() as Record<string, unknown>;
+    assert.equal(settings.status, 200);
+    assert.equal(payload.tokenConfigured, false);
+    assert.equal('token' in payload, false);
+
+    const allSettings = await fetch(`${base}/apollo-api/im`, { headers: { Cookie: cookie } });
+    const allPayload = await allSettings.json() as { channels: Record<string, Record<string, unknown>> };
+    assert.equal(allSettings.status, 200);
+    assert.deepEqual(Object.keys(allPayload.channels).sort(), ['dingtalk', 'feishu', 'telegram', 'wecom', 'weixin']);
+    for (const channel of Object.values(allPayload.channels)) {
+      for (const secret of ['token', 'appSecret', 'secret', 'clientSecret', 'botToken', 'getUpdatesBuf']) assert.equal(secret in channel, false);
+    }
+
+    const disabled = await fetch(`${base}/apollo-api/im/telegram`, {
+      method: 'PUT',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json', Origin: base },
+      body: JSON.stringify({ enabled: false, allowedUserIds: [] }),
+    });
+    assert.equal(disabled.status, 200);
+    const database = new DatabaseSync(path.join(root, '.apollo', 'web-agent.sqlite'), { readOnly: true });
+    const userId = (database.prepare('SELECT id FROM users WHERE username = ?').get('member') as { id: string }).id;
+    database.close();
+    const secretFile = path.join(root, '.apollo', 'im-channels', `${userId}.telegram.json`);
+    assert.equal((await fs.stat(secretFile)).mode & 0o777, 0o600);
+    await assert.rejects(fs.access(path.join(root, '.apollo', 'users', userId, 'workspace', '.apollo', 'telegram.json')));
+
+    for (const [platform, body] of [
+      ['feishu', { enabled: false, appId: '', allowedUserIds: [] }],
+      ['wecom', { enabled: false, botId: '', allowedUserIds: [] }],
+      ['dingtalk', { enabled: false, clientId: '', allowedUserIds: [] }],
+      ['weixin', { enabled: false, allowedUserIds: [] }],
+    ] as const) {
+      const saved: Response = await fetch(`${base}/apollo-api/im/${platform}`, {
+        method: 'PUT',
+        headers: { Cookie: cookie, 'Content-Type': 'application/json', Origin: base },
+        body: JSON.stringify(body),
+      });
+      assert.equal(saved.status, 200, `${platform} should save while disabled`);
+      assert.equal((await fs.stat(path.join(root, '.apollo', 'im-channels', `${userId}.${platform}.json`))).mode & 0o777, 0o600);
+    }
+
+    const unsafe = await fetch(`${base}/apollo-api/im/telegram`, {
+      method: 'PUT',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json', Origin: base },
+      body: JSON.stringify({ enabled: true, allowedUserIds: [] }),
+    });
+    assert.equal(unsafe.status, 400);
+    assert.match((await unsafe.json() as { error: string }).error, /Bot Token/);
+
+    for (const platform of ['feishu', 'wecom', 'dingtalk', 'weixin']) {
+      const rejected: Response = await fetch(`${base}/apollo-api/im/${platform}`, {
+        method: 'PUT',
+        headers: { Cookie: cookie, 'Content-Type': 'application/json', Origin: base },
+        body: JSON.stringify({ enabled: true, allowedUserIds: [] }),
+      });
+      assert.equal(rejected.status, 400, `${platform} must reject unsafe enablement`);
+    }
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await middleware.close();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('per-user storage quota rejects new uploads before writing files', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'apollo-quota-'));
   await fs.mkdir(path.join(root, 'config'), { recursive: true });

@@ -70,8 +70,10 @@
       <a href="#start">快速开始</a>
       <a href="#chat">对话与任务</a>
       <a href="#files">文件与文档</a>
+      <a href="#rag">RAG 知识库</a>
       <a href="#sites">创建站点</a>
       <a href="#browser">浏览器操作</a>
+      <a href="#im">连接 IM</a>
       <a href="#safety">权限与隐私</a>
       <a href="#faq">常见问题</a>
     </nav>
@@ -123,6 +125,23 @@
         <div class="note">本地目录句柄保存在当前浏览器。手动查看和编辑时，原文件不会自动上传；只有你要求云端 Apollo 理解或修改内容时，相关正文或清单才会参与任务。</div>
       </section>
 
+      <section id="rag">
+        <h2>RAG 知识库</h2>
+        <p>打开侧栏“RAG”，创建知识库并选择适合资料结构的处理模板。上传完成后，在普通对话或助理中说“根据我的知识库回答”，Apollo 会检索原文并标注文档来源。</p>
+        <div class="grid">
+          <div class="card"><h3>通用与问答</h3><p>通用文档按语义边界切分；问答对会把问题和答案保留在同一分段。</p></div>
+          <div class="card"><h3>手册与书籍</h3><p>按标题、编号、章、节和卷组织长文，减少上下文断裂。</p></div>
+          <div class="card"><h3>论文与法规</h3><p>识别论文结构，或按“第几条”保留完整法规条款。</p></div>
+          <div class="card"><h3>表格与演示</h3><p>表格按行、演示文稿按页面处理；短资料也可选择整篇文档模板。</p></div>
+        </div>
+        <ol class="steps">
+          <li>新建知识库，填写名称并选择一种文档处理模板。</li>
+          <li>上传 PDF、Office、图片、文本、Markdown、CSV、HTML 或 JSON 文件。</li>
+          <li>使用“召回测试”检查原文命中情况，再回到对话中提问。</li>
+        </ol>
+        <div class="note">检索使用关键词与语义向量混合召回，并进行相关性重排。普通文本优先在 Apollo 本地解析；扫描件、旧版 Office、演示文稿和图片等本地无法读取的文件会发送到已配置的 MinerU 服务解析。</div>
+      </section>
+
       <section id="sites">
         <h2>创建并发布站点</h2>
         <p>打开侧栏“站点”，先进入已有站点预览页。点击“创建站点”后，就能在左侧持续对话、右侧实时查看结果。</p>
@@ -148,6 +167,24 @@
           <li>在任务中明确表达使用自己的浏览器，例如“用我的浏览器整理当前页面”。后续连续指令会结合当前任务意图判断。</li>
           <li>任务完成或停止后，Apollo 会结束接管提示。</li>
         </ol>
+      </section>
+
+      <section id="im">
+        <h2>在 IM 中使用 Apollo</h2>
+        <p>助理支持飞书、企业微信、钉钉、微信和 Telegram。连接后，IM 消息会进入同一个 Apollo 助理，继续使用已有记忆、工作区和托管浏览器。</p>
+        <div class="grid">
+          <div class="card"><h3>飞书</h3><p>创建企业自建应用并启用机器人与消息事件，填写 App ID、App Secret 和允许使用者的 Open ID。</p></div>
+          <div class="card"><h3>企业微信</h3><p>创建智能机器人，填写 Bot ID、Secret 和允许使用者的企业微信 user ID。</p></div>
+          <div class="card"><h3>钉钉</h3><p>创建企业内部应用，为机器人选择 Stream 模式，填写 Client ID、Client Secret 和 Staff ID。</p></div>
+          <div class="card"><h3>微信</h3><p>点击“获取二维码”，用手机微信扫码确认。Apollo 会创建独立的微信机器人身份，当前以单聊为主。</p></div>
+          <div class="card"><h3>Telegram</h3><p>通过 <a href="https://t.me/BotFather">@BotFather</a> 创建机器人，填写 Bot Token 和允许使用者的数字 ID。</p></div>
+        </div>
+        <ol class="steps">
+          <li>打开 Apollo 助理右上角“用户中心”，进入“IM 接入”。</li>
+          <li>选择渠道，填写平台凭据和允许使用的用户 ID；微信直接扫码。</li>
+          <li>打开渠道开关并保存，状态变为“已连接”后即可发送文字消息。</li>
+        </ol>
+        <div class="note">安全提示：所有渠道默认拒绝白名单之外的用户；Secret、Token 保存后不会返回浏览器。IM 中无法操作你当前的 Chrome 标签页，但可以使用 Apollo 托管浏览器。飞书、企业微信和钉钉使用官方长连接，不需要配置公网 Webhook。</div>
       </section>
 
       <section id="safety">

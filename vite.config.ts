@@ -24,6 +24,15 @@ export default defineConfig(({ mode }) => {
       url: env.APOLLO_BROWSER_WORKER_URL,
       token: env.APOLLO_BROWSER_WORKER_TOKEN || '',
     } : undefined,
+    rag: {
+      siliconflowApiKey: env.SILICONFLOW_API_KEY || '',
+      embeddingModel: env.RAG_EMBEDDING_MODEL || 'BAAI/bge-m3',
+      rerankerModel: env.RAG_RERANKER_MODEL || 'BAAI/bge-reranker-v2-m3',
+      mineruApiKey: env.MINERU_API_KEY || '',
+      chatApiKey: env.RAG_CHAT_API_KEY || '',
+      chatBaseUrl: env.RAG_CHAT_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4',
+      chatModel: env.RAG_CHAT_MODEL || 'glm-4.7-flashx',
+    },
     entry: {
       langcoreApiKey: env.LANGCORE_API_KEY || '',
       langhubApiKey: env.NOUMI_API_KEY || '',

@@ -19,7 +19,20 @@ import { createDocumentTools } from './document-tools.js';
 import { createBrowserTools } from './browser-tools.js';
 import { createManagedBrowserTools } from './managed-browser-tools.js';
 import { createSiteTools, deletePublishedSite, listPublishedSites, publishSite, servePublishedSite } from './site-tools.js';
+import { createRagCollection, createRagTools, deleteRagCollection, deleteRagDocument, ensureRagSchema, ingestRagDocument, listRagCollections, listRagDocuments, searchRag, type RagChunkMethod, type RagServices } from './rag.js';
 import { agentRunKey, capacityReason, consumeFixedWindow, pruneExpiredWindows, type RateLimitWindow } from './concurrency.js';
+import { inspectTelegramBot, TelegramGateway, type TelegramChannelConfig } from './telegram-gateway.js';
+import {
+  DingtalkGateway,
+  FeishuGateway,
+  WecomGateway,
+  WeixinGateway,
+  type DingtalkChannelConfig,
+  type FeishuChannelConfig,
+  type ImGatewayStatus,
+  type WecomChannelConfig,
+  type WeixinChannelConfig,
+} from './im-gateways.js';
 
 const ARTIFACT_EXTENSIONS = new Set(['.docx', '.pdf', '.jpg', '.jpeg', '.png', '.webp', '.md', '.markdown', '.json']);
 const SKIP_DIRECTORIES = new Set(['.git', '.apollo', 'node_modules', 'dist']);
@@ -57,6 +70,7 @@ type RunContext = {
   sink: (event: TraceEvent) => void;
   permissionMode: 'ask' | 'unrestricted';
   interactionIds: Set<string>;
+  interactive: boolean;
   runtime?: QueryEngine;
 };
 
@@ -65,6 +79,7 @@ type UserRuntimeContext = {
   workspaceRoot: string;
   assistantConfigPath: string;
   assistantSessionPath: string;
+  imConfigRoot: string;
   assistantEngine?: Promise<QueryEngine>;
   entryEngines: Map<string, Promise<QueryEngine>>;
   entryTurnStates: Map<string, { standardsQuery?: Promise<string> }>;
@@ -79,7 +94,7 @@ type EntryConfig = {
   projects: Record<string, string>;
 };
 
-export function createApolloMiddleware({ workspaceRoot, envPath, registrationInvite, adminUsername, allowUnrestricted = false, maxConcurrentRuns = 8, maxRunsPerUser = 3, minFreeDiskBytes = 512 * 1024 * 1024, userStorageQuotaBytes = 2 * 1024 * 1024 * 1024, uploadRetentionDays = 7, trustedProxyAddresses = [], managedBrowser, sitesBaseUrl = '', entry }: { workspaceRoot: string; envPath: string; registrationInvite: string; adminUsername: string; allowUnrestricted?: boolean; maxConcurrentRuns?: number; maxRunsPerUser?: number; minFreeDiskBytes?: number; userStorageQuotaBytes?: number; uploadRetentionDays?: number; trustedProxyAddresses?: string[]; managedBrowser?: { url: string; token: string }; sitesBaseUrl?: string; entry: EntryConfig }) {
+export function createApolloMiddleware({ workspaceRoot, envPath, registrationInvite, adminUsername, allowUnrestricted = false, maxConcurrentRuns = 8, maxRunsPerUser = 3, minFreeDiskBytes = 512 * 1024 * 1024, userStorageQuotaBytes = 2 * 1024 * 1024 * 1024, uploadRetentionDays = 7, trustedProxyAddresses = [], managedBrowser, sitesBaseUrl = '', rag = {}, entry }: { workspaceRoot: string; envPath: string; registrationInvite: string; adminUsername: string; allowUnrestricted?: boolean; maxConcurrentRuns?: number; maxRunsPerUser?: number; minFreeDiskBytes?: number; userStorageQuotaBytes?: number; uploadRetentionDays?: number; trustedProxyAddresses?: string[]; managedBrowser?: { url: string; token: string }; sitesBaseUrl?: string; rag?: RagServices; entry: EntryConfig }) {
   minFreeDiskBytes = Number.isFinite(minFreeDiskBytes) && minFreeDiskBytes >= 0 ? minFreeDiskBytes : 512 * 1024 * 1024;
   userStorageQuotaBytes = Number.isFinite(userStorageQuotaBytes) && userStorageQuotaBytes >= 0 ? userStorageQuotaBytes : 2 * 1024 * 1024 * 1024;
   uploadRetentionDays = Number.isFinite(uploadRetentionDays) && uploadRetentionDays >= 1 ? uploadRetentionDays : 7;
@@ -120,6 +135,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
         workspaceRoot: userRoot,
         assistantConfigPath: path.join(userRoot, '.apollo', 'assistant-config.json'),
         assistantSessionPath: path.join(userRoot, '.apollo', 'web-assistant-session'),
+        imConfigRoot: path.join(workspaceRoot, '.apollo', 'im-channels'),
         entryEngines: new Map(),
         entryTurnStates: new Map(),
         ready: ensureUserWorkspace(userRoot, path.join(workspaceRoot, 'entry-skills'), assistantConfigTemplatePath)
@@ -142,7 +158,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     fallback: string,
   ): Promise<string> => {
     const run = runs.get(runKey);
-    if (!run) return Promise.resolve(fallback);
+    if (!run || !run.interactive) return Promise.resolve(fallback);
     const id = `interaction-${randomUUID()}`;
     run.interactionIds.add(id);
     run.send({ ...payload, id });
@@ -156,7 +172,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     input: Record<string, unknown>,
   ): Promise<Record<string, unknown>> => {
     const run = runs.get(runKey);
-    if (!run) return { ok: false, error: '当前没有可用的浏览器会话' };
+    if (!run || !run.interactive) return { ok: false, error: 'IM 中不能操作用户当前浏览器，请使用 Apollo 托管浏览器' };
     const id = `${type === 'editor_request' ? 'editor' : 'browser'}-${randomUUID()}`;
     run.interactionIds.add(id);
     run.send({ type, id, action, input });
@@ -184,6 +200,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       baseUrl: sitesBaseUrl,
       ownerId: runs.get(runKey)!.userId,
     } : { publicRoot: publicSitesRoot, baseUrl: '', ownerId: '' }),
+    ...createRagTools(database, runs.get(runKey)?.userId ?? '', rag),
   ];
 
   const handleManagedBrowserView = async (req: IncomingMessage, res: ServerResponse, userId: string) => {
@@ -421,6 +438,104 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     }
   };
 
+  const runImMessage = async (userId: string, message: string): Promise<string> => {
+    const userRow = database.prepare('SELECT id, username, is_admin AS "isAdmin" FROM users WHERE id = ?').get(userId) as { id: string; username: string; isAdmin: number } | undefined;
+    if (!userRow) throw new Error('Apollo 用户不存在');
+    const runKey = agentRunKey(userId, 'assistant', '');
+    if (runs.has(runKey)) throw new Error('助理正在处理上一条消息，请稍后再试');
+    const capacity = capacityReason(runs.values(), userId, globalRunLimit, perUserRunLimit, auxiliaryJobs, auxiliaryJobsByUser.get(userId) ?? 0);
+    if (capacity) throw new Error('服务繁忙，请稍后再试');
+
+    const context = await getUserContext({ id: userRow.id, username: userRow.username, admin: userRow.isAdmin === 1 });
+    const output: string[] = [];
+    const collect = (event: TraceEvent) => {
+      if (event.type === 'assistant_delta') output.push(event.text);
+    };
+    const send: Send = (payload) => {
+      const event = (payload as { type?: string; event?: TraceEvent }).event;
+      if ((payload as { type?: string }).type === 'trace' && event) collect(event);
+    };
+    const runId = randomUUID();
+    const startedAt = new Date().toISOString();
+    database.prepare(`
+      INSERT INTO agent_runs (id, user_id, channel, conversation_id, status, started_at)
+      VALUES (?, ?, 'assistant', 'im', 'running', ?)
+    `).run(runId, userId, startedAt);
+    const run: RunContext = {
+      id: runId,
+      userId,
+      channel: 'assistant',
+      send,
+      sink: collect,
+      permissionMode: 'ask',
+      interactionIds: new Set(),
+      interactive: false,
+    };
+    runs.set(runKey, run);
+    let status: 'succeeded' | 'failed' = 'failed';
+    let runError = '';
+    try {
+      if (allowUnrestricted) run.permissionMode = await permissionMode(context.assistantConfigPath);
+      const runtime = await getEngine(context, 'assistant');
+      run.runtime = runtime;
+      await runInput(runtime, message, send);
+      if (runtime.getSessionId()) {
+        await fs.mkdir(path.dirname(context.assistantSessionPath), { recursive: true });
+        await fs.writeFile(context.assistantSessionPath, `${runtime.getSessionId()}\n`, 'utf8');
+      }
+      status = 'succeeded';
+      return output.join('').trim() || '任务已完成。';
+    } catch (error) {
+      runError = error instanceof Error ? error.message : String(error);
+      throw error;
+    } finally {
+      runs.delete(runKey);
+      database.prepare('UPDATE agent_runs SET status = ?, finished_at = ?, error = ? WHERE id = ?')
+        .run(status, new Date().toISOString(), runError.slice(0, 2_000), runId);
+    }
+  };
+
+  const telegramGateway = new TelegramGateway(
+    runImMessage,
+    async (userId, offset) => {
+      const row = database.prepare('SELECT id FROM users WHERE id = ?').get(userId) as { id: string } | undefined;
+      if (!row) return;
+      const context = await getUserContext({ id: row.id, username: '', admin: isAdmin(database, row.id) });
+      const config = await readTelegramConfig(imConfigPath(context, 'telegram'));
+      if (config.offset === offset) return;
+      await writeChannelConfig(imConfigPath(context, 'telegram'), { ...config, offset });
+    },
+  );
+
+  const feishuGateway = new FeishuGateway(runImMessage);
+  const wecomGateway = new WecomGateway(runImMessage);
+  const dingtalkGateway = new DingtalkGateway(runImMessage);
+  const weixinGateway = new WeixinGateway(
+    runImMessage,
+    async (userId, getUpdatesBuf) => {
+      const row = database.prepare('SELECT id, username, is_admin AS "isAdmin" FROM users WHERE id = ?').get(userId) as { id: string; username: string; isAdmin: number } | undefined;
+      if (!row) return;
+      const context = await getUserContext({ id: row.id, username: row.username, admin: row.isAdmin === 1 });
+      const file = imConfigPath(context, 'weixin');
+      const config = await readWeixinConfig(file);
+      if (config.getUpdatesBuf !== getUpdatesBuf) await writeChannelConfig(file, { ...config, getUpdatesBuf });
+    },
+  );
+
+  void Promise.all((database.prepare('SELECT id, username, is_admin AS "isAdmin" FROM users').all() as Array<{ id: string; username: string; isAdmin: number }>).map(async (row) => {
+    const context = await getUserContext({ id: row.id, username: row.username, admin: row.isAdmin === 1 });
+    const telegram = await readTelegramConfig(imConfigPath(context, 'telegram'));
+    const feishu = await readFeishuConfig(imConfigPath(context, 'feishu'));
+    const wecom = await readWecomConfig(imConfigPath(context, 'wecom'));
+    const dingtalk = await readDingtalkConfig(imConfigPath(context, 'dingtalk'));
+    const weixin = await readWeixinConfig(imConfigPath(context, 'weixin'));
+    if (telegram.enabled) telegramGateway.activate(row.id, telegram);
+    if (feishu.enabled) feishuGateway.activate(row.id, feishu);
+    if (wecom.enabled) wecomGateway.activate(row.id, wecom);
+    if (dingtalk.enabled) dingtalkGateway.activate(row.id, dingtalk);
+    if (weixin.enabled) weixinGateway.activate(row.id, weixin);
+  })).catch((error) => console.error(`[Apollo IM] 启动失败：${error instanceof Error ? error.message : String(error)}`));
+
   const handleRequest = async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
     if (sitesBaseUrl && await servePublishedSite(req, res, publicSitesRoot, sitesBaseUrl)) return;
     if (!req.url?.startsWith('/apollo-api/')) return next();
@@ -443,6 +558,274 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     const context = await getUserContext(user);
     const userWorkspaceRoot = context.workspaceRoot;
     const userArtifactRoot = path.join(userWorkspaceRoot, 'artifacts');
+    const apiPath = req.url.split('?', 1)[0]!;
+
+    if (apiPath === '/apollo-api/rag') {
+      if (req.method === 'GET') return json(res, 200, { collections: listRagCollections(database, user.id) });
+      if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
+      try {
+        const body = JSON.parse(await readBody(req, 8 * 1024)) as { name?: unknown; description?: unknown; chunkMethod?: unknown };
+        if (typeof body.name !== 'string' || (body.description !== undefined && typeof body.description !== 'string') || (body.chunkMethod !== undefined && typeof body.chunkMethod !== 'string')) throw new Error('知识库参数无效');
+        return json(res, 201, { collection: createRagCollection(database, user.id, body.name, body.description ?? '', (body.chunkMethod || 'general') as RagChunkMethod) });
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    if (apiPath === '/apollo-api/rag/search' && req.method === 'POST') {
+      try {
+        const body = JSON.parse(await readBody(req, 8 * 1024)) as { query?: unknown; collectionId?: unknown; limit?: unknown };
+        if (typeof body.query !== 'string' || (body.collectionId !== undefined && typeof body.collectionId !== 'string')) throw new Error('检索参数无效');
+        const limit = typeof body.limit === 'number' ? body.limit : 6;
+        return json(res, 200, { hits: await searchRag(database, user.id, body.query, body.collectionId ?? '', limit, rag) });
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    const ragDocumentDelete = apiPath.match(/^\/apollo-api\/rag\/documents\/([^/]+)$/);
+    if (ragDocumentDelete) {
+      if (req.method !== 'DELETE') return jsonError(res, 405, 'Method not allowed');
+      try {
+        deleteRagDocument(database, user.id, decodeURIComponent(ragDocumentDelete[1]!));
+        return json(res, 200, { ok: true });
+      } catch (error) {
+        return jsonError(res, 404, error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    const ragDocuments = apiPath.match(/^\/apollo-api\/rag\/([^/]+)\/documents$/);
+    if (ragDocuments) {
+      const collectionId = decodeURIComponent(ragDocuments[1]!);
+      if (req.method === 'GET') {
+        try { return json(res, 200, { documents: listRagDocuments(database, user.id, collectionId) }); }
+        catch (error) { return jsonError(res, 404, error instanceof Error ? error.message : String(error)); }
+      }
+      if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
+      try {
+        const declared = Number(req.headers['content-length']);
+        if (Number.isFinite(declared) && declared > MAX_UPLOAD_REQUEST_BYTES) throw new Error('上传内容过大');
+        const bytes = await readBytes(req, MAX_UPLOAD_REQUEST_BYTES);
+        const request = new Request('http://localhost/rag-upload', {
+          method: 'POST',
+          headers: req.headers as HeadersInit,
+          body: new Uint8Array(bytes).buffer,
+        });
+        const files = (await request.formData()).getAll('files');
+        if (!files.length || files.length > 8) throw new Error('每次请选择 1–8 个文件');
+        const documents = [];
+        for (const file of files) {
+          if (typeof file === 'string') throw new Error('无效的文件');
+          documents.push(await ingestRagDocument(database, user.id, collectionId, file.name, new Uint8Array(await file.arrayBuffer()), rag));
+        }
+        return json(res, 201, { documents });
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    const ragCollection = apiPath.match(/^\/apollo-api\/rag\/([^/]+)$/);
+    if (ragCollection) {
+      if (req.method !== 'DELETE') return jsonError(res, 405, 'Method not allowed');
+      try {
+        deleteRagCollection(database, user.id, decodeURIComponent(ragCollection[1]!));
+        return json(res, 200, { ok: true });
+      } catch (error) {
+        return jsonError(res, 404, error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    if (req.url === '/apollo-api/im' && req.method === 'GET') {
+      const [telegram, feishu, wecom, dingtalk, weixin] = await Promise.all([
+        readTelegramConfig(imConfigPath(context, 'telegram')),
+        readFeishuConfig(imConfigPath(context, 'feishu')),
+        readWecomConfig(imConfigPath(context, 'wecom')),
+        readDingtalkConfig(imConfigPath(context, 'dingtalk')),
+        readWeixinConfig(imConfigPath(context, 'weixin')),
+      ]);
+      return json(res, 200, {
+        channels: {
+          telegram: telegramSettings(telegram, telegramGateway.status(user.id)),
+          feishu: feishuSettings(feishu, feishuGateway.status(user.id)),
+          wecom: wecomSettings(wecom, wecomGateway.status(user.id)),
+          dingtalk: dingtalkSettings(dingtalk, dingtalkGateway.status(user.id)),
+          weixin: weixinSettings(weixin, weixinGateway.status(user.id)),
+        },
+      });
+    }
+
+    if (req.url === '/apollo-api/im/feishu' && req.method === 'PUT') {
+      try {
+        const file = imConfigPath(context, 'feishu');
+        const current = await readFeishuConfig(file);
+        const body = JSON.parse(await readBody(req, 16 * 1024)) as Record<string, unknown>;
+        const enabled = requiredBoolean(body.enabled, 'enabled');
+        const appId = optionalCredential(body.appId, current.appId, 'App ID');
+        const appSecret = optionalCredential(body.appSecret, current.appSecret, 'App Secret');
+        const allowedUserIds = allowedImUsers(body.allowedUserIds, enabled, '飞书 Open ID');
+        if (enabled && (!appId || !appSecret)) throw new Error('启用前请填写飞书 App ID 和 App Secret');
+        const saved = { enabled, appId, appSecret, allowedUserIds } satisfies FeishuChannelConfig;
+        await writeChannelConfig(file, saved);
+        feishuGateway.activate(user.id, saved);
+        return json(res, 200, feishuSettings(saved, feishuGateway.status(user.id)));
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    if (req.url === '/apollo-api/im/wecom' && req.method === 'PUT') {
+      try {
+        const file = imConfigPath(context, 'wecom');
+        const current = await readWecomConfig(file);
+        const body = JSON.parse(await readBody(req, 16 * 1024)) as Record<string, unknown>;
+        const enabled = requiredBoolean(body.enabled, 'enabled');
+        const botId = optionalCredential(body.botId, current.botId, 'Bot ID');
+        const secret = optionalCredential(body.secret, current.secret, 'Secret');
+        const allowedUserIds = allowedImUsers(body.allowedUserIds, enabled, '企业微信用户 ID');
+        if (enabled && (!botId || !secret)) throw new Error('启用前请填写企业微信 Bot ID 和 Secret');
+        const saved = { enabled, botId, secret, allowedUserIds } satisfies WecomChannelConfig;
+        await writeChannelConfig(file, saved);
+        wecomGateway.activate(user.id, saved);
+        return json(res, 200, wecomSettings(saved, wecomGateway.status(user.id)));
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    if (req.url === '/apollo-api/im/dingtalk' && req.method === 'PUT') {
+      try {
+        const file = imConfigPath(context, 'dingtalk');
+        const current = await readDingtalkConfig(file);
+        const body = JSON.parse(await readBody(req, 16 * 1024)) as Record<string, unknown>;
+        const enabled = requiredBoolean(body.enabled, 'enabled');
+        const clientId = optionalCredential(body.clientId, current.clientId, 'Client ID');
+        const clientSecret = optionalCredential(body.clientSecret, current.clientSecret, 'Client Secret');
+        const allowedUserIds = allowedImUsers(body.allowedUserIds, enabled, '钉钉 Staff ID');
+        if (enabled && (!clientId || !clientSecret)) throw new Error('启用前请填写钉钉 Client ID 和 Client Secret');
+        const saved = { enabled, clientId, clientSecret, allowedUserIds } satisfies DingtalkChannelConfig;
+        await writeChannelConfig(file, saved);
+        dingtalkGateway.activate(user.id, saved);
+        return json(res, 200, dingtalkSettings(saved, dingtalkGateway.status(user.id)));
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    if (req.url === '/apollo-api/im/weixin' && req.method === 'PUT') {
+      try {
+        const file = imConfigPath(context, 'weixin');
+        const current = await readWeixinConfig(file);
+        const body = JSON.parse(await readBody(req, 16 * 1024)) as Record<string, unknown>;
+        const enabled = requiredBoolean(body.enabled, 'enabled');
+        const allowedUserIds = allowedImUsers(body.allowedUserIds, enabled, '微信用户 ID');
+        if (enabled && (!current.botToken || !current.accountId)) throw new Error('请先扫码连接微信');
+        const saved = { ...current, enabled, allowedUserIds };
+        await writeChannelConfig(file, saved);
+        weixinGateway.activate(user.id, saved);
+        return json(res, 200, weixinSettings(saved, weixinGateway.status(user.id)));
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    if (req.url === '/apollo-api/im/weixin/login/start' && req.method === 'POST') {
+      try {
+        const current = await readWeixinConfig(imConfigPath(context, 'weixin'));
+        return json(res, 200, await weixinGateway.startLogin(user.id, current.botToken ? [current.botToken] : []));
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    if (req.url === '/apollo-api/im/weixin/login/verify' && req.method === 'POST') {
+      try {
+        const body = JSON.parse(await readBody(req, 4 * 1024)) as { code?: unknown };
+        if (typeof body.code !== 'string') throw new Error('配对码无效');
+        weixinGateway.submitVerifyCode(user.id, body.code.trim());
+        return json(res, 200, { ok: true });
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    if (req.url === '/apollo-api/im/weixin/login/poll' && req.method === 'POST') {
+      try {
+        const result = await weixinGateway.pollLogin(user.id);
+        if (!result.credentials) return json(res, 200, result);
+        const file = imConfigPath(context, 'weixin');
+        const current = await readWeixinConfig(file);
+        const saved: WeixinChannelConfig = {
+          enabled: true,
+          botToken: result.credentials.botToken,
+          accountId: result.credentials.accountId,
+          baseUrl: result.credentials.baseUrl,
+          allowedUserIds: [...new Set([...current.allowedUserIds, result.credentials.userId])],
+          getUpdatesBuf: '',
+        };
+        await writeChannelConfig(file, saved);
+        weixinGateway.activate(user.id, saved);
+        return json(res, 200, { status: result.status, message: result.message, settings: weixinSettings(saved, weixinGateway.status(user.id)) });
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    if (req.url === '/apollo-api/im/telegram') {
+      const current = await readTelegramConfig(imConfigPath(context, 'telegram'));
+      if (req.method === 'GET') {
+        return json(res, 200, {
+          enabled: current.enabled,
+          tokenConfigured: Boolean(current.token),
+          allowedUserIds: current.allowedUserIds,
+          botUsername: current.botUsername,
+          status: telegramGateway.status(user.id),
+        });
+      }
+      if (req.method !== 'PUT') return jsonError(res, 405, 'Method not allowed');
+      try {
+        const body = JSON.parse(await readBody(req, 16 * 1024)) as { enabled?: unknown; token?: unknown; allowedUserIds?: unknown };
+        if (typeof body.enabled !== 'boolean') throw new Error('enabled 无效');
+        if (body.token !== undefined && typeof body.token !== 'string') throw new Error('token 无效');
+        if (!Array.isArray(body.allowedUserIds)) throw new Error('Telegram 用户 ID 无效');
+        const token = typeof body.token === 'string' && body.token.trim() ? body.token.trim() : current.token;
+        assertTelegramToken(token, body.enabled);
+        const allowedUserIds = [...new Set(body.allowedUserIds.map(String).map((value) => value.trim()).filter(Boolean))];
+        if (allowedUserIds.length > 20 || allowedUserIds.some((value) => !/^\d{4,20}$/.test(value))) throw new Error('Telegram 用户 ID 必须是 4–20 位数字，最多 20 个');
+        if (body.enabled && !allowedUserIds.length) throw new Error('启用前至少填写一个允许使用的 Telegram 用户 ID');
+        let botUsername = current.botUsername;
+        if (token && (body.enabled || token !== current.token)) botUsername = (await inspectTelegramBot(token)).username;
+        const saved: TelegramChannelConfig = {
+          enabled: body.enabled,
+          token,
+          allowedUserIds,
+          botUsername,
+          offset: token === current.token ? current.offset : 0,
+        };
+        await writeChannelConfig(imConfigPath(context, 'telegram'), saved);
+        telegramGateway.activate(user.id, saved);
+        return json(res, 200, {
+          enabled: saved.enabled,
+          tokenConfigured: Boolean(saved.token),
+          allowedUserIds: saved.allowedUserIds,
+          botUsername: saved.botUsername,
+          status: telegramGateway.status(user.id),
+        });
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
+    }
+    if (req.url === '/apollo-api/im/telegram/test' && req.method === 'POST') {
+      try {
+        const body = JSON.parse(await readBody(req, 16 * 1024)) as { token?: unknown };
+        if (body.token !== undefined && typeof body.token !== 'string') throw new Error('token 无效');
+        const current = await readTelegramConfig(imConfigPath(context, 'telegram'));
+        const token = typeof body.token === 'string' && body.token.trim() ? body.token.trim() : current.token;
+        assertTelegramToken(token, true);
+        return json(res, 200, await inspectTelegramBot(token));
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
+    }
 
     if (req.url === '/apollo-api/respond') return handleResponse(req, res, user.id, interactions);
     if (req.url.startsWith('/apollo-api/browser-view')) return handleManagedBrowserView(req, res, user.id);
@@ -711,6 +1094,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       sink,
       permissionMode: 'ask',
       interactionIds: new Set(),
+      interactive: true,
     };
     runs.set(runKey, run);
 
@@ -831,6 +1215,11 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       if (closing) return;
       closing = true;
       clearInterval(idleContextSweep);
+      telegramGateway.close();
+      feishuGateway.close();
+      wecomGateway.close();
+      dingtalkGateway.close();
+      weixinGateway.close();
       for (const run of runs.values()) run.runtime?.cancelCurrentTurn();
       for (const id of [...interactions.keys()]) settleInteraction(id);
       await Promise.all([...userContexts.values()].map(closeUserEngines));
@@ -843,6 +1232,193 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
 
 function positiveInteger(value: number, fallback: number): number {
   return Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+const EMPTY_TELEGRAM_CONFIG: TelegramChannelConfig = {
+  enabled: false,
+  token: '',
+  allowedUserIds: [],
+  botUsername: '',
+  offset: 0,
+};
+
+const EMPTY_FEISHU_CONFIG: FeishuChannelConfig = { enabled: false, appId: '', appSecret: '', allowedUserIds: [] };
+const EMPTY_WECOM_CONFIG: WecomChannelConfig = { enabled: false, botId: '', secret: '', allowedUserIds: [] };
+const EMPTY_DINGTALK_CONFIG: DingtalkChannelConfig = { enabled: false, clientId: '', clientSecret: '', allowedUserIds: [] };
+const EMPTY_WEIXIN_CONFIG: WeixinChannelConfig = {
+  enabled: false,
+  botToken: '',
+  accountId: '',
+  baseUrl: 'https://ilinkai.weixin.qq.com',
+  allowedUserIds: [],
+  getUpdatesBuf: '',
+};
+
+function imConfigPath(context: UserRuntimeContext, platform: 'telegram' | 'feishu' | 'wecom' | 'dingtalk' | 'weixin'): string {
+  return path.join(context.imConfigRoot, `${context.userId}.${platform}.json`);
+}
+
+async function readTelegramConfig(file: string): Promise<TelegramChannelConfig> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(file, 'utf8')) as Partial<TelegramChannelConfig>;
+    return {
+      enabled: parsed.enabled === true,
+      token: typeof parsed.token === 'string' ? parsed.token : '',
+      allowedUserIds: Array.isArray(parsed.allowedUserIds) ? parsed.allowedUserIds.filter((value): value is string => typeof value === 'string') : [],
+      botUsername: typeof parsed.botUsername === 'string' ? parsed.botUsername : '',
+      offset: Number.isSafeInteger(parsed.offset) && Number(parsed.offset) >= 0 ? Number(parsed.offset) : 0,
+    };
+  } catch {
+    return { ...EMPTY_TELEGRAM_CONFIG };
+  }
+}
+
+async function readFeishuConfig(file: string): Promise<FeishuChannelConfig> {
+  const parsed = await readChannelFile<Partial<FeishuChannelConfig>>(file);
+  return parsed ? {
+    enabled: parsed.enabled === true,
+    appId: stringValue(parsed.appId),
+    appSecret: stringValue(parsed.appSecret),
+    allowedUserIds: stringList(parsed.allowedUserIds),
+  } : { ...EMPTY_FEISHU_CONFIG };
+}
+
+async function readWecomConfig(file: string): Promise<WecomChannelConfig> {
+  const parsed = await readChannelFile<Partial<WecomChannelConfig>>(file);
+  return parsed ? {
+    enabled: parsed.enabled === true,
+    botId: stringValue(parsed.botId),
+    secret: stringValue(parsed.secret),
+    allowedUserIds: stringList(parsed.allowedUserIds),
+  } : { ...EMPTY_WECOM_CONFIG };
+}
+
+async function readDingtalkConfig(file: string): Promise<DingtalkChannelConfig> {
+  const parsed = await readChannelFile<Partial<DingtalkChannelConfig>>(file);
+  return parsed ? {
+    enabled: parsed.enabled === true,
+    clientId: stringValue(parsed.clientId),
+    clientSecret: stringValue(parsed.clientSecret),
+    allowedUserIds: stringList(parsed.allowedUserIds),
+  } : { ...EMPTY_DINGTALK_CONFIG };
+}
+
+async function readWeixinConfig(file: string): Promise<WeixinChannelConfig> {
+  const parsed = await readChannelFile<Partial<WeixinChannelConfig>>(file);
+  return parsed ? {
+    enabled: parsed.enabled === true,
+    botToken: stringValue(parsed.botToken),
+    accountId: stringValue(parsed.accountId),
+    baseUrl: stringValue(parsed.baseUrl) || EMPTY_WEIXIN_CONFIG.baseUrl,
+    allowedUserIds: stringList(parsed.allowedUserIds),
+    getUpdatesBuf: stringValue(parsed.getUpdatesBuf),
+  } : { ...EMPTY_WEIXIN_CONFIG };
+}
+
+async function readChannelFile<T>(file: string): Promise<T | null> {
+  try {
+    const parsed = JSON.parse(await fs.readFile(file, 'utf8')) as unknown;
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as T : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeChannelConfig(file: string, config: object): Promise<void> {
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(temporary, `${JSON.stringify(config, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
+  await fs.chmod(temporary, 0o600);
+  await fs.rename(temporary, file);
+}
+
+function telegramSettings(config: TelegramChannelConfig, status: ImGatewayStatus) {
+  return {
+    enabled: config.enabled,
+    tokenConfigured: Boolean(config.token),
+    allowedUserIds: config.allowedUserIds,
+    botUsername: config.botUsername,
+    status,
+  };
+}
+
+function feishuSettings(config: FeishuChannelConfig, status: ImGatewayStatus) {
+  return {
+    enabled: config.enabled,
+    appId: config.appId,
+    secretConfigured: Boolean(config.appSecret),
+    allowedUserIds: config.allowedUserIds,
+    status,
+  };
+}
+
+function wecomSettings(config: WecomChannelConfig, status: ImGatewayStatus) {
+  return {
+    enabled: config.enabled,
+    botId: config.botId,
+    secretConfigured: Boolean(config.secret),
+    allowedUserIds: config.allowedUserIds,
+    status,
+  };
+}
+
+function dingtalkSettings(config: DingtalkChannelConfig, status: ImGatewayStatus) {
+  return {
+    enabled: config.enabled,
+    clientId: config.clientId,
+    secretConfigured: Boolean(config.clientSecret),
+    allowedUserIds: config.allowedUserIds,
+    status,
+  };
+}
+
+function weixinSettings(config: WeixinChannelConfig, status: ImGatewayStatus) {
+  return {
+    enabled: config.enabled,
+    connectedAccount: Boolean(config.botToken && config.accountId),
+    accountId: config.accountId,
+    allowedUserIds: config.allowedUserIds,
+    status,
+  };
+}
+
+function requiredBoolean(value: unknown, label: string): boolean {
+  if (typeof value !== 'boolean') throw new Error(`${label} 无效`);
+  return value;
+}
+
+function optionalCredential(value: unknown, current: string, label: string): string {
+  if (value === undefined) return current;
+  if (typeof value !== 'string') throw new Error(`${label} 无效`);
+  const result = value.trim();
+  if (result.length > 512) throw new Error(`${label} 过长`);
+  return result || current;
+}
+
+function allowedImUsers(value: unknown, enabled: boolean, label: string): string[] {
+  if (!Array.isArray(value)) throw new Error(`${label} 无效`);
+  const users = [...new Set(value.map(String).map((item) => item.trim()).filter(Boolean))];
+  if (users.length > 50 || users.some((item) => item.length > 128 || !/^[\w.:@-]+$/.test(item))) {
+    throw new Error(`${label} 格式不正确，最多填写 50 个`);
+  }
+  if (enabled && !users.length) throw new Error(`启用前至少填写一个允许使用的${label}`);
+  return users;
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+function assertTelegramToken(token: string, required: boolean): void {
+  if (!token) {
+    if (required) throw new Error('请填写 BotFather 提供的 Telegram Bot Token');
+    return;
+  }
+  if (!/^\d{5,20}:[A-Za-z0-9_-]{20,100}$/.test(token)) throw new Error('Telegram Bot Token 格式不正确');
 }
 
 function formatBytes(value: number): string {
@@ -1009,6 +1585,12 @@ async function ensureUserWorkspace(userRoot: string, sharedEntrySkillsPath: stri
     const [current, template] = await Promise.all([readConfig(assistantConfigPath), readConfig(assistantConfigTemplatePath)]);
     await writeConfig(assistantConfigPath, { ...current, systemPrompt: template.systemPrompt });
     await fs.writeFile(migrationMarker, '2\n', 'utf8');
+  }
+  const ragPromptMarker = path.join(userRoot, '.apollo', 'assistant-rag-v3');
+  try { await fs.access(ragPromptMarker); } catch {
+    const [current, template] = await Promise.all([readConfig(assistantConfigPath), readConfig(assistantConfigTemplatePath)]);
+    await writeConfig(assistantConfigPath, { ...current, systemPrompt: template.systemPrompt });
+    await fs.writeFile(ragPromptMarker, '3\n', 'utf8');
   }
 }
 
@@ -1216,6 +1798,7 @@ function openConversationDatabase(databasePath: string): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS agent_runs_user_started ON agent_runs(user_id, started_at DESC);
   `);
+  ensureRagSchema(database);
   database.prepare(`
     UPDATE agent_runs
     SET status = 'interrupted', finished_at = ?, error = '服务重启导致任务中断，请重新提交'

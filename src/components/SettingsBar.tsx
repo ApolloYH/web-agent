@@ -1,12 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   deleteApolloMemory,
   getApolloConfig,
+  getImSettings,
   listApolloMemories,
+  pollWeixinLogin,
   saveApolloConfig,
+  saveImChannel,
   saveApolloMemory,
+  saveTelegramSettings,
+  startWeixinLogin,
+  verifyWeixinLogin,
 } from '@/lib/apolloAgent';
-import type { ApolloMemory, ApolloPermissionMode } from '@/lib/apolloAgent';
+import type { ApolloMemory, ApolloPermissionMode, ImChannelSettings, WeixinLoginState } from '@/lib/apolloAgent';
 import { useDismissDetails } from '@/lib/useDismissDetails';
 import type { BrowserConnectionStatus } from '@/lib/browserExtension';
 
@@ -42,7 +48,7 @@ export default function SettingsBar({
           </svg>
         </summary>
           <div className="absolute right-0 z-30 mt-2 max-h-[calc(100dvh-5rem)] w-[min(24rem,calc(100vw-1.5rem))] overflow-y-auto rounded-2xl border border-black/[0.08] bg-white p-4 shadow-[0_18px_48px_rgba(0,0,0,0.12)]">
-            <h2 className="mb-3 text-[13px] font-semibold text-gray-900">设置</h2>
+            <h2 className="mb-3 text-[13px] font-semibold text-gray-900">用户中心</h2>
             <BrowserConnection status={browserStatus} onRefresh={onRefreshBrowser} />
             <ApolloPanel permissionMode={apolloPermissionMode} canManageConfig={canManageConfig} />
           </div>
@@ -80,19 +86,246 @@ function WorkspaceLocation({ label, onToggle }: { label: string; onToggle: () =>
 }
 
 function ApolloPanel({ permissionMode, canManageConfig }: { permissionMode: ApolloPermissionMode; canManageConfig: boolean }) {
-  const [tab, setTab] = useState<'config' | 'memory'>(canManageConfig ? 'config' : 'memory');
+  const [tab, setTab] = useState<'config' | 'memory' | 'im'>('im');
 
   return (
     <div>
       <div className="mb-3 flex gap-1 rounded-xl bg-gray-100 p-1 text-[11px]">
-        {([...(canManageConfig ? [['config', '配置'] as const] : []), ['memory', '记忆'] as const]).map(([value, label]) => (
+        {([['im', 'IM 接入'] as const, ['memory', '记忆'] as const, ...(canManageConfig ? [['config', '高级'] as const] : [])]).map(([value, label]) => (
           <button key={value} type="button" onClick={() => setTab(value)} className={`flex-1 rounded-lg px-3 py-1.5 transition-colors ${tab === value ? 'bg-white font-medium text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-900'}`}>
             {label}
           </button>
         ))}
       </div>
-      {tab === 'config' && canManageConfig ? <ApolloConfigPanel permissionMode={permissionMode} /> : <MemoryPanel />}
+      {tab === 'im' ? <ImChannelsPanel /> : tab === 'config' && canManageConfig ? <ApolloConfigPanel permissionMode={permissionMode} /> : <MemoryPanel />}
     </div>
+  );
+}
+
+type ImPlatform = keyof ImChannelSettings;
+type ImDraft = { enabled: boolean; identifier: string; secret: string; allowedUsers: string };
+
+const imLabels: Record<ImPlatform, string> = {
+  feishu: '飞书',
+  wecom: '企业微信',
+  dingtalk: '钉钉',
+  weixin: '微信',
+  telegram: 'Telegram',
+};
+
+function ImChannelsPanel() {
+  const [selected, setSelected] = useState<ImPlatform>('feishu');
+  const [channels, setChannels] = useState<ImChannelSettings>();
+  const [drafts, setDrafts] = useState<Record<ImPlatform, ImDraft>>();
+  const [state, setState] = useState<'loading' | 'idle' | 'saving' | 'login'>('loading');
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+  const [login, setLogin] = useState<WeixinLoginState>();
+  const [verifyCode, setVerifyCode] = useState('');
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    getImSettings()
+      .then((settings) => {
+        setChannels(settings);
+        setDrafts({
+          telegram: { enabled: settings.telegram.enabled, identifier: '', secret: '', allowedUsers: settings.telegram.allowedUserIds.join(', ') },
+          feishu: { enabled: settings.feishu.enabled, identifier: settings.feishu.appId, secret: '', allowedUsers: settings.feishu.allowedUserIds.join(', ') },
+          wecom: { enabled: settings.wecom.enabled, identifier: settings.wecom.botId, secret: '', allowedUsers: settings.wecom.allowedUserIds.join(', ') },
+          dingtalk: { enabled: settings.dingtalk.enabled, identifier: settings.dingtalk.clientId, secret: '', allowedUsers: settings.dingtalk.allowedUserIds.join(', ') },
+          weixin: { enabled: settings.weixin.enabled, identifier: settings.weixin.accountId, secret: '', allowedUsers: settings.weixin.allowedUserIds.join(', ') },
+        });
+        setState('idle');
+      })
+      .catch((reason) => {
+        setError(reason instanceof Error ? reason.message : String(reason));
+        setState('idle');
+      });
+    return () => { mounted.current = false; };
+  }, []);
+
+  const updateDraft = (patch: Partial<ImDraft>) => {
+    setDrafts((current) => current ? { ...current, [selected]: { ...current[selected], ...patch } } : current);
+  };
+
+  const save = async () => {
+    if (!drafts || !channels) return;
+    const platform = selected;
+    const draft = drafts[platform];
+    const allowedUserIds = draft.allowedUsers.split(/[,，\s]+/).map((value) => value.trim()).filter(Boolean);
+    setState('saving');
+    setError('');
+    setNotice('');
+    try {
+      let saved: ImChannelSettings[ImPlatform];
+      if (platform === 'telegram') {
+        saved = await saveTelegramSettings({ enabled: draft.enabled, ...(draft.secret.trim() ? { token: draft.secret.trim() } : {}), allowedUserIds });
+      } else if (platform === 'feishu') {
+        saved = await saveImChannel('feishu', { enabled: draft.enabled, appId: draft.identifier, ...(draft.secret.trim() ? { appSecret: draft.secret.trim() } : {}), allowedUserIds });
+      } else if (platform === 'wecom') {
+        saved = await saveImChannel('wecom', { enabled: draft.enabled, botId: draft.identifier, ...(draft.secret.trim() ? { secret: draft.secret.trim() } : {}), allowedUserIds });
+      } else if (platform === 'dingtalk') {
+        saved = await saveImChannel('dingtalk', { enabled: draft.enabled, clientId: draft.identifier, ...(draft.secret.trim() ? { clientSecret: draft.secret.trim() } : {}), allowedUserIds });
+      } else {
+        saved = await saveImChannel('weixin', { enabled: draft.enabled, allowedUserIds });
+      }
+      setChannels((current) => current ? { ...current, [platform]: saved } as ImChannelSettings : current);
+      setDrafts((current) => current ? { ...current, [platform]: { ...current[platform], secret: '' } } : current);
+      setNotice(draft.enabled ? `已保存，Apollo 正在${imLabels[platform]}中等待消息。` : `已停用${imLabels[platform]}接入。`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setState('idle');
+    }
+  };
+
+  const startLogin = async () => {
+    setState('login');
+    setError('');
+    setNotice('');
+    try {
+      const started = await startWeixinLogin();
+      setLogin(started);
+      while (mounted.current) {
+        const next = await pollWeixinLogin();
+        if (!mounted.current) return;
+        setLogin(next);
+        if (next.settings) {
+          setChannels((current) => current ? { ...current, weixin: next.settings! } : current);
+          setDrafts((current) => current ? { ...current, weixin: { ...current.weixin, enabled: true, identifier: next.settings!.accountId, allowedUsers: next.settings!.allowedUserIds.join(', ') } } : current);
+          setNotice('微信已连接，扫码账号已自动加入白名单。');
+          break;
+        }
+        if (['need_verifycode', 'verify_code_blocked', 'expired', 'binded_redirect'].includes(next.status)) break;
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      if (mounted.current) setState('idle');
+    }
+  };
+
+  const submitVerify = async () => {
+    setError('');
+    try {
+      await verifyWeixinLogin(verifyCode.trim());
+      setVerifyCode('');
+      await startLoginPolling();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  };
+
+  const startLoginPolling = async () => {
+    setState('login');
+    try {
+      while (mounted.current) {
+        const next = await pollWeixinLogin();
+        if (!mounted.current) return;
+        setLogin(next);
+        if (next.settings) {
+          setChannels((current) => current ? { ...current, weixin: next.settings! } : current);
+          setDrafts((current) => current ? { ...current, weixin: { ...current.weixin, enabled: true, identifier: next.settings!.accountId, allowedUsers: next.settings!.allowedUserIds.join(', ') } } : current);
+          setNotice('微信已连接，扫码账号已自动加入白名单。');
+          break;
+        }
+        if (['need_verifycode', 'verify_code_blocked', 'expired', 'binded_redirect'].includes(next.status)) break;
+      }
+    } finally {
+      if (mounted.current) setState('idle');
+    }
+  };
+
+  if (state === 'loading' || !channels || !drafts) return <p className="py-8 text-center text-[11px] text-gray-400">正在读取 IM 配置…</p>;
+  const draft = drafts[selected];
+  const channel = channels[selected];
+  const status = channel.status.state === 'connected'
+    ? { dot: 'bg-emerald-500', text: '已连接' }
+    : channel.status.state === 'connecting'
+      ? { dot: 'bg-amber-400', text: '正在连接' }
+      : channel.status.state === 'error'
+        ? { dot: 'bg-red-500', text: '连接异常' }
+        : { dot: 'bg-gray-300', text: '未连接' };
+
+  const identifiers = {
+    feishu: { label: 'App ID', placeholder: 'cli_xxx' },
+    wecom: { label: 'Bot ID', placeholder: '企业微信智能机器人 ID' },
+    dingtalk: { label: 'Client ID', placeholder: '钉钉应用 AppKey' },
+  } as const;
+  const secrets = {
+    telegram: { label: 'Bot Token', configured: channels.telegram.tokenConfigured, placeholder: '从 @BotFather 获取' },
+    feishu: { label: 'App Secret', configured: channels.feishu.secretConfigured, placeholder: '飞书应用凭据' },
+    wecom: { label: 'Secret', configured: channels.wecom.secretConfigured, placeholder: '企业微信机器人 Secret' },
+    dingtalk: { label: 'Client Secret', configured: channels.dingtalk.secretConfigured, placeholder: '钉钉应用 AppSecret' },
+  } as const;
+
+  return (
+    <div className="space-y-3 text-[11px]">
+      <div className="grid grid-cols-3 gap-1 rounded-xl bg-gray-100 p-1">
+        {(Object.keys(imLabels) as ImPlatform[]).map((platform) => (
+          <button key={platform} type="button" onClick={() => { setSelected(platform); setError(''); setNotice(''); }} className={`rounded-lg px-2 py-1.5 transition-all ${selected === platform ? 'bg-white font-medium text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'}`}>
+            {imLabels[platform]}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex items-center justify-between rounded-xl border border-black/[0.07] px-3 py-2.5">
+        <div>
+          <div className="flex items-center gap-1.5 font-medium text-gray-800"><span className={`h-1.5 w-1.5 rounded-full ${status.dot}`} />{imLabels[selected]}</div>
+          <p className="mt-0.5 text-[10px] text-gray-400">{selected === 'telegram' && channels.telegram.botUsername ? `@${channels.telegram.botUsername} · ${status.text}` : selected === 'weixin' && channels.weixin.accountId ? `${channels.weixin.accountId} · ${status.text}` : status.text}</p>
+        </div>
+        <button type="button" role="switch" aria-checked={draft.enabled} onClick={() => updateDraft({ enabled: !draft.enabled })} className={`relative h-5 w-9 rounded-full transition-colors ${draft.enabled ? 'bg-gray-900' : 'bg-gray-200'}`}>
+          <span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${draft.enabled ? 'translate-x-[18px]' : 'translate-x-0.5'}`} />
+        </button>
+      </div>
+
+      {selected === 'weixin' ? (
+        <div className="rounded-xl bg-gray-50 p-3 text-center">
+          {login?.qrDataUrl ? <img src={login.qrDataUrl} alt="微信连接二维码" className="mx-auto h-40 w-40 rounded-xl bg-white p-2 shadow-sm" /> : null}
+          <p className="mt-2 font-medium text-gray-700">{login?.message ?? (channels.weixin.connectedAccount ? '微信已完成扫码连接' : '使用手机微信扫码连接 Apollo')}</p>
+          {login?.status === 'need_verifycode' ? (
+            <div className="mx-auto mt-2 flex max-w-56 gap-2">
+              <input inputMode="numeric" value={verifyCode} onChange={(event) => setVerifyCode(event.target.value)} placeholder="输入配对码" className="min-w-0 flex-1 rounded-lg border border-gray-300 px-2 py-1.5 outline-none focus:border-gray-500" />
+              <button type="button" onClick={submitVerify} className="rounded-lg bg-gray-900 px-3 text-white">确认</button>
+            </div>
+          ) : (
+            <button type="button" onClick={startLogin} disabled={state !== 'idle'} className="mt-2 rounded-lg border border-gray-300 bg-white px-3 py-1.5 font-medium text-gray-700 hover:border-gray-400 disabled:text-gray-300">{state === 'login' ? '等待扫码…' : channels.weixin.connectedAccount ? '重新扫码' : '获取二维码'}</button>
+          )}
+        </div>
+      ) : (
+        <>
+          {selected !== 'telegram' ? <Field label={identifiers[selected].label} value={draft.identifier} onChange={(identifier) => updateDraft({ identifier })} placeholder={identifiers[selected].placeholder} /> : null}
+          <Field label={secrets[selected].label} type="password" value={draft.secret} onChange={(secret) => updateDraft({ secret })} placeholder={secrets[selected].configured ? '已安全保存，留空表示不修改' : secrets[selected].placeholder} />
+        </>
+      )}
+
+      <label className="block font-medium text-gray-600" htmlFor="im-allowed-users">允许使用的用户 ID</label>
+      <input
+        id="im-allowed-users"
+        value={draft.allowedUsers}
+        onChange={(event) => updateDraft({ allowedUsers: event.target.value })}
+        placeholder={selected === 'feishu' ? '飞书 Open ID，多个用逗号分隔' : selected === 'dingtalk' ? '钉钉 Staff ID，多个用逗号分隔' : '用户 ID，多个用逗号分隔'}
+        className="w-full rounded-lg border border-gray-300 px-2.5 py-2 outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200"
+      />
+      <p className="text-[10px] leading-4 text-gray-400">默认拒绝白名单之外的消息。企业平台使用官方长连接，无需配置公网回调；微信扫码账号会自动加入白名单。</p>
+
+      <div className="flex justify-end gap-2">
+        <button type="button" onClick={save} disabled={state !== 'idle'} className="rounded-lg bg-gray-900 px-3 py-1.5 font-medium text-white hover:bg-gray-700 disabled:bg-gray-300">{state === 'saving' ? '保存中…' : '保存'}</button>
+      </div>
+      {notice && <p className="text-emerald-600">{notice}</p>}
+      {(error || channel.status.error) && <p className="text-red-500">{error || channel.status.error}</p>}
+    </div>
+  );
+}
+
+function Field({ label, value, onChange, placeholder, type = 'text' }: { label: string; value: string; onChange: (value: string) => void; placeholder: string; type?: 'text' | 'password' }) {
+  const id = `im-${label.toLowerCase().replace(/\s+/g, '-')}`;
+  return (
+    <label className="block space-y-1.5 font-medium text-gray-600" htmlFor={id}>
+      <span>{label}</span>
+      <input id={id} type={type} autoComplete="off" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="w-full rounded-lg border border-gray-300 px-2.5 py-2 font-normal outline-none focus:border-gray-500 focus:ring-2 focus:ring-gray-200" />
+    </label>
   );
 }
 

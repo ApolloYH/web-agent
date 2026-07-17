@@ -15,6 +15,7 @@ export default function AppSidebar({
   onOpenChat,
   onOpenLibrary,
   onOpenSites,
+  onOpenRag,
   onRenameChat,
   onMoveChat,
   onDeleteChat,
@@ -29,10 +30,11 @@ export default function AppSidebar({
   conversations: ConversationSummary[];
   runningConversationIds: Set<string>;
   activeConversationId: string;
-  activeView: 'assistant' | 'chat' | 'library' | 'sites';
+  activeView: 'assistant' | 'chat' | 'library' | 'sites' | 'rag';
   onOpenChat: (id: string) => void;
   onOpenLibrary: () => void;
   onOpenSites: () => void;
+  onOpenRag: () => void;
   onRenameChat: (id: string, title: string) => void;
   onMoveChat: (id: string) => void;
   onDeleteChat: (id: string) => void;
@@ -88,6 +90,16 @@ export default function AppSidebar({
         >
           <LibraryIcon />
           <span className={open ? '' : 'lg:hidden'}>文件库</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onOpenRag}
+          className={`sidebar-item mt-0.5 ${activeView === 'rag' ? 'bg-[#ececec]' : ''}`}
+          title="RAG"
+        >
+          <RagIcon />
+          <span className={open ? '' : 'lg:hidden'}>RAG</span>
         </button>
 
         <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
@@ -208,6 +220,15 @@ function LibraryIcon() {
       <rect x="3" y="4" width="5" height="16" rx="1.5" stroke="currentColor" strokeWidth="1.7" />
       <rect x="9.5" y="4" width="5" height="16" rx="1.5" stroke="currentColor" strokeWidth="1.7" />
       <path d="m16 5.5 3.4-1 3.1 14.2-3.4.8L16 5.5Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function RagIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true">
+      <ellipse cx="12" cy="5.5" rx="7.5" ry="3" stroke="currentColor" strokeWidth="1.7" />
+      <path d="M4.5 5.5v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6m-15 6v6c0 1.7 3.4 3 7.5 3s7.5-1.3 7.5-3v-6" stroke="currentColor" strokeWidth="1.7" />
     </svg>
   );
 }

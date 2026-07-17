@@ -77,6 +77,102 @@ export interface ApolloMemory {
   updatedAt: string;
 }
 
+export interface TelegramChannelSettings {
+  enabled: boolean;
+  tokenConfigured: boolean;
+  allowedUserIds: string[];
+  botUsername: string;
+  status: { state: 'disconnected' | 'connecting' | 'connected' | 'error'; error?: string };
+}
+
+export type ImConnectionStatus = TelegramChannelSettings['status'];
+
+export interface ImChannelSettings {
+  telegram: TelegramChannelSettings;
+  feishu: { enabled: boolean; appId: string; secretConfigured: boolean; allowedUserIds: string[]; status: ImConnectionStatus };
+  wecom: { enabled: boolean; botId: string; secretConfigured: boolean; allowedUserIds: string[]; status: ImConnectionStatus };
+  dingtalk: { enabled: boolean; clientId: string; secretConfigured: boolean; allowedUserIds: string[]; status: ImConnectionStatus };
+  weixin: { enabled: boolean; connectedAccount: boolean; accountId: string; allowedUserIds: string[]; status: ImConnectionStatus };
+}
+
+export async function getImSettings(): Promise<ImChannelSettings> {
+  const response = await fetch('/apollo-api/im');
+  if (!response.ok) throw new Error(`读取 IM 配置失败 ${response.status}`);
+  return (await response.json() as { channels: ImChannelSettings }).channels;
+}
+
+export async function saveImChannel<K extends 'feishu' | 'wecom' | 'dingtalk' | 'weixin'>(
+  platform: K,
+  input: Record<string, unknown>,
+): Promise<ImChannelSettings[K]> {
+  const response = await fetch(`/apollo-api/im/${platform}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error ?? `保存 IM 配置失败 ${response.status}`);
+  }
+  return response.json();
+}
+
+export type WeixinLoginState = {
+  status: string;
+  message: string;
+  qrDataUrl?: string;
+  settings?: ImChannelSettings['weixin'];
+};
+
+async function weixinLoginRequest(path: 'start' | 'poll' | 'verify', body?: object): Promise<WeixinLoginState> {
+  const response = await fetch(`/apollo-api/im/weixin/login/${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body ?? {}),
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.error ?? `微信连接失败 ${response.status}`);
+  }
+  return response.json();
+}
+
+export const startWeixinLogin = () => weixinLoginRequest('start');
+export const pollWeixinLogin = () => weixinLoginRequest('poll');
+export const verifyWeixinLogin = (code: string) => weixinLoginRequest('verify', { code });
+
+export async function getTelegramSettings(): Promise<TelegramChannelSettings> {
+  const response = await fetch('/apollo-api/im/telegram');
+  if (!response.ok) throw new Error(`读取 Telegram 配置失败 ${response.status}`);
+  return response.json();
+}
+
+export async function saveTelegramSettings(input: { enabled: boolean; token?: string; allowedUserIds: string[] }): Promise<TelegramChannelSettings> {
+  const response = await fetch('/apollo-api/im/telegram', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error ?? `保存 Telegram 配置失败 ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function testTelegramConnection(token?: string): Promise<{ username: string; name: string }> {
+  const response = await fetch('/apollo-api/im/telegram/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error ?? `Telegram 连接失败 ${response.status}`);
+  }
+  return response.json();
+}
+
 export async function streamApollo(
   message: string,
   onEvent: (event: ApolloEvent) => void,
