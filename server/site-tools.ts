@@ -49,7 +49,7 @@ export function createSiteTools(config: { publicRoot: string; baseUrl: string; o
           name: requiredText(input.name, 'name'),
           slug: typeof input.slug === 'string' ? input.slug : undefined,
         });
-        return { content: `站点已发布：${site.url}\n后续修改源目录后可在“站点”页面一键重新部署。` };
+        return { content: `站点已发布：${site.url}\n后续继续描述修改，Apollo 会更新源码并再次发布。` };
       } catch (error) {
         return { content: error instanceof Error ? error.message : String(error), isError: true };
       }

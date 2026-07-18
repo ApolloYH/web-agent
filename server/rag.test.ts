@@ -12,10 +12,13 @@ test('RAG templates index documents and keep tenants isolated', async () => {
   assert.equal(collection.pipelineTemplate, 'contextual');
   const graph = { nodes: [
     { id: 'source', type: 'source', label: '数据源', description: '', position: { x: 0, y: 0 } },
-    { id: 'contextual', type: 'contextual', label: '上下文增强', description: '', position: { x: 300, y: 0 } },
-    { id: 'index', type: 'index', label: '知识索引', description: '', position: { x: 600, y: 0 } },
-  ], edges: [{ id: 'source-contextual', source: 'source', target: 'contextual' }, { id: 'contextual-index', source: 'contextual', target: 'index' }] };
-  assert.equal(updateRagCollection(database, 'user-a', collection.id, { pipelineGraph: graph }).pipelineGraph?.nodes.length, 3);
+    { id: 'extract', type: 'extract', label: '内容提取', description: '', position: { x: 300, y: 0 } },
+    { id: 'chunk', type: 'chunk', label: '通用切段', description: '', position: { x: 600, y: 0 } },
+    { id: 'contextual', type: 'contextual', label: '上下文增强', description: '', position: { x: 900, y: 0 } },
+    { id: 'index', type: 'index', label: '知识索引', description: '', position: { x: 1200, y: 0 } },
+  ], edges: [{ id: 'source-extract', source: 'source', target: 'extract' }, { id: 'extract-chunk', source: 'extract', target: 'chunk' }, { id: 'chunk-contextual', source: 'chunk', target: 'contextual' }, { id: 'contextual-index', source: 'contextual', target: 'index' }] };
+  assert.equal(updateRagCollection(database, 'user-a', collection.id, { pipelineGraph: graph }).pipelineGraph?.nodes.length, 5);
+  assert.throws(() => updateRagCollection(database, 'user-a', collection.id, { pipelineGraph: { nodes: [graph.nodes[0]!, graph.nodes[4]!], edges: [{ id: 'shortcut', source: 'source', target: 'index' }] } }), /内容提取|切段/);
   assert.throws(() => updateRagCollection(database, 'user-a', collection.id, { pipelineTemplate: 'parent_child' }), /创建知识库时/);
   assert.throws(() => updateRagCollection(database, 'user-a', collection.id, { chunkMethod: 'qa' }), /创建知识库时/);
 
@@ -33,7 +36,19 @@ test('RAG templates index documents and keep tenants isolated', async () => {
   assert.deepEqual(chunkRagByMethod('短文全文', 'one'), ['短文全文']);
 
   const custom = createRagCollection(database, 'user-a', '自定义流水线', '', 'general', 'custom');
-  assert.deepEqual(custom.pipelineGraph?.nodes.map((node) => node.type), ['source', 'index']);
+  assert.deepEqual(custom.pipelineGraph?.nodes.map((node) => node.type), ['source', 'extract', 'chunk', 'index']);
+  database.prepare('UPDATE rag_collections SET pipeline_graph = ? WHERE id = ?').run(JSON.stringify({ nodes: [custom.pipelineGraph!.nodes[0], custom.pipelineGraph!.nodes[3]], edges: [{ id: 'legacy', source: 'source', target: 'index' }] }), custom.id);
+  ensureRagSchema(database);
+  assert.deepEqual(JSON.parse((database.prepare('SELECT pipeline_graph AS graph FROM rag_collections WHERE id = ?').get(custom.id) as { graph: string }).graph).nodes.map((item: { type: string }) => item.type), ['source', 'extract', 'chunk', 'index']);
+
+  const generatedQa = createRagCollection(database, 'user-a', '生成问答', '', 'qa', 'llm_qa');
+  await assert.rejects(ingestRagDocument(database, 'user-a', generatedQa.id, 'faq.txt', new TextEncoder().encode('Apollo 是一个助理。')), /RAG_CHAT_API_KEY/);
+
+  const parentChild = createRagCollection(database, 'user-a', '父子召回', '', 'manual', 'parent_child');
+  await ingestRagDocument(database, 'user-a', parentChild.id, 'manual.txt', new TextEncoder().encode(`# 第一章\n开头说明\n${'甲'.repeat(1_000)}关键术语\n结尾说明`));
+  const parentHit = await searchRag(database, 'user-a', '关键术语', parentChild.id);
+  assert.match(parentHit[0]!.content, /开头说明/);
+  assert.match(parentHit[0]!.content, /结尾说明/);
 
   database.close();
 });

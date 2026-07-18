@@ -18,7 +18,7 @@ export type RagCollection = {
 };
 
 export type RagChunkMethod = 'general' | 'qa' | 'manual' | 'table' | 'paper' | 'book' | 'laws' | 'presentation' | 'one';
-export type RagPipelineTemplate = 'custom' | 'general' | 'parent_child' | 'qa' | 'contextual' | 'markdown' | 'llm_qa' | 'complex_pdf';
+export type RagPipelineTemplate = 'custom' | 'general' | 'parent_child' | 'qa' | 'contextual' | 'llm_qa' | 'complex_pdf';
 export type RagPipelineGraph = {
   nodes: Array<{ id: string; type: string; label: string; description: string; position: { x: number; y: number } }>;
   edges: Array<{ id: string; source: string; target: string }>;
@@ -54,6 +54,8 @@ export type RagHit = {
   content: string;
 };
 
+type RagChunkDraft = { content: string; parentContent?: string };
+
 const MAX_COLLECTIONS = 50;
 const MAX_DOCUMENTS_PER_COLLECTION = 500;
 const MAX_DOCUMENT_BYTES = 20 * 1024 * 1024;
@@ -61,7 +63,8 @@ const MAX_EXTRACTED_CHARS = 2_000_000;
 const SUPPORTED_EXTENSIONS = new Set(['.txt', '.md', '.markdown', '.csv', '.json', '.html', '.htm', '.doc', '.docx', '.pdf', '.ppt', '.pptx', '.xls', '.xlsx', '.png', '.jpg', '.jpeg', '.webp']);
 const LOCAL_EXTENSIONS = new Set(['.txt', '.md', '.markdown', '.csv', '.json', '.html', '.htm', '.docx', '.pdf']);
 const CHUNK_METHODS = new Set<RagChunkMethod>(['general', 'qa', 'manual', 'table', 'paper', 'book', 'laws', 'presentation', 'one']);
-const PIPELINE_TEMPLATES = new Set<RagPipelineTemplate>(['custom', 'general', 'parent_child', 'qa', 'contextual', 'markdown', 'llm_qa', 'complex_pdf']);
+const PIPELINE_TEMPLATES = new Set<RagPipelineTemplate>(['custom', 'general', 'parent_child', 'qa', 'contextual', 'llm_qa', 'complex_pdf']);
+const PIPELINE_NODE_TYPES = new Set(['source', 'extract', 'mineru', 'chunk', 'parent_child', 'qa', 'contextual', 'llm_qa', 'index']);
 const SILICONFLOW_BASE_URL = 'https://api.siliconflow.cn/v1';
 const MINERU_BASE_URL = 'https://mineru.net/api/v4';
 
@@ -97,6 +100,7 @@ export function ensureRagSchema(database: DatabaseSync): void {
       document_id TEXT NOT NULL,
       position INTEGER NOT NULL,
       content TEXT NOT NULL,
+      parent_content TEXT,
       embedding BLOB,
       embedding_model TEXT,
       FOREIGN KEY(document_id) REFERENCES rag_documents(id) ON DELETE CASCADE
@@ -116,9 +120,16 @@ export function ensureRagSchema(database: DatabaseSync): void {
   addColumn(database, 'rag_collections', 'pipeline_template', "TEXT NOT NULL DEFAULT 'general'");
   addColumn(database, 'rag_collections', 'pipeline_graph', "TEXT NOT NULL DEFAULT ''");
   addColumn(database, 'rag_collections', 'configuration_locked', 'INTEGER NOT NULL DEFAULT 0');
+  database.exec("UPDATE rag_collections SET pipeline_template = 'general' WHERE pipeline_template = 'markdown'");
+  const unlockedCustom = database.prepare("SELECT id, pipeline_graph AS graph FROM rag_collections WHERE pipeline_template = 'custom' AND configuration_locked = 0 AND pipeline_graph != ''").all() as Array<{ id: string; graph: string }>;
+  for (const row of unlockedCustom) {
+    try { validatePipelineGraph(JSON.parse(row.graph)); }
+    catch { database.prepare('UPDATE rag_collections SET pipeline_graph = ? WHERE id = ?').run(JSON.stringify(customPipelineGraph()), row.id); }
+  }
   database.exec('UPDATE rag_collections SET configuration_locked = 1 WHERE configuration_locked = 0 AND EXISTS (SELECT 1 FROM rag_documents WHERE rag_documents.collection_id = rag_collections.id)');
   addColumn(database, 'rag_chunks', 'embedding', 'BLOB');
   addColumn(database, 'rag_chunks', 'embedding_model', 'TEXT');
+  addColumn(database, 'rag_chunks', 'parent_content', 'TEXT');
 }
 
 export function listRagCollections(database: DatabaseSync, userId: string): RagCollection[] {
@@ -158,9 +169,15 @@ function customPipelineGraph(): RagPipelineGraph {
   return {
     nodes: [
       { id: 'source', type: 'source', label: '数据源', description: '接收待处理文档。', position: { x: 0, y: 120 } },
-      { id: 'index', type: 'index', label: '知识索引', description: '写入可检索知识库。', position: { x: 540, y: 120 } },
+      { id: 'extract', type: 'extract', label: '内容提取', description: '提取文档正文与结构。', position: { x: 270, y: 120 } },
+      { id: 'chunk', type: 'chunk', label: '通用切段', description: '按语义边界切分正文。', position: { x: 540, y: 120 } },
+      { id: 'index', type: 'index', label: '知识索引', description: '写入可检索知识库。', position: { x: 810, y: 120 } },
     ],
-    edges: [{ id: 'edge-source-index', source: 'source', target: 'index' }],
+    edges: [
+      { id: 'edge-source-extract', source: 'source', target: 'extract' },
+      { id: 'edge-extract-chunk', source: 'extract', target: 'chunk' },
+      { id: 'edge-chunk-index', source: 'chunk', target: 'index' },
+    ],
   };
 }
 
@@ -238,25 +255,26 @@ export async function ingestRagDocument(database: DatabaseSync, userId: string, 
   const extension = name.slice(name.lastIndexOf('.')).toLowerCase();
   if (!SUPPORTED_EXTENSIONS.has(extension)) throw new Error(`暂不支持 ${extension || '该'} 文件`);
   database.prepare('UPDATE rag_collections SET configuration_locked = 1 WHERE id = ? AND user_id = ?').run(collectionId, userId);
-  const forceMinerU = (collection.pipelineTemplate === 'complex_pdf' || collection.pipelineGraph?.nodes.some((node) => node.type === 'mineru')) && !['.txt', '.md', '.markdown', '.csv', '.json', '.html', '.htm'].includes(extension);
+  const pipeline = orderedPipeline(collection.pipelineGraph ?? templatePipelineGraph(collection.pipelineTemplate));
+  const forceMinerU = pipeline[1]?.type === 'mineru' && !['.txt', '.md', '.markdown', '.csv', '.json', '.html', '.htm'].includes(extension);
   const text = (await extractText(name, extension, bytes, services, forceMinerU)).slice(0, MAX_EXTRACTED_CHARS);
-  const chunks = await runRagPipeline(text, name, collection.chunkMethod, collection.pipelineTemplate, collection.pipelineGraph, services);
+  const chunks = await runRagPipeline(text, name, collection.chunkMethod, pipeline, services);
   if (!chunks.length) throw new Error('文档中没有可索引的文字');
   const embeddings = services.siliconflowApiKey
-    ? await embedTexts(chunks, services).catch((error) => { console.warn(`[Apollo RAG] 向量化失败，已回退关键词索引：${messageOf(error)}`); return []; })
+    ? await embedTexts(chunks.map((chunk) => chunk.content), services).catch((error) => { console.warn(`[Apollo RAG] 向量化失败，已回退关键词索引：${messageOf(error)}`); return []; })
     : [];
   const id = randomUUID();
   const now = new Date().toISOString();
-  const insertChunk = database.prepare('INSERT INTO rag_chunks (id, user_id, collection_id, document_id, position, content, embedding, embedding_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+  const insertChunk = database.prepare('INSERT INTO rag_chunks (id, user_id, collection_id, document_id, position, content, parent_content, embedding, embedding_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const insertFts = database.prepare('INSERT INTO rag_chunks_fts (content, chunk_id, user_id, collection_id) VALUES (?, ?, ?, ?)');
   database.exec('BEGIN IMMEDIATE');
   try {
     database.prepare('INSERT INTO rag_documents (id, user_id, collection_id, name, size, chunk_count, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .run(id, userId, collectionId, name, bytes.length, chunks.length, now);
-    chunks.forEach((content, position) => {
+    chunks.forEach((chunk, position) => {
       const chunkId = randomUUID();
-      insertChunk.run(chunkId, userId, collectionId, id, position, content, embeddings[position] ? vectorBytes(embeddings[position]!) : null, embeddings[position] ? embeddingModel(services) : null);
-      insertFts.run(content, chunkId, userId, collectionId);
+      insertChunk.run(chunkId, userId, collectionId, id, position, chunk.content, chunk.parentContent ?? null, embeddings[position] ? vectorBytes(embeddings[position]!) : null, embeddings[position] ? embeddingModel(services) : null);
+      insertFts.run(chunk.content, chunkId, userId, collectionId);
     });
     database.prepare('UPDATE rag_collections SET updated_at = ? WHERE id = ? AND user_id = ?').run(now, collectionId, userId);
     database.exec('COMMIT');
@@ -297,7 +315,7 @@ function keywordSearch(database: DatabaseSync, userId: string, query: string, co
   if (!fts) return literalSearch(database, userId, query, collectionId, limit);
   const rows = database.prepare(`
     SELECT k.id, k.collection_id AS "collectionId", c.name AS "collectionName",
-      k.document_id AS "documentId", d.name AS "documentName", k.position, k.content
+      k.document_id AS "documentId", d.name AS "documentName", k.position, COALESCE(k.parent_content, k.content) AS content
     FROM rag_chunks_fts
     JOIN rag_chunks k ON k.id = rag_chunks_fts.chunk_id
     JOIN rag_documents d ON d.id = k.document_id
@@ -372,28 +390,33 @@ export function chunkRagByMethod(text: string, method: RagChunkMethod): string[]
   return chunkRagText(text);
 }
 
-async function runRagPipeline(text: string, name: string, method: RagChunkMethod, template: RagPipelineTemplate, graph: RagPipelineGraph | null, services: RagServices): Promise<string[]> {
-  const nodeTypes = executableNodeTypes(graph);
-  if (nodeTypes.has('parent_child') || (!graph && (template === 'parent_child' || template === 'complex_pdf'))) return chunkParentChild(text);
-  if (nodeTypes.has('qa') || (!graph && template === 'qa')) return chunkRagByMethod(text, 'qa');
-  if (nodeTypes.has('contextual') || (!graph && template === 'contextual')) return chunkRagByMethod(text, method).map((chunk) => `来源文档：${name}\n${chunk}`);
-  if ((nodeTypes.has('llm_qa') || (!graph && template === 'llm_qa')) && services.chatApiKey) {
-    const generated = await generateQa(text, services).catch((error) => {
-      console.warn(`[Apollo RAG] 问答生成失败，已回退通用分段：${messageOf(error)}`);
-      return '';
-    });
-    if (generated) return chunkRagByMethod(generated, 'qa');
+async function runRagPipeline(text: string, name: string, method: RagChunkMethod, pipeline: RagPipelineGraph['nodes'], services: RagServices): Promise<RagChunkDraft[]> {
+  let values: RagChunkDraft[] = [{ content: text }];
+  for (const node of pipeline.slice(2, -1)) {
+    if (node.type === 'chunk') values = values.flatMap((value) => chunkRagByMethod(value.content, method).map((content) => ({ content })));
+    else if (node.type === 'parent_child') values = values.flatMap((value) => chunkParentChild(value.content));
+    else if (node.type === 'qa') values = values.flatMap((value) => chunkRagByMethod(value.content, 'qa').map((content) => ({ content })));
+    else if (node.type === 'contextual') values = values.map((value) => ({ content: `来源文档：${name}\n${value.content}`, ...(value.parentContent ? { parentContent: `来源文档：${name}\n${value.parentContent}` } : {}) }));
+    else if (node.type === 'llm_qa') {
+      if (!services.chatApiKey) throw new Error('LLM 生成问答节点需要配置 RAG_CHAT_API_KEY');
+      values = (await Promise.all(values.map((value) => generateQa(value.content, services)))).map((content) => ({ content }));
+      if (values.some((value) => !value.content.trim())) throw new Error('LLM 生成问答节点没有返回内容');
+    }
   }
-  return chunkRagByMethod(text, template === 'llm_qa' ? 'general' : method);
+  return values;
 }
 
-function chunkParentChild(text: string): string[] {
-  let heading = '';
-  const chunks: string[] = [];
-  for (const section of splitSections(text, /^(?:#{1,6}\s|第[一二三四五六七八九十百千万零〇\d]+[章节篇]|\d+(?:\.\d+)*\s+\S)/u)) {
+function chunkParentChild(text: string): RagChunkDraft[] {
+  const chunks: RagChunkDraft[] = [];
+  for (const section of sectionBlocks(text, /^(?:#{1,6}\s|第[一二三四五六七八九十百千万零〇\d]+[章节篇]|\d+(?:\.\d+)*\s+\S)/u)) {
     const firstLine = section.split('\n', 1)[0]!.trim();
-    if (firstLine.length <= 100) heading = firstLine;
-    chunks.push(...chunkRagText(section, 900, 120).map((chunk) => heading && !chunk.startsWith(heading) ? `${heading}\n${chunk}` : chunk));
+    const heading = firstLine.length <= 100 ? firstLine : '';
+    for (const parentContent of chunkRagText(section, 6000, 0)) {
+      chunks.push(...chunkRagText(parentContent, 900, 120).map((child) => ({
+        content: heading && !child.startsWith(heading) ? `${heading}\n${child}` : child,
+        parentContent,
+      })));
+    }
   }
   return chunks;
 }
@@ -504,7 +527,8 @@ function assertCollection(database: DatabaseSync, userId: string, collectionId: 
 
 function parsePipelineGraph(value: string): RagPipelineGraph | null {
   if (!value) return null;
-  try { return validatePipelineGraph(JSON.parse(value)); } catch { return null; }
+  try { return validatePipelineGraph(JSON.parse(value)); }
+  catch (error) { throw new Error(`知识库流水线损坏：${messageOf(error)}`); }
 }
 
 function validatePipelineGraph(value: unknown): RagPipelineGraph | null {
@@ -514,32 +538,57 @@ function validatePipelineGraph(value: unknown): RagPipelineGraph | null {
   if (!Array.isArray(graph.nodes) || !Array.isArray(graph.edges) || graph.nodes.length < 2 || graph.nodes.length > 50 || graph.edges.length > 100) throw new Error('流水线节点或连线数量无效');
   const ids = new Set<string>();
   for (const node of graph.nodes) {
-    if (!node || typeof node.id !== 'string' || !node.id || ids.has(node.id) || typeof node.type !== 'string' || typeof node.label !== 'string' || typeof node.description !== 'string' || !Number.isFinite(node.position?.x) || !Number.isFinite(node.position?.y) || Math.abs(node.position.x) > 100_000 || Math.abs(node.position.y) > 100_000 || node.label.length > 80 || node.description.length > 500) throw new Error('流水线节点无效');
+    if (!node || typeof node.id !== 'string' || !node.id || ids.has(node.id) || typeof node.type !== 'string' || !PIPELINE_NODE_TYPES.has(node.type) || typeof node.label !== 'string' || typeof node.description !== 'string' || !Number.isFinite(node.position?.x) || !Number.isFinite(node.position?.y) || Math.abs(node.position.x) > 100_000 || Math.abs(node.position.y) > 100_000 || node.label.length > 80 || node.description.length > 500) throw new Error('流水线节点无效');
     ids.add(node.id);
   }
   if (!graph.nodes.some((node) => node.type === 'source') || !graph.nodes.some((node) => node.type === 'index')) throw new Error('流水线必须包含数据源和知识索引节点');
   for (const edge of graph.edges) if (!edge || typeof edge.id !== 'string' || !ids.has(edge.source) || !ids.has(edge.target)) throw new Error('流水线连线无效');
   if (graph.viewport && (!Number.isFinite(graph.viewport.x) || !Number.isFinite(graph.viewport.y) || !Number.isFinite(graph.viewport.zoom) || graph.viewport.zoom < 0.1 || graph.viewport.zoom > 4)) throw new Error('流水线视图无效');
   if (JSON.stringify(graph).length > 64 * 1024) throw new Error('流水线数据过大');
+  orderedPipeline(graph);
   return graph;
 }
 
-function executableNodeTypes(graph: RagPipelineGraph | null): Set<string> {
-  if (!graph) return new Set();
-  const forward = new Map<string, string[]>();
-  const reverse = new Map<string, string[]>();
+function orderedPipeline(graph: RagPipelineGraph): RagPipelineGraph['nodes'] {
+  const sources = graph.nodes.filter((node) => node.type === 'source');
+  const indexes = graph.nodes.filter((node) => node.type === 'index');
+  if (sources.length !== 1 || indexes.length !== 1) throw new Error('流水线必须且只能包含一个数据源和一个知识索引节点');
+  const incoming = new Map<string, string[]>();
+  const outgoing = new Map<string, string[]>();
   for (const edge of graph.edges) {
-    forward.set(edge.source, [...(forward.get(edge.source) ?? []), edge.target]);
-    reverse.set(edge.target, [...(reverse.get(edge.target) ?? []), edge.source]);
+    incoming.set(edge.target, [...(incoming.get(edge.target) ?? []), edge.source]);
+    outgoing.set(edge.source, [...(outgoing.get(edge.source) ?? []), edge.target]);
   }
-  const walk = (starts: string[], links: Map<string, string[]>) => {
-    const seen = new Set(starts); const queue = [...starts];
-    while (queue.length) for (const next of links.get(queue.shift()!) ?? []) if (!seen.has(next)) { seen.add(next); queue.push(next); }
-    return seen;
-  };
-  const fromSource = walk(graph.nodes.filter((node) => node.type === 'source').map((node) => node.id), forward);
-  const toIndex = walk(graph.nodes.filter((node) => node.type === 'index').map((node) => node.id), reverse);
-  return new Set(graph.nodes.filter((node) => fromSource.has(node.id) && toIndex.has(node.id)).map((node) => node.type));
+  for (const node of graph.nodes) {
+    const inCount = incoming.get(node.id)?.length ?? 0;
+    const outCount = outgoing.get(node.id)?.length ?? 0;
+    if (inCount !== (node.type === 'source' ? 0 : 1) || outCount !== (node.type === 'index' ? 0 : 1)) throw new Error('当前流水线只支持从数据源到知识索引的一条完整处理路径，不能分支或悬空');
+  }
+  const byId = new Map(graph.nodes.map((node) => [node.id, node]));
+  const ordered = [sources[0]!];
+  while (ordered.at(-1)!.type !== 'index' && ordered.length <= graph.nodes.length) {
+    const next = byId.get(outgoing.get(ordered.at(-1)!.id)![0]!);
+    if (!next || ordered.includes(next)) throw new Error('流水线包含循环或断开的连线');
+    ordered.push(next);
+  }
+  if (ordered.length !== graph.nodes.length || !['extract', 'mineru'].includes(ordered[1]?.type ?? '')) throw new Error('数据源后必须连接内容提取或 MinerU 解析节点');
+  const processing = ordered.slice(2, -1).map((node) => node.type);
+  if (processing.some((type) => type === 'extract' || type === 'mineru')) throw new Error('内容提取节点只能紧接数据源');
+  if (processing.filter((type) => ['chunk', 'parent_child', 'qa'].includes(type)).length !== 1) throw new Error('知识索引前必须且只能经过一个真实切段节点');
+  const llmQa = processing.indexOf('llm_qa');
+  if (llmQa >= 0 && processing.slice(llmQa + 1).indexOf('qa') < 0) throw new Error('LLM 生成问答节点后必须连接问答切段节点');
+  return ordered;
+}
+
+function templatePipelineGraph(template: RagPipelineTemplate): RagPipelineGraph {
+  const types = template === 'parent_child' ? ['source', 'extract', 'parent_child', 'index']
+    : template === 'qa' ? ['source', 'extract', 'qa', 'index']
+      : template === 'contextual' ? ['source', 'extract', 'chunk', 'contextual', 'index']
+        : template === 'llm_qa' ? ['source', 'extract', 'llm_qa', 'qa', 'index']
+          : template === 'complex_pdf' ? ['source', 'mineru', 'parent_child', 'index']
+            : ['source', 'extract', 'chunk', 'index'];
+  const nodes = types.map((type, index) => ({ id: `${type}-${index}`, type, label: type, description: '', position: { x: index * 270, y: 120 } }));
+  return { nodes, edges: nodes.slice(1).map((node, index) => ({ id: `edge-${index}`, source: nodes[index]!.id, target: node.id })) };
 }
 
 function addColumn(database: DatabaseSync, table: string, column: string, definition: string): void {
@@ -552,6 +601,10 @@ function normalizeText(text: string): string {
 }
 
 function splitSections(text: string, heading: RegExp): string[] {
+  return sectionBlocks(text, heading).flatMap((section) => chunkRagText(section, 1400, 100));
+}
+
+function sectionBlocks(text: string, heading: RegExp): string[] {
   const sections: string[] = [];
   let current = '';
   for (const rawLine of normalizeText(text).split('\n')) {
@@ -562,7 +615,7 @@ function splitSections(text: string, heading: RegExp): string[] {
     } else current += `${current ? '\n' : ''}${line}`;
   }
   if (current.trim()) sections.push(current.trim());
-  return sections.flatMap((section) => chunkRagText(section, 1400, 100));
+  return sections;
 }
 
 function chunkQa(text: string): string[] {
@@ -586,7 +639,7 @@ function literalSearch(database: DatabaseSync, userId: string, query: string, co
   const collectionFilter = collectionId ? 'AND k.collection_id = ?' : '';
   return database.prepare(`
     SELECT k.id, k.collection_id AS "collectionId", c.name AS "collectionName",
-      k.document_id AS "documentId", d.name AS "documentName", k.position, k.content
+      k.document_id AS "documentId", d.name AS "documentName", k.position, COALESCE(k.parent_content, k.content) AS content
     FROM rag_chunks k
     JOIN rag_documents d ON d.id = k.document_id
     JOIN rag_collections c ON c.id = k.collection_id
@@ -599,7 +652,7 @@ function semanticSearch(database: DatabaseSync, userId: string, queryVector: num
   const collectionFilter = collectionId ? 'AND k.collection_id = ?' : '';
   const rows = database.prepare(`
     SELECT k.id, k.collection_id AS "collectionId", c.name AS "collectionName",
-      k.document_id AS "documentId", d.name AS "documentName", k.position, k.content, k.embedding
+      k.document_id AS "documentId", d.name AS "documentName", k.position, COALESCE(k.parent_content, k.content) AS content, k.embedding
     FROM rag_chunks k
     JOIN rag_documents d ON d.id = k.document_id
     JOIN rag_collections c ON c.id = k.collection_id
