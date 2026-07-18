@@ -4,6 +4,7 @@ export interface DirectoryHandle {
   kind: 'directory';
   name: string;
   entries(): AsyncIterableIterator<[string, DirectoryHandle | WritableFileHandle]>;
+  getFileHandle(name: string, options?: { create?: boolean }): Promise<WritableFileHandle>;
   queryPermission(options: { mode: 'readwrite' }): Promise<PermissionState>;
   requestPermission(options: { mode: 'readwrite' }): Promise<PermissionState>;
 }
@@ -42,6 +43,25 @@ export async function listLocalFiles(root: DirectoryHandle): Promise<LibraryFile
   const output: LibraryFile[] = [];
   await walk(root, '', output, 0);
   return output.sort((a, b) => a.title.localeCompare(b.title, 'zh-CN'));
+}
+
+export async function writeLocalTextFile(root: DirectoryHandle, name: string, content: string, overwrite = false): Promise<{ path: string; size: number; modifiedAt: string }> {
+  if (!name || name.length > 120 || name.startsWith('.') || /[\\/\0]/.test(name) || !/\.(?:txt|md|markdown|json)$/i.test(name)) throw new Error('只能在当前文件夹根目录写入 TXT、Markdown 或 JSON 文件');
+  if (new TextEncoder().encode(content).byteLength > 5 * 1024 * 1024) throw new Error('本地文本文件不能超过 5MB');
+  if (!overwrite) {
+    const exists = await root.getFileHandle(name).then(() => true).catch((error: unknown) => {
+      if (error instanceof DOMException && error.name === 'NotFoundError') return false;
+      throw error;
+    });
+    if (exists) throw new Error(`文件“${name}”已存在；如需覆盖，请明确确认`);
+  }
+  if (name.toLowerCase().endsWith('.json')) JSON.parse(content);
+  const handle = await root.getFileHandle(name, { create: true });
+  const writable = await handle.createWritable();
+  await writable.write(new Blob([content], { type: 'text/plain;charset=utf-8' }));
+  await writable.close();
+  const file = await handle.getFile();
+  return { path: name, size: file.size, modifiedAt: new Date(file.lastModified).toISOString() };
 }
 
 async function walk(directory: DirectoryHandle, prefix: string, output: LibraryFile[], depth: number): Promise<void> {

@@ -53,9 +53,18 @@ const WEB_BLOCKED_TOOLS = new Set([
   'mcp_list_tools',
   'mcp_call_tool',
 ]);
+const LOCAL_WORKSPACE_BLOCKED_TOOLS = new Set([
+  'list_files', 'read_file', 'write_file', 'edit_file',
+  'git_status', 'git_diff', 'git_commit',
+  'memory_search', 'memory_save', 'memory_list',
+  'skill_search', 'skill_read', 'skill_install',
+  'Task', 'site_publish', 'run_langhub_task', 'rag_search',
+]);
+const SERVER_WORKSPACE_BLOCKED_TOOLS = new Set(['local_folder_list_files', 'local_folder_write_file']);
+type WorkspaceScope = 'server' | 'local';
 
-export function isWebToolAllowed(toolName: string): boolean {
-  return !WEB_BLOCKED_TOOLS.has(toolName);
+export function isWebToolAllowed(toolName: string, workspace: WorkspaceScope = 'server'): boolean {
+  return !WEB_BLOCKED_TOOLS.has(toolName) && !(workspace === 'local' ? LOCAL_WORKSPACE_BLOCKED_TOOLS : SERVER_WORKSPACE_BLOCKED_TOOLS).has(toolName);
 }
 
 type Send = (event: object) => void;
@@ -69,6 +78,7 @@ type RunContext = {
   send: Send;
   sink: (event: TraceEvent) => void;
   permissionMode: 'ask' | 'unrestricted';
+  workspace: WorkspaceScope;
   interactionIds: Set<string>;
   interactive: boolean;
   runtime?: QueryEngine;
@@ -81,7 +91,9 @@ type UserRuntimeContext = {
   assistantSessionPath: string;
   imConfigRoot: string;
   assistantEngine?: Promise<QueryEngine>;
+  assistantEngineScope?: WorkspaceScope;
   entryEngines: Map<string, Promise<QueryEngine>>;
+  entryEngineScopes: Map<string, WorkspaceScope>;
   entryTurnStates: Map<string, { standardsQuery?: Promise<string> }>;
   ready: Promise<void>;
   lastUsedAt: number;
@@ -137,6 +149,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
         assistantSessionPath: path.join(userRoot, '.apollo', 'web-assistant-session'),
         imConfigRoot: path.join(workspaceRoot, '.apollo', 'im-channels'),
         entryEngines: new Map(),
+        entryEngineScopes: new Map(),
         entryTurnStates: new Map(),
         ready: ensureUserWorkspace(userRoot, path.join(workspaceRoot, 'entry-skills'), assistantConfigTemplatePath)
           .then(() => user.admin ? undefined : enforceTenantSafeConfig(path.join(userRoot, '.apollo', 'assistant-config.json'))),
@@ -302,7 +315,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
 
   const approvalProvider = (runKey: string): ApprovalProvider => async (request) => {
     const run = runs.get(runKey);
-    if (!isWebToolAllowed(request.toolName)) {
+    if (!isWebToolAllowed(request.toolName, run?.workspace)) {
       run?.sink({
         type: 'approval_required',
         tool: request.toolName,
@@ -336,7 +349,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     return approved;
   };
 
-  const createAssistantEngine = async (context: UserRuntimeContext, runKey: string, sessionId?: string) => createQueryEngine({
+  const createAssistantEngine = async (context: UserRuntimeContext, runKey: string, workspace: WorkspaceScope, sessionId?: string) => createQueryEngine({
     configPath: context.assistantConfigPath,
     configMode: 'isolated',
     workspaceRoot: context.workspaceRoot,
@@ -351,24 +364,38 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       ),
     onEvent: (event) => runs.get(runKey)?.sink(event),
     extraTools: clientTools(runKey),
+    disabledTools: workspace === 'local' ? [...LOCAL_WORKSPACE_BLOCKED_TOOLS] : [...SERVER_WORKSPACE_BLOCKED_TOOLS],
+    workspaceContextEnabled: workspace === 'server',
+    memoryEnabled: workspace === 'server',
   });
 
-  const getEngine = async (context: UserRuntimeContext, channel: 'assistant' | 'entry' = 'entry', conversationId = '') => {
+  const getEngine = async (context: UserRuntimeContext, channel: 'assistant' | 'entry' = 'entry', conversationId = '', workspace: WorkspaceScope = 'server') => {
     const runKey = agentRunKey(context.userId, channel, conversationId);
     if (channel === 'assistant') {
+      if (context.assistantEngine && context.assistantEngineScope !== workspace) await closeAssistantEngine(context);
       if (!context.assistantEngine) {
-        const runtimePromise = fs.readFile(context.assistantSessionPath, 'utf8')
+        const runtimePromise = fs.readFile(scopedAssistantSessionPath(context, workspace), 'utf8')
           .then((value) => value.trim())
           .catch(() => '')
-          .then((sessionId) => createAssistantEngine(context, runKey, sessionId || undefined));
+          .then((sessionId) => createAssistantEngine(context, runKey, workspace, sessionId || undefined));
         context.assistantEngine = runtimePromise;
+        context.assistantEngineScope = workspace;
         runtimePromise.catch(() => {
-          if (context.assistantEngine === runtimePromise) context.assistantEngine = undefined;
+          if (context.assistantEngine === runtimePromise) {
+            context.assistantEngine = undefined;
+            context.assistantEngineScope = undefined;
+          }
         });
       }
       return context.assistantEngine;
     }
-    const existing = context.entryEngines.get(conversationId);
+    let existing = context.entryEngines.get(conversationId);
+    if (existing && context.entryEngineScopes.get(conversationId) !== workspace) {
+      context.entryEngines.delete(conversationId);
+      context.entryEngineScopes.delete(conversationId);
+      await existing.then((engine) => engine.close()).catch(() => undefined);
+      existing = undefined;
+    }
     if (existing) {
       context.entryEngines.delete(conversationId);
       context.entryEngines.set(conversationId, existing);
@@ -376,7 +403,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     }
     const turnState = context.entryTurnStates.get(conversationId) ?? {};
     context.entryTurnStates.set(conversationId, turnState);
-    const runtimePromise = fs.readFile(entrySessionPath(context.workspaceRoot, conversationId), 'utf8')
+    const runtimePromise = fs.readFile(entrySessionPath(context.workspaceRoot, conversationId, workspace), 'utf8')
       .then((value) => value.trim())
       .catch(() => '')
       .then((sessionId) => createQueryEngine({
@@ -389,6 +416,8 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       askUser: (question, options) => requestInteraction(runKey, { type: 'interaction', kind: 'question', title: question, options }, '(no answer)'),
       onEvent: (event) => runs.get(runKey)?.sink(event),
       memoryEnabled: false,
+      disabledTools: workspace === 'local' ? [...LOCAL_WORKSPACE_BLOCKED_TOOLS] : [...SERVER_WORKSPACE_BLOCKED_TOOLS],
+      workspaceContextEnabled: workspace === 'server',
       extraTools: [
         ...createEntryTools({
           workspaceRoot: context.workspaceRoot,
@@ -405,8 +434,12 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       ],
     }));
     context.entryEngines.set(conversationId, runtimePromise);
+    context.entryEngineScopes.set(conversationId, workspace);
     runtimePromise.catch(() => {
-      if (context.entryEngines.get(conversationId) === runtimePromise) context.entryEngines.delete(conversationId);
+      if (context.entryEngines.get(conversationId) === runtimePromise) {
+        context.entryEngines.delete(conversationId);
+        context.entryEngineScopes.delete(conversationId);
+      }
     });
     return runtimePromise;
   };
@@ -414,12 +447,14 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
   const closeAssistantEngine = async (context: UserRuntimeContext) => {
     const runtime = context.assistantEngine;
     context.assistantEngine = undefined;
+    context.assistantEngineScope = undefined;
     if (runtime) await runtime.then((engine) => engine.close()).catch(() => undefined);
   };
 
   const closeEntryEngines = async (context: UserRuntimeContext) => {
     const runtimes = [...context.entryEngines.values()];
     context.entryEngines.clear();
+    context.entryEngineScopes.clear();
     context.entryTurnStates.clear();
     await Promise.all(runtimes.map((runtime) => runtime.then((engine) => engine.close()).catch(() => undefined)));
   };
@@ -433,6 +468,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       if (context.entryEngines.size <= perUserRunLimit) break;
       if (runs.has(agentRunKey(context.userId, 'entry', conversationId))) continue;
       context.entryEngines.delete(conversationId);
+      context.entryEngineScopes.delete(conversationId);
       context.entryTurnStates.delete(conversationId);
       await runtime.then((engine) => engine.close()).catch(() => undefined);
     }
@@ -468,6 +504,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       send,
       sink: collect,
       permissionMode: 'ask',
+      workspace: 'server',
       interactionIds: new Set(),
       interactive: false,
     };
@@ -480,8 +517,9 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       run.runtime = runtime;
       await runInput(runtime, message, send);
       if (runtime.getSessionId()) {
-        await fs.mkdir(path.dirname(context.assistantSessionPath), { recursive: true });
-        await fs.writeFile(context.assistantSessionPath, `${runtime.getSessionId()}\n`, 'utf8');
+        const sessionPath = scopedAssistantSessionPath(context, 'server');
+        await fs.mkdir(path.dirname(sessionPath), { recursive: true });
+        await fs.writeFile(sessionPath, `${runtime.getSessionId()}\n`, 'utf8');
       }
       status = 'succeeded';
       return output.join('').trim() || '任务已完成。';
@@ -918,14 +956,15 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       if (req.method === 'DELETE' && /^chat-[A-Za-z0-9-]{1,80}$/.test(conversationId)) {
         const runtime = context.entryEngines.get(conversationId);
         context.entryEngines.delete(conversationId);
+        context.entryEngineScopes.delete(conversationId);
         context.entryTurnStates.delete(conversationId);
         if (runtime) await runtime.then((engine) => engine.close()).catch(() => undefined);
-        const sessionPath = entrySessionPath(userWorkspaceRoot, conversationId);
-        const sessionId = await fs.readFile(sessionPath, 'utf8').then((value) => value.trim()).catch(() => '');
+        const sessionPaths = (['server', 'local'] as const).map((scope) => entrySessionPath(userWorkspaceRoot, conversationId, scope));
+        const sessionIds = await Promise.all(sessionPaths.map((sessionPath) => fs.readFile(sessionPath, 'utf8').then((value) => value.trim()).catch(() => '')));
         await Promise.all([
-          fs.rm(sessionPath, { force: true }),
+          ...sessionPaths.map((sessionPath) => fs.rm(sessionPath, { force: true })),
           fs.rm(path.join(userWorkspaceRoot, '.apollo', 'entry-langhub-topics', `${conversationId}.json`), { force: true }),
-          sessionId ? fs.rm(path.join(userWorkspaceRoot, '.apollo', 'sessions', `${sessionId}.json`), { force: true }) : Promise.resolve(),
+          ...sessionIds.filter(Boolean).map((sessionId) => fs.rm(path.join(userWorkspaceRoot, '.apollo', 'sessions', `${sessionId}.json`), { force: true })),
         ]);
       }
       return;
@@ -1049,12 +1088,15 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     let message: unknown;
     let channel: 'assistant' | 'entry' = 'entry';
     let conversationId = '';
+    let workspace: WorkspaceScope = 'server';
     try {
-      const body = JSON.parse(await readBody(req)) as { message?: unknown; channel?: unknown; conversationId?: unknown };
+      const body = JSON.parse(await readBody(req)) as { message?: unknown; channel?: unknown; conversationId?: unknown; workspace?: unknown };
       message = body.message;
       if (body.channel === 'assistant') channel = 'assistant';
       else if (body.channel !== undefined && body.channel !== 'entry') throw new Error('channel 无效');
       if (typeof message !== 'string' || !message.trim()) throw new Error('message 不能为空');
+      if (body.workspace === 'local') workspace = 'local';
+      else if (body.workspace !== undefined && body.workspace !== 'server') throw new Error('workspace 无效');
       if (channel === 'entry') {
         if (typeof body.conversationId !== 'string' || !/^(?:chat|document)-[A-Za-z0-9-]{1,80}$/.test(body.conversationId)) throw new Error('conversationId 无效');
         conversationId = body.conversationId;
@@ -1109,6 +1151,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       send,
       sink,
       permissionMode: 'ask',
+      workspace,
       interactionIds: new Set(),
       interactive: true,
     };
@@ -1130,15 +1173,16 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
         turnState.standardsQuery = undefined;
         context.entryTurnStates.set(conversationId, turnState);
       }
-      const runtime = await getEngine(context, channel, conversationId);
+      const runtime = await getEngine(context, channel, conversationId, workspace);
       runs.get(runKey)!.runtime = runtime;
       await runInput(runtime, message.trim(), send);
       if (channel === 'assistant' && runtime.getSessionId()) {
-        await fs.mkdir(path.dirname(context.assistantSessionPath), { recursive: true });
-        await fs.writeFile(context.assistantSessionPath, `${runtime.getSessionId()}\n`, 'utf8');
+        const sessionPath = scopedAssistantSessionPath(context, workspace);
+        await fs.mkdir(path.dirname(sessionPath), { recursive: true });
+        await fs.writeFile(sessionPath, `${runtime.getSessionId()}\n`, 'utf8');
       }
       if (channel === 'entry' && runtime.getSessionId()) {
-        const sessionPath = entrySessionPath(context.workspaceRoot, conversationId);
+        const sessionPath = entrySessionPath(context.workspaceRoot, conversationId, workspace);
         await fs.mkdir(path.dirname(sessionPath), { recursive: true });
         await fs.writeFile(sessionPath, `${runtime.getSessionId()}\n`, 'utf8');
       }
@@ -1996,8 +2040,12 @@ async function permissionMode(configPath: string): Promise<'ask' | 'unrestricted
   return permissions?.mode === 'unrestricted' ? 'unrestricted' : 'ask';
 }
 
-function entrySessionPath(workspaceRoot: string, conversationId: string): string {
-  return path.join(workspaceRoot, '.apollo', 'entry-sessions', `${conversationId}.session`);
+function scopedAssistantSessionPath(context: UserRuntimeContext, workspace: WorkspaceScope): string {
+  return workspace === 'server' ? context.assistantSessionPath : `${context.assistantSessionPath}-local`;
+}
+
+function entrySessionPath(workspaceRoot: string, conversationId: string, workspace: WorkspaceScope = 'server'): string {
+  return path.join(workspaceRoot, '.apollo', 'entry-sessions', `${conversationId}${workspace === 'local' ? '-local' : ''}.session`);
 }
 
 function cleanTitle(value: string): string {

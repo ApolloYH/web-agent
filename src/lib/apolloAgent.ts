@@ -179,13 +179,14 @@ export async function streamApollo(
   signal?: AbortSignal,
   channel: ApolloChannel = 'entry',
   conversationId?: string,
+  workspace: 'server' | 'local' = 'server',
 ): Promise<Artifact[]> {
   const startedAt = Date.now();
   console.log(`[Apollo Web] 开始调用：Apollo Agent｜通道：${channel === 'assistant' ? '助理' : '统一入口'}`);
   const response = await fetch('/apollo-api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, channel, conversationId }),
+    body: JSON.stringify({ message, channel, conversationId, workspace }),
     signal,
   });
   if (!response.ok || !response.body) {

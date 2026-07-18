@@ -12,6 +12,28 @@ export function createDocumentTools(requestEditor: RequestEditor): ToolDefinitio
       execute: async () => result(await requestEditor('list_local_files', {})),
     },
     {
+      name: 'local_folder_write_file',
+      description: '在用户当前选中的本地文件夹根目录新建或覆盖 TXT、Markdown 或 JSON 文件。用户说“写到我的工作区”或“当前文件夹”时使用；不要写到服务器工作区。',
+      risk: 'high',
+      input_schema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: '文件名，例如 hello.txt；只能写入当前文件夹根目录' },
+          content: { type: 'string', description: '要写入的完整文本' },
+          overwrite: { type: 'boolean', description: '文件已存在时是否覆盖，默认 false' },
+        },
+        required: ['name', 'content'],
+      },
+      execute: async (input) => {
+        const name = typeof input.name === 'string' ? input.name.trim() : '';
+        const content = typeof input.content === 'string' ? input.content : '';
+        if (!name || name.length > 120 || name.startsWith('.') || /[\\/\0]/.test(name) || !/\.(?:txt|md|markdown|json)$/i.test(name)) return result({ ok: false, error: '文件名必须是当前文件夹下的 .txt、.md、.markdown 或 .json 文件' });
+        if (new TextEncoder().encode(content).byteLength > 5 * 1024 * 1024) return result({ ok: false, error: '本地文本文件不能超过 5MB' });
+        if (input.overwrite !== undefined && typeof input.overwrite !== 'boolean') return result({ ok: false, error: 'overwrite 必须是布尔值' });
+        return result(await requestEditor('write_local_file', { name, content, overwrite: input.overwrite === true }));
+      },
+    },
+    {
       name: 'document_get_context',
       description: '读取用户当前在 Web 工作台中打开的 Word、Markdown、JSON、PDF 文本或图片基础信息。长文档只返回前段内容；编辑前先调用。',
       risk: 'low',

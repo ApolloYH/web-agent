@@ -32,7 +32,7 @@ export interface LibraryFile extends StoredArtifact {
 export function editableKind(name: string): EditableDocumentKind | null {
   const lower = name.toLowerCase();
   if (lower.endsWith('.docx')) return 'word';
-  if (lower.endsWith('.md') || lower.endsWith('.markdown')) return 'markdown';
+  if (lower.endsWith('.txt') || lower.endsWith('.md') || lower.endsWith('.markdown')) return 'markdown';
   if (lower.endsWith('.json')) return 'json';
   return null;
 }

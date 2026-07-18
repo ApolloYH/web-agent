@@ -38,7 +38,7 @@ import LoginScreen from '@/components/LoginScreen';
 import { getCurrentUser, logout, type AuthUser } from '@/lib/auth';
 import DocumentWorkspace, { officeHostUrl, type DocumentWorkspaceHandle } from '@/components/DocumentWorkspace';
 import { openArtifact, openLibraryFile, type LibraryFile, type OpenDocument } from '@/lib/documentFiles';
-import { chooseLocalFolder, ensureFolderPermission, listLocalFiles, restoreLocalFolder, type DirectoryHandle } from '@/lib/localFolder';
+import { chooseLocalFolder, ensureFolderPermission, listLocalFiles, restoreLocalFolder, writeLocalTextFile, type DirectoryHandle } from '@/lib/localFolder';
 import { getBrowserConnectionStatus, runBrowserAction, type BrowserConnectionStatus } from '@/lib/browserExtension';
 import ResizeDivider from '@/components/ResizeDivider';
 import BrowserLivePanel from '@/components/BrowserLivePanel';
@@ -129,6 +129,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
   const [localFiles, setLocalFiles] = useState<LibraryFile[]>([]);
   const [librarySource, setLibrarySource] = useState<'server' | 'local'>('server');
   const [activeDocument, setActiveDocument] = useState<OpenDocument | null>(null);
+  const workspaceScope: 'server' | 'local' = activeView !== 'sites' && activeView !== 'rag' && (activeDocument?.source === 'local' || (!activeDocument && librarySource === 'local')) ? 'local' : 'server';
   const [documentApolloOpen, setDocumentApolloOpen] = useState(false);
   const documentOriginViewRef = useRef<'assistant' | 'chat' | 'library' | 'rag'>('library');
   const documentChannelRef = useRef<'assistant' | 'entry'>('entry');
@@ -434,7 +435,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
         } else if (activeDocument) {
           executionText += `\n\n当前 Web 编辑工作台已打开文档：${activeDocument.name}（${activeDocument.kind}，${activeDocument.source}）。如果用户要求读取或修改“当前文档”，请使用 document_get_context、document_replace_text、document_append_text 或 document_set_content 工具，不要使用服务器文件工具绕过当前编辑器。`;
         } else if (librarySource === 'local' && localFolder) {
-          executionText += `\n\n当前 Web 工作区是用户浏览器中的本地文件夹“${localFolder.name}”。如果用户询问该文件夹内容，请使用 local_folder_list_files，不要使用服务器文件工具。`;
+          executionText += `\n\n当前唯一工作区是用户浏览器中的本地文件夹“${localFolder.name}”。本轮看不到服务器云端工作区；列出内容使用 local_folder_list_files，新建或覆盖文本文件使用 local_folder_write_file。`;
         }
         const artifacts = await streamApollo(
           executionText,
@@ -464,13 +465,17 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
             if (event.type === 'editor_request') {
               void (async () => {
                 let result: Record<string, unknown>;
-                if (event.action === 'list_local_files') {
+                if (event.action === 'list_local_files' || event.action === 'write_local_file') {
                   if (librarySource !== 'local' || !localFolder) result = { ok: false, error: '当前 Web 工作区不是本地文件夹' };
                   else if (!await ensureFolderPermission(localFolder)) result = { ok: false, error: '本地文件夹授权已失效，请用户重新连接' };
-                  else {
+                  else if (event.action === 'list_local_files') {
                     const files = await listLocalFiles(localFolder);
                     setLocalFiles(files);
                     result = { ok: true, folder: localFolder.name, files: files.map(({ relativePath, kind, size, modifiedAt }) => ({ path: relativePath, kind, size, modifiedAt })) };
+                  } else {
+                    const written = await writeLocalTextFile(localFolder, String(event.input.name ?? ''), String(event.input.content ?? ''), event.input.overwrite === true);
+                    setLocalFiles(await listLocalFiles(localFolder));
+                    result = { ok: true, folder: localFolder.name, ...written };
                   }
                 } else {
                   result = documentWorkspaceRef.current
@@ -508,6 +513,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
           controller.signal,
           assistantSurface ? 'assistant' : 'entry',
           assistantSurface ? undefined : targetConversationId,
+          workspaceScope,
         );
         finishThought();
         const { cleanText } = extractArtifacts(raw);
@@ -556,7 +562,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
         }
       }
     },
-    [activeDocument, activeSite, activeView, conversationGroup, conversationId, conversationTitle, finishRun, librarySource, localFolder, refreshBrowserStatus, rememberConversation, updateRunMessages],
+    [activeDocument, activeSite, activeView, conversationGroup, conversationId, conversationTitle, finishRun, librarySource, localFolder, refreshBrowserStatus, rememberConversation, updateRunMessages, workspaceScope],
   );
 
   const handleStop = useCallback(() => {
@@ -796,7 +802,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
       try {
         await streamApollo(command, (event) => {
           if (event.type === 'status' || event.type === 'done') setRuntimeStatus(event.status);
-        }, controller.signal, assistantSurface ? 'assistant' : 'entry', assistantSurface ? undefined : targetConversationId);
+        }, controller.signal, assistantSurface ? 'assistant' : 'entry', assistantSurface ? undefined : targetConversationId, workspaceScope);
         await deleteConversation(targetConversationId).catch(() => undefined);
         setConversationList((items) => items.filter((item) => item.id !== targetConversationId));
         const nextId = assistantSurface ? ASSISTANT_CONVERSATION_ID : newConversationId();
@@ -821,13 +827,13 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
     try {
       await streamApollo(command, (event) => {
         if (event.type === 'status' || event.type === 'done') setRuntimeStatus(event.status);
-      }, controller.signal, 'assistant');
+      }, controller.signal, 'assistant', undefined, workspaceScope);
     } catch (error) {
       window.alert(error instanceof Error ? error.message : String(error));
     } finally {
       finishRun(targetConversationId);
     }
-  }, [activeView, conversationId, finishRun, streaming]);
+  }, [activeView, conversationId, finishRun, streaming, workspaceScope]);
 
   const changePermissionMode = useCallback(async (mode: ApolloPermissionMode) => {
     setPermissionMode(mode);

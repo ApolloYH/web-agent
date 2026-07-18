@@ -72,6 +72,10 @@ test('Web deployment permanently blocks host and external execution tools', () =
     assert.equal(isWebToolAllowed(tool), false, tool);
   }
   assert.equal(isWebToolAllowed('read_file'), true);
+  assert.equal(isWebToolAllowed('read_file', 'local'), false);
+  assert.equal(isWebToolAllowed('local_folder_list_files', 'local'), true);
+  assert.equal(isWebToolAllowed('local_folder_list_files', 'server'), false);
+  assert.equal(isWebToolAllowed('rag_search', 'local'), false);
   assert.equal(isWebToolAllowed('document_get_context'), true);
   assert.equal(isWebToolAllowed('browser_get_state'), true);
 });
