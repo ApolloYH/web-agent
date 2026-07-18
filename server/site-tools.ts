@@ -14,6 +14,7 @@ export type PublishedSite = {
   name: string;
   url: string;
   sourceDir: string;
+  conversationId?: string;
   publishedAt: string;
   fileCount: number;
   size: number;
@@ -21,7 +22,7 @@ export type PublishedSite = {
 
 type StoredSite = PublishedSite & { ownerId: string };
 
-export function createSiteTools(config: { publicRoot: string; baseUrl: string; ownerId: string }): ToolDefinition[] {
+export function createSiteTools(config: { publicRoot: string; baseUrl: string; ownerId: string; conversationId?: string }): ToolDefinition[] {
   if (!config.baseUrl) return [];
   return [{
     name: 'site_publish',
@@ -43,6 +44,7 @@ export function createSiteTools(config: { publicRoot: string; baseUrl: string; o
           publicRoot: config.publicRoot,
           baseUrl: config.baseUrl,
           ownerId: config.ownerId,
+          conversationId: config.conversationId,
           sourceDir: requiredText(input.source_dir, 'source_dir'),
           name: requiredText(input.name, 'name'),
           slug: typeof input.slug === 'string' ? input.slug : undefined,
@@ -60,6 +62,7 @@ export async function publishSite(input: {
   publicRoot: string;
   baseUrl: string;
   ownerId: string;
+  conversationId?: string;
   sourceDir: string;
   name: string;
   slug?: string;
@@ -96,6 +99,7 @@ export async function publishSite(input: {
       name: input.name.trim().slice(0, 80),
       url: `${input.baseUrl.replace(/\/$/, '')}/sites/${slug}/`,
       sourceDir,
+      ...(input.conversationId || existing?.conversationId ? { conversationId: input.conversationId || existing?.conversationId } : {}),
       publishedAt,
       fileCount: files.items.length,
       size: files.size,
@@ -115,10 +119,10 @@ export async function publishSite(input: {
   }
 }
 
-export async function listPublishedSites(publicRoot: string, ownerId: string): Promise<PublishedSite[]> {
+export async function listPublishedSites(publicRoot: string, ownerId: string, resolveConversationId?: (site: PublishedSite) => string | undefined): Promise<PublishedSite[]> {
   const entries = await fs.readdir(publicRoot, { withFileTypes: true }).catch(() => []);
   const sites = await Promise.all(entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith('.')).map((entry) => readManifest(path.join(publicRoot, entry.name))));
-  return sites.filter((site): site is StoredSite => site?.ownerId === ownerId).map(publicSite).sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
+  return sites.filter((site): site is StoredSite => site?.ownerId === ownerId).map(publicSite).map((site) => site.conversationId || !resolveConversationId ? site : { ...site, conversationId: resolveConversationId(site) }).sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
 }
 
 export async function deletePublishedSite(publicRoot: string, ownerId: string, slug: string): Promise<void> {

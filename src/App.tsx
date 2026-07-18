@@ -966,6 +966,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
               />}
               refreshKey={siteRefreshKey}
               onNewConversation={() => handleNewChat('sites')}
+              onOpenConversation={(id) => { void openConversation(id, 'sites'); }}
               onSiteChange={setActiveSite}
             />
           ) : activeView === 'rag' ? (

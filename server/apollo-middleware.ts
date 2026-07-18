@@ -18,7 +18,7 @@ import { createEntryTools } from './entry-tools.js';
 import { createDocumentTools } from './document-tools.js';
 import { createBrowserTools } from './browser-tools.js';
 import { createManagedBrowserTools } from './managed-browser-tools.js';
-import { createSiteTools, deletePublishedSite, listPublishedSites, publishSite, servePublishedSite } from './site-tools.js';
+import { createSiteTools, deletePublishedSite, listPublishedSites, publishSite, servePublishedSite, type PublishedSite } from './site-tools.js';
 import { createRagCollection, createRagTools, deleteRagCollection, deleteRagDocument, ensureRagSchema, ingestRagDocument, listRagCollections, listRagDocuments, searchRag, updateRagCollection, type RagChunkMethod, type RagPipelineGraph, type RagPipelineTemplate, type RagServices } from './rag.js';
 import { agentRunKey, capacityReason, consumeFixedWindow, pruneExpiredWindows, type RateLimitWindow } from './concurrency.js';
 import { inspectTelegramBot, TelegramGateway, type TelegramChannelConfig } from './telegram-gateway.js';
@@ -198,7 +198,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     }
   };
 
-  const clientTools = (runKey: string) => [
+  const clientTools = (runKey: string, conversationId = '') => [
     ...createDocumentTools((action, input) => requestClientTool(runKey, 'editor_request', action, input)),
     ...createBrowserTools((action, input) => requestClientTool(runKey, 'browser_request', action, input)),
     ...createManagedBrowserTools(managedBrowser ? {
@@ -212,6 +212,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       publicRoot: publicSitesRoot,
       baseUrl: sitesBaseUrl,
       ownerId: runs.get(runKey)!.userId,
+      conversationId: conversationId || undefined,
     } : { publicRoot: publicSitesRoot, baseUrl: '', ownerId: '' }),
     ...createRagTools(database, runs.get(runKey)?.userId ?? '', rag),
   ];
@@ -430,7 +431,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
           turnState,
           assertStorageCapacity: (incomingBytes) => assertWorkspaceCapacity(context.workspaceRoot, userStorageQuotaBytes, incomingBytes),
         }),
-        ...clientTools(runKey),
+        ...clientTools(runKey, conversationId),
       ],
     }));
     context.entryEngines.set(conversationId, runtimePromise);
@@ -884,7 +885,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     if (req.url === '/apollo-api/respond') return handleResponse(req, res, user.id, interactions);
     if (req.url.startsWith('/apollo-api/browser-view')) return handleManagedBrowserView(req, res, user.id);
     if (req.url === '/apollo-api/sites' && req.method === 'GET') {
-      return json(res, 200, { available: Boolean(sitesBaseUrl), sites: await listPublishedSites(publicSitesRoot, user.id) });
+      return json(res, 200, { available: Boolean(sitesBaseUrl), sites: await listPublishedSites(publicSitesRoot, user.id, (site) => findSiteConversationId(database, user.id, site)) });
     }
     if (req.url === '/apollo-api/sites/publish' && req.method === 'POST') {
       if (!sitesBaseUrl) return jsonError(res, 503, '站点发布尚未配置');
@@ -1929,6 +1930,16 @@ function listConversations(database: DatabaseSync, userId: string) {
     SELECT substr(id, ?) AS id, title, group_name AS "group", updated_at AS "updatedAt"
     FROM conversations WHERE id LIKE ? ORDER BY updated_at DESC
   `).all(prefix.length + 1, `${prefix}%`);
+}
+
+function findSiteConversationId(database: DatabaseSync, userId: string, site: PublishedSite): string | undefined {
+  const prefix = `${userId}:`;
+  const row = database.prepare(`
+    SELECT substr(id, ?) AS id FROM conversations
+    WHERE id LIKE ? AND (instr(messages_json, ?) > 0 OR instr(messages_json, ?) > 0)
+    ORDER BY updated_at DESC LIMIT 1
+  `).get(prefix.length + 1, `${prefix}%`, site.url, site.sourceDir) as { id: string } | undefined;
+  return row?.id;
 }
 
 function listConversationArtifacts(database: DatabaseSync, userId: string) {

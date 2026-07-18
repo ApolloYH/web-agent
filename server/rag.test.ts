@@ -32,5 +32,8 @@ test('RAG templates index documents and keep tenants isolated', async () => {
   assert.equal(chunkRagByMethod('问题：如何报销？\n\n答案：提交发票。', 'qa').length, 1);
   assert.deepEqual(chunkRagByMethod('短文全文', 'one'), ['短文全文']);
 
+  const custom = createRagCollection(database, 'user-a', '自定义流水线', '', 'general', 'custom');
+  assert.deepEqual(custom.pipelineGraph?.nodes.map((node) => node.type), ['source', 'index']);
+
   database.close();
 });

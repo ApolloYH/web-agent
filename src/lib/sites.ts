@@ -3,6 +3,7 @@ export interface PublishedSite {
   name: string;
   url: string;
   sourceDir: string;
+  conversationId?: string;
   publishedAt: string;
   fileCount: number;
   size: number;

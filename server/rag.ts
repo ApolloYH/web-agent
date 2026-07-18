@@ -18,7 +18,7 @@ export type RagCollection = {
 };
 
 export type RagChunkMethod = 'general' | 'qa' | 'manual' | 'table' | 'paper' | 'book' | 'laws' | 'presentation' | 'one';
-export type RagPipelineTemplate = 'general' | 'parent_child' | 'qa' | 'contextual' | 'markdown' | 'llm_qa' | 'complex_pdf';
+export type RagPipelineTemplate = 'custom' | 'general' | 'parent_child' | 'qa' | 'contextual' | 'markdown' | 'llm_qa' | 'complex_pdf';
 export type RagPipelineGraph = {
   nodes: Array<{ id: string; type: string; label: string; description: string; position: { x: number; y: number } }>;
   edges: Array<{ id: string; source: string; target: string }>;
@@ -61,7 +61,7 @@ const MAX_EXTRACTED_CHARS = 2_000_000;
 const SUPPORTED_EXTENSIONS = new Set(['.txt', '.md', '.markdown', '.csv', '.json', '.html', '.htm', '.doc', '.docx', '.pdf', '.ppt', '.pptx', '.xls', '.xlsx', '.png', '.jpg', '.jpeg', '.webp']);
 const LOCAL_EXTENSIONS = new Set(['.txt', '.md', '.markdown', '.csv', '.json', '.html', '.htm', '.docx', '.pdf']);
 const CHUNK_METHODS = new Set<RagChunkMethod>(['general', 'qa', 'manual', 'table', 'paper', 'book', 'laws', 'presentation', 'one']);
-const PIPELINE_TEMPLATES = new Set<RagPipelineTemplate>(['general', 'parent_child', 'qa', 'contextual', 'markdown', 'llm_qa', 'complex_pdf']);
+const PIPELINE_TEMPLATES = new Set<RagPipelineTemplate>(['custom', 'general', 'parent_child', 'qa', 'contextual', 'markdown', 'llm_qa', 'complex_pdf']);
 const SILICONFLOW_BASE_URL = 'https://api.siliconflow.cn/v1';
 const MINERU_BASE_URL = 'https://mineru.net/api/v4';
 
@@ -148,9 +148,20 @@ export function createRagCollection(database: DatabaseSync, userId: string, name
   if (count.count >= MAX_COLLECTIONS) throw new Error(`每个用户最多创建 ${MAX_COLLECTIONS} 个知识库`);
   const now = new Date().toISOString();
   const id = randomUUID();
+  const pipelineGraph = pipelineTemplate === 'custom' ? customPipelineGraph() : null;
   database.prepare('INSERT INTO rag_collections (id, user_id, name, description, chunk_method, pipeline_template, pipeline_graph, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, userId, name, description, chunkMethod, pipelineTemplate, '', now, now);
-  return { id, name, description, chunkMethod, pipelineTemplate, pipelineGraph: null, configurationLocked: false, documentCount: 0, chunkCount: 0, createdAt: now, updatedAt: now };
+    .run(id, userId, name, description, chunkMethod, pipelineTemplate, pipelineGraph ? JSON.stringify(pipelineGraph) : '', now, now);
+  return { id, name, description, chunkMethod, pipelineTemplate, pipelineGraph, configurationLocked: false, documentCount: 0, chunkCount: 0, createdAt: now, updatedAt: now };
+}
+
+function customPipelineGraph(): RagPipelineGraph {
+  return {
+    nodes: [
+      { id: 'source', type: 'source', label: '数据源', description: '接收待处理文档。', position: { x: 0, y: 120 } },
+      { id: 'index', type: 'index', label: '知识索引', description: '写入可检索知识库。', position: { x: 540, y: 120 } },
+    ],
+    edges: [{ id: 'edge-source-index', source: 'source', target: 'index' }],
+  };
 }
 
 export function updateRagCollection(database: DatabaseSync, userId: string, collectionId: string, patch: { name?: string; description?: string; chunkMethod?: RagChunkMethod; pipelineTemplate?: RagPipelineTemplate; pipelineGraph?: RagPipelineGraph | null }): RagCollection {

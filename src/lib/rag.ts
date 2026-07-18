@@ -13,7 +13,7 @@ export type RagCollection = {
 };
 
 export type RagChunkMethod = 'general' | 'qa' | 'manual' | 'table' | 'paper' | 'book' | 'laws' | 'presentation' | 'one';
-export type RagPipelineTemplate = 'general' | 'parent_child' | 'qa' | 'contextual' | 'markdown' | 'llm_qa' | 'complex_pdf';
+export type RagPipelineTemplate = 'custom' | 'general' | 'parent_child' | 'qa' | 'contextual' | 'markdown' | 'llm_qa' | 'complex_pdf';
 export type RagPipelineGraph = {
   nodes: Array<{ id: string; type: string; label: string; description: string; position: { x: number; y: number } }>;
   edges: Array<{ id: string; source: string; target: string }>;

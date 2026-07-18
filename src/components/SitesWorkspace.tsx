@@ -8,11 +8,13 @@ export default function SitesWorkspace({
   chat,
   refreshKey,
   onNewConversation,
+  onOpenConversation,
   onSiteChange,
 }: {
   chat: ReactNode;
   refreshKey: number;
   onNewConversation: () => void;
+  onOpenConversation: (id: string) => void;
   onSiteChange: (site: PublishedSite | null) => void;
 }) {
   const [sites, setSites] = useState<PublishedSite[]>([]);
@@ -67,7 +69,8 @@ export default function SitesWorkspace({
     setSelectedSlug(site.slug);
     setNotice('');
     setView('builder');
-    onNewConversation();
+    if (site.conversationId) onOpenConversation(site.conversationId);
+    else onNewConversation();
   };
 
   if (view === 'gallery') {
@@ -138,7 +141,7 @@ export default function SitesWorkspace({
               <span className="sr-only">当前站点</span>
               <select
                 value={selectedSlug}
-                onChange={(event) => setSelectedSlug(event.target.value)}
+                onChange={(event) => { const site = sites.find((item) => item.slug === event.target.value); if (site) openSite(site); }}
                 className="max-w-24 cursor-pointer truncate rounded-lg border-0 bg-[#f3f3f3] px-2 py-1.5 text-[10px] text-[#555] outline-none focus-visible:ring-2 focus-visible:ring-black/15 sm:max-w-52 sm:px-2.5"
               >
                 {!selectedSlug && <option value="">等待新站点发布</option>}
