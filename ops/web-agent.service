@@ -7,12 +7,12 @@ StartLimitBurst=5
 
 [Service]
 Type=simple
-User=wyd-agent
-Group=wyd-agent
-WorkingDirectory=/opt/wyd-web-agent/current
-EnvironmentFile=/opt/wyd-web-agent/shared/.env
+User=apollo-agent
+Group=apollo-agent
+WorkingDirectory=/opt/apollo-web-agent/current
+EnvironmentFile=/opt/apollo-web-agent/shared/.env
 Environment=PORT=9130
-Environment=HOME=/opt/wyd-web-agent/shared/home
+Environment=HOME=/opt/apollo-web-agent/shared/home
 Environment=SHELL=/bin/bash
 ExecStart=/usr/bin/node server-dist/server/production.js
 Restart=always
@@ -29,7 +29,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/wyd-web-agent/shared
+ReadWritePaths=/opt/apollo-web-agent/shared
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true

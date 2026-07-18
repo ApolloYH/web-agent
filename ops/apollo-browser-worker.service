@@ -5,11 +5,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=wyd-agent
-WorkingDirectory=/opt/wyd-web-agent/current/browser-worker
-EnvironmentFile=/opt/wyd-web-agent/shared/.env
-Environment=HOME=/opt/wyd-web-agent/shared/browser-worker-home
-ExecStart=/opt/wyd-web-agent/shared/browser-worker-venv/bin/python server.py
+User=apollo-agent
+WorkingDirectory=/opt/apollo-web-agent/current/browser-worker
+EnvironmentFile=/opt/apollo-web-agent/shared/.env
+Environment=HOME=/opt/apollo-web-agent/shared/browser-worker-home
+ExecStart=/opt/apollo-web-agent/shared/browser-worker-venv/bin/python server.py
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20
@@ -17,7 +17,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/wyd-web-agent/shared
+ReadWritePaths=/opt/apollo-web-agent/shared
 MemoryHigh=1500M
 MemoryMax=2G
 TasksMax=256

@@ -18,10 +18,10 @@ BROWSER_WORKER_MODEL=glm-5.2 \
 ## 生产 systemd
 
 ```bash
-python3.12 -m venv /opt/wyd-web-agent/shared/browser-worker-venv
-/opt/wyd-web-agent/shared/browser-worker-venv/bin/pip install -r /opt/wyd-web-agent/current/browser-worker/requirements.txt
-sudo install -d -o wyd-agent -g wyd-agent /opt/wyd-web-agent/shared/browser-worker-home
-sudo -u wyd-agent env HOME=/opt/wyd-web-agent/shared/browser-worker-home \
+python3.12 -m venv /opt/apollo-web-agent/shared/browser-worker-venv
+/opt/apollo-web-agent/shared/browser-worker-venv/bin/pip install -r /opt/apollo-web-agent/current/browser-worker/requirements.txt
+sudo install -d -o apollo-agent -g apollo-agent /opt/apollo-web-agent/shared/browser-worker-home
+sudo -u apollo-agent env HOME=/opt/apollo-web-agent/shared/browser-worker-home \
 sudo cp ops/apollo-browser-worker.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now apollo-browser-worker.service

@@ -4,14 +4,14 @@ After=web-agent.service
 
 [Service]
 Type=oneshot
-User=wyd-agent
-Group=wyd-agent
-WorkingDirectory=/opt/wyd-web-agent/current
-EnvironmentFile=/opt/wyd-web-agent/shared/.env
-ExecStart=/usr/bin/node scripts/backup-production.mjs --source /opt/wyd-web-agent/shared --destination /opt/wyd-web-agent/backups
+User=apollo-agent
+Group=apollo-agent
+WorkingDirectory=/opt/apollo-web-agent/current
+EnvironmentFile=/opt/apollo-web-agent/shared/.env
+ExecStart=/usr/bin/node scripts/backup-production.mjs --source /opt/apollo-web-agent/shared --destination /opt/apollo-web-agent/backups
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/wyd-web-agent/shared /opt/wyd-web-agent/backups
+ReadWritePaths=/opt/apollo-web-agent/shared /opt/apollo-web-agent/backups
