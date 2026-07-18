@@ -5,6 +5,7 @@ export type RagCollection = {
   chunkMethod: RagChunkMethod;
   pipelineTemplate: RagPipelineTemplate;
   pipelineGraph: RagPipelineGraph | null;
+  configurationLocked: boolean;
   documentCount: number;
   chunkCount: number;
   createdAt: string;

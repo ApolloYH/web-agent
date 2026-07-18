@@ -98,16 +98,11 @@ export default function SitesWorkspace({
   if (view === 'gallery') {
     return (
       <div key="gallery" className="app-view-motion flex min-h-0 flex-1 flex-col bg-white">
-        <header className="flex h-12 shrink-0 items-center justify-between border-b border-black/[0.07] pl-12 pr-3 lg:px-4">
-          <h1 className="text-[13px] font-semibold text-[#202020]">站点</h1>
-          <button type="button" disabled={!available} onClick={startNew} className="h-8 cursor-pointer rounded-full bg-[#171717] px-4 text-[11px] font-medium text-white transition-colors duration-200 hover:bg-[#343434] disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717]">创建站点</button>
-        </header>
-
-        <main className="min-h-0 flex-1 overflow-y-auto px-5 py-8 sm:px-8 lg:px-12 lg:py-10">
+        <main className="min-h-0 flex-1 overflow-y-auto px-5 pb-8 pt-16 sm:px-8 lg:px-12 lg:py-10">
           <div className="mx-auto w-full max-w-6xl">
-            <div className="mb-7">
-              <h2 className="text-[26px] font-semibold tracking-[-0.035em] text-[#171717] sm:text-[30px]">我的站点</h2>
-              <p className="mt-2 text-[12px] text-[#777]">预览已经发布的站点，或与 Apollo 一起创建一个新站点。</p>
+            <div className="mb-7 flex items-start justify-between gap-4">
+              <div><h1 className="text-[26px] font-semibold tracking-[-0.035em] text-[#171717] sm:text-[30px]">我的站点</h1><p className="mt-2 text-[12px] text-[#777]">预览已经发布的站点，或与 Apollo 一起创建一个新站点。</p></div>
+              {!loadingSites && sites.length > 0 && <button type="button" disabled={!available} onClick={startNew} className="h-8 shrink-0 cursor-pointer rounded-full bg-[#171717] px-4 text-[11px] font-medium text-white transition-colors duration-200 hover:bg-[#343434] disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717]">创建站点</button>}
             </div>
 
             {notice && <p aria-live="polite" className="mb-4 rounded-xl bg-[#f6f6f6] px-4 py-3 text-[11px] text-[#666]">{notice}</p>}
@@ -203,8 +198,8 @@ export default function SitesWorkspace({
         <section className="flex h-[52dvh] min-h-[360px] min-w-0 flex-1 flex-col bg-[#f7f7f8] lg:h-auto lg:min-h-0" aria-label="站点实时预览">
           <div className="flex min-h-11 shrink-0 items-center gap-2 border-b border-black/[0.06] bg-white px-3">
             <div className="flex items-center gap-1 rounded-lg bg-[#f3f3f3] p-0.5">
-              <PreviewTab active={preview === 'site'} onClick={() => setPreview('site')}>网站预览</PreviewTab>
-              <PreviewTab active={preview === 'browser'} onClick={() => setPreview('browser')}>参考网页</PreviewTab>
+              <PreviewTab active={preview === 'site'} onClick={() => setPreview('site')} title="查看 Apollo 已发布的当前网站">成品网站</PreviewTab>
+              <PreviewTab active={preview === 'browser'} onClick={() => setPreview('browser')} title="查看 Apollo 正在研究的外部参考页面">参考网页</PreviewTab>
             </div>
             <span className="shrink-0 text-[#858585]" aria-hidden="true"><LockIcon /></span>
             <div className="min-w-0 flex-1 truncate rounded-lg border border-black/[0.08] bg-[#f7f7f8] px-3 py-1.5 text-[9px] text-[#666]">
@@ -244,8 +239,8 @@ export default function SitesWorkspace({
   );
 }
 
-function PreviewTab({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
-  return <button type="button" onClick={onClick} className={`h-7 cursor-pointer rounded-md px-3 text-[9px] font-medium transition-colors ${active ? 'bg-white text-[#222] shadow-sm' : 'text-[#707070] hover:text-[#222]'}`}>{children}</button>;
+function PreviewTab({ active, onClick, title, children }: { active: boolean; onClick: () => void; title: string; children: ReactNode }) {
+  return <button type="button" onClick={onClick} title={title} aria-label={title} className={`h-7 cursor-pointer rounded-md px-3 text-[9px] font-medium transition-colors ${active ? 'bg-white text-[#222] shadow-sm' : 'text-[#707070] hover:text-[#222]'}`}>{children}</button>;
 }
 
 function LockIcon() {

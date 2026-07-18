@@ -134,7 +134,7 @@ export default function ChatPanel({
   };
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col bg-white text-[#0d0d0d]">
+    <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col bg-white text-[#0d0d0d]">
       <div
         ref={scrollRef}
         className={`flex-1 overflow-y-auto px-4 pt-6 md:px-6 ${embedded ? 'pb-8' : 'pb-40 md:pb-44'}`}

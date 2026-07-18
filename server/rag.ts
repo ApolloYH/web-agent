@@ -10,6 +10,7 @@ export type RagCollection = {
   chunkMethod: RagChunkMethod;
   pipelineTemplate: RagPipelineTemplate;
   pipelineGraph: RagPipelineGraph | null;
+  configurationLocked: boolean;
   documentCount: number;
   chunkCount: number;
   createdAt: string;
@@ -74,6 +75,7 @@ export function ensureRagSchema(database: DatabaseSync): void {
       chunk_method TEXT NOT NULL DEFAULT 'general',
       pipeline_template TEXT NOT NULL DEFAULT 'general',
       pipeline_graph TEXT NOT NULL DEFAULT '',
+      configuration_locked INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -113,13 +115,15 @@ export function ensureRagSchema(database: DatabaseSync): void {
   addColumn(database, 'rag_collections', 'chunk_method', "TEXT NOT NULL DEFAULT 'general'");
   addColumn(database, 'rag_collections', 'pipeline_template', "TEXT NOT NULL DEFAULT 'general'");
   addColumn(database, 'rag_collections', 'pipeline_graph', "TEXT NOT NULL DEFAULT ''");
+  addColumn(database, 'rag_collections', 'configuration_locked', 'INTEGER NOT NULL DEFAULT 0');
+  database.exec('UPDATE rag_collections SET configuration_locked = 1 WHERE configuration_locked = 0 AND EXISTS (SELECT 1 FROM rag_documents WHERE rag_documents.collection_id = rag_collections.id)');
   addColumn(database, 'rag_chunks', 'embedding', 'BLOB');
   addColumn(database, 'rag_chunks', 'embedding_model', 'TEXT');
 }
 
 export function listRagCollections(database: DatabaseSync, userId: string): RagCollection[] {
   const rows = database.prepare(`
-    SELECT c.id, c.name, c.description, c.chunk_method AS "chunkMethod", c.pipeline_template AS "pipelineTemplate", c.pipeline_graph AS "pipelineGraph",
+    SELECT c.id, c.name, c.description, c.chunk_method AS "chunkMethod", c.pipeline_template AS "pipelineTemplate", c.pipeline_graph AS "pipelineGraph", c.configuration_locked AS "configurationLocked",
       COUNT(DISTINCT d.id) AS "documentCount",
       COUNT(k.id) AS "chunkCount",
       c.created_at AS "createdAt", c.updated_at AS "updatedAt"
@@ -129,8 +133,8 @@ export function listRagCollections(database: DatabaseSync, userId: string): RagC
     WHERE c.user_id = ?
     GROUP BY c.id
     ORDER BY c.updated_at DESC
-  `).all(userId) as Array<Omit<RagCollection, 'pipelineGraph'> & { pipelineGraph: string }>;
-  return rows.map((row) => ({ ...row, pipelineGraph: parsePipelineGraph(row.pipelineGraph) }));
+  `).all(userId) as Array<Omit<RagCollection, 'pipelineGraph' | 'configurationLocked'> & { pipelineGraph: string; configurationLocked: number }>;
+  return rows.map((row) => ({ ...row, configurationLocked: row.configurationLocked === 1, pipelineGraph: parsePipelineGraph(row.pipelineGraph) }));
 }
 
 export function createRagCollection(database: DatabaseSync, userId: string, name: string, description = '', chunkMethod: RagChunkMethod = 'general', pipelineTemplate: RagPipelineTemplate = 'general'): RagCollection {
@@ -146,7 +150,7 @@ export function createRagCollection(database: DatabaseSync, userId: string, name
   const id = randomUUID();
   database.prepare('INSERT INTO rag_collections (id, user_id, name, description, chunk_method, pipeline_template, pipeline_graph, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .run(id, userId, name, description, chunkMethod, pipelineTemplate, '', now, now);
-  return { id, name, description, chunkMethod, pipelineTemplate, pipelineGraph: null, documentCount: 0, chunkCount: 0, createdAt: now, updatedAt: now };
+  return { id, name, description, chunkMethod, pipelineTemplate, pipelineGraph: null, configurationLocked: false, documentCount: 0, chunkCount: 0, createdAt: now, updatedAt: now };
 }
 
 export function updateRagCollection(database: DatabaseSync, userId: string, collectionId: string, patch: { name?: string; description?: string; chunkMethod?: RagChunkMethod; pipelineTemplate?: RagPipelineTemplate; pipelineGraph?: RagPipelineGraph | null }): RagCollection {
@@ -159,6 +163,12 @@ export function updateRagCollection(database: DatabaseSync, userId: string, coll
   if (!name || name.length > 80) throw new Error('知识库名称应为 1–80 个字符');
   if (description.length > 500) throw new Error('知识库描述不能超过 500 个字符');
   if (!CHUNK_METHODS.has(chunkMethod) || !PIPELINE_TEMPLATES.has(pipelineTemplate)) throw new Error('知识库处理配置无效');
+  if (chunkMethod !== current.chunkMethod || pipelineTemplate !== current.pipelineTemplate) {
+    throw new Error('切段模板和流水线模板只能在创建知识库时选择');
+  }
+  if (current.configurationLocked && JSON.stringify(pipelineGraph) !== JSON.stringify(current.pipelineGraph)) {
+    throw new Error('首份文档开始处理后，流水线不能修改');
+  }
   const now = new Date().toISOString();
   database.prepare('UPDATE rag_collections SET name = ?, description = ?, chunk_method = ?, pipeline_template = ?, pipeline_graph = ?, updated_at = ? WHERE id = ? AND user_id = ?')
     .run(name, description, chunkMethod, pipelineTemplate, pipelineGraph ? JSON.stringify(pipelineGraph) : '', now, collectionId, userId);
@@ -216,6 +226,7 @@ export async function ingestRagDocument(database: DatabaseSync, userId: string, 
   name = name.replace(/[\\/\0]/g, '_').slice(-160) || 'document';
   const extension = name.slice(name.lastIndexOf('.')).toLowerCase();
   if (!SUPPORTED_EXTENSIONS.has(extension)) throw new Error(`暂不支持 ${extension || '该'} 文件`);
+  database.prepare('UPDATE rag_collections SET configuration_locked = 1 WHERE id = ? AND user_id = ?').run(collectionId, userId);
   const forceMinerU = (collection.pipelineTemplate === 'complex_pdf' || collection.pipelineGraph?.nodes.some((node) => node.type === 'mineru')) && !['.txt', '.md', '.markdown', '.csv', '.json', '.html', '.htm'].includes(extension);
   const text = (await extractText(name, extension, bytes, services, forceMinerU)).slice(0, MAX_EXTRACTED_CHARS);
   const chunks = await runRagPipeline(text, name, collection.chunkMethod, collection.pipelineTemplate, collection.pipelineGraph, services);
@@ -473,9 +484,9 @@ function xmlEntities(value: string): string {
   });
 }
 
-function assertCollection(database: DatabaseSync, userId: string, collectionId: string): { name: string; description: string; chunkMethod: RagChunkMethod; pipelineTemplate: RagPipelineTemplate; pipelineGraph: RagPipelineGraph | null } {
-  const row = database.prepare('SELECT name, description, chunk_method AS "chunkMethod", pipeline_template AS "pipelineTemplate", pipeline_graph AS "pipelineGraph" FROM rag_collections WHERE id = ? AND user_id = ?').get(collectionId, userId) as { name: string; description: string; chunkMethod: RagChunkMethod; pipelineTemplate: RagPipelineTemplate; pipelineGraph: string } | undefined;
-  const collection = row ? { ...row, pipelineGraph: parsePipelineGraph(row.pipelineGraph) } : undefined;
+function assertCollection(database: DatabaseSync, userId: string, collectionId: string): { name: string; description: string; chunkMethod: RagChunkMethod; pipelineTemplate: RagPipelineTemplate; pipelineGraph: RagPipelineGraph | null; configurationLocked: boolean } {
+  const row = database.prepare('SELECT name, description, chunk_method AS "chunkMethod", pipeline_template AS "pipelineTemplate", pipeline_graph AS "pipelineGraph", configuration_locked AS "configurationLocked" FROM rag_collections WHERE id = ? AND user_id = ?').get(collectionId, userId) as { name: string; description: string; chunkMethod: RagChunkMethod; pipelineTemplate: RagPipelineTemplate; pipelineGraph: string; configurationLocked: number } | undefined;
+  const collection = row ? { ...row, configurationLocked: row.configurationLocked === 1, pipelineGraph: parsePipelineGraph(row.pipelineGraph) } : undefined;
   if (!collection) throw new Error('知识库不存在');
   return collection;
 }

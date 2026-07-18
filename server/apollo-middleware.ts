@@ -645,6 +645,12 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       }
     }
 
+    const changesImConnection = apiPath.startsWith('/apollo-api/im/')
+      && (req.method === 'PUT' || apiPath.startsWith('/apollo-api/im/weixin/login/'));
+    if (changesImConnection && runs.has(agentRunKey(user.id, 'assistant', ''))) {
+      return jsonError(res, 409, '助理正在回复消息，请结束后再修改 IM 连接');
+    }
+
     if (req.url === '/apollo-api/im' && req.method === 'GET') {
       const [telegram, feishu, wecom, dingtalk, weixin] = await Promise.all([
         readTelegramConfig(imConfigPath(context, 'telegram')),
