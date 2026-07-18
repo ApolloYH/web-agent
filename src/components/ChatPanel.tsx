@@ -51,6 +51,7 @@ export default function ChatPanel({
   emptyTitle,
   emptyDescription,
   placeholder = '给 Apollo 发消息',
+  streamingStatus,
 }: {
   messages: ChatMessage[];
   streaming: boolean;
@@ -68,6 +69,7 @@ export default function ChatPanel({
   emptyTitle?: string;
   emptyDescription?: string;
   placeholder?: string;
+  streamingStatus?: string;
 }) {
   const [input, setInput] = useState('');
   const [files, setFiles] = useState<File[]>([]);
@@ -224,6 +226,17 @@ export default function ChatPanel({
       </div>
 
       <div className={embedded ? 'shrink-0 bg-white px-4 pb-4 pt-3' : 'pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-white via-white to-transparent px-[10px] pb-5 pt-8 md:px-6 md:pb-10'}>
+        {streaming && streamingStatus && (
+          <div
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            className="app-state-motion mx-auto mb-2 flex max-w-3xl items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50/70 px-3 py-2 text-[11px] font-medium text-emerald-950"
+          >
+            <span className="size-2 shrink-0 rounded-full bg-emerald-500 shadow-[0_0_0_4px_rgba(34,197,94,0.12)] motion-safe:animate-pulse" aria-hidden="true" />
+            <span>{streamingStatus}</span>
+          </div>
+        )}
         <div className={`${embedded ? '' : 'pointer-events-auto'} relative mx-auto max-w-3xl rounded-[19px] border border-[#e5e5e5] bg-white p-2.5 shadow-[0_2px_12px_rgba(0,0,0,0.07)] transition-colors focus-within:border-[#b8b8b8]`}>
           {files.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-1.5 px-1">

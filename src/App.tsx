@@ -963,6 +963,7 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
                 emptyTitle="想做一个什么系统？"
                 emptyDescription="发来参考网页、资料或想法，我们边聊边搭建。"
                 placeholder="发网页链接，或继续描述要修改的地方"
+                streamingStatus="Apollo 正在构建并更新预览"
               />}
               refreshKey={siteRefreshKey}
               onNewConversation={() => handleNewChat('sites')}
