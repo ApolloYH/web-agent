@@ -964,7 +964,6 @@ function WorkspaceApp({ user, onLogout }: { user: AuthUser; onLogout: () => void
                 emptyDescription="发来参考网页、资料或想法，我们边聊边搭建。"
                 placeholder="发网页链接，或继续描述要修改的地方"
               />}
-              browserView={managedBrowserView}
               refreshKey={siteRefreshKey}
               onNewConversation={() => handleNewChat('sites')}
               onSiteChange={setActiveSite}

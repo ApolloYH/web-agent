@@ -1,20 +1,16 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { BrowserViewport } from '@/components/BrowserLivePanel';
 import ResizeDivider from '@/components/ResizeDivider';
-import type { ManagedBrowserView } from '@/lib/apolloAgent';
-import { getPublishedSites, republishSite, type PublishedSite } from '@/lib/sites';
+import { getPublishedSites, type PublishedSite } from '@/lib/sites';
 
 const CHAT_WIDTH = { default: 400, min: 320, max: 640 };
 
 export default function SitesWorkspace({
   chat,
-  browserView,
   refreshKey,
   onNewConversation,
   onSiteChange,
 }: {
   chat: ReactNode;
-  browserView: ManagedBrowserView | null;
   refreshKey: number;
   onNewConversation: () => void;
   onSiteChange: (site: PublishedSite | null) => void;
@@ -24,9 +20,7 @@ export default function SitesWorkspace({
   const [view, setView] = useState<'gallery' | 'builder'>('gallery');
   const [loadingSites, setLoadingSites] = useState(true);
   const [available, setAvailable] = useState(true);
-  const [busySlug, setBusySlug] = useState('');
   const [notice, setNotice] = useState('');
-  const [preview, setPreview] = useState<'site' | 'browser'>('site');
   const [chatWidth, setChatWidth] = useState(CHAT_WIDTH.default);
   const [resizing, setResizing] = useState(false);
   const newSiteAfterRef = useRef(0);
@@ -44,7 +38,6 @@ export default function SitesWorkspace({
       if (created) {
         newSiteAfterRef.current = 0;
         setSelectedSlug(created.slug);
-        setPreview('site');
       } else {
         setSelectedSlug((current) => current && result.sites.some((site) => site.slug === current)
           ? current
@@ -60,12 +53,10 @@ export default function SitesWorkspace({
 
   const selectedSite = sites.find((site) => site.slug === selectedSlug) ?? null;
   useEffect(() => { onSiteChange(selectedSite); }, [onSiteChange, selectedSite]);
-  useEffect(() => { if (browserView?.id) setPreview('browser'); }, [browserView?.id]);
 
   const startNew = () => {
     newSiteAfterRef.current = Date.now();
     setSelectedSlug('');
-    setPreview('site');
     setNotice('');
     setView('builder');
     onNewConversation();
@@ -74,25 +65,9 @@ export default function SitesWorkspace({
   const openSite = (site: PublishedSite) => {
     newSiteAfterRef.current = 0;
     setSelectedSlug(site.slug);
-    setPreview('site');
     setNotice('');
     setView('builder');
     onNewConversation();
-  };
-
-  const deploy = async () => {
-    if (!selectedSite) return;
-    setBusySlug(selectedSite.slug);
-    setNotice('');
-    try {
-      const updated = await republishSite(selectedSite);
-      setSites((items) => items.map((item) => item.slug === updated.slug ? updated : item));
-      setNotice(`“${updated.name}”已重新部署`);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : String(error));
-    } finally {
-      setBusySlug('');
-    }
   };
 
   if (view === 'gallery') {
@@ -163,7 +138,7 @@ export default function SitesWorkspace({
               <span className="sr-only">当前站点</span>
               <select
                 value={selectedSlug}
-                onChange={(event) => { setSelectedSlug(event.target.value); setPreview('site'); }}
+                onChange={(event) => setSelectedSlug(event.target.value)}
                 className="max-w-24 cursor-pointer truncate rounded-lg border-0 bg-[#f3f3f3] px-2 py-1.5 text-[10px] text-[#555] outline-none focus-visible:ring-2 focus-visible:ring-black/15 sm:max-w-52 sm:px-2.5"
               >
                 {!selectedSlug && <option value="">等待新站点发布</option>}
@@ -196,28 +171,8 @@ export default function SitesWorkspace({
         />
 
         <section className="flex h-[52dvh] min-h-[360px] min-w-0 flex-1 flex-col bg-[#f7f7f8] lg:h-auto lg:min-h-0" aria-label="站点实时预览">
-          <div className="flex min-h-11 shrink-0 items-center gap-2 border-b border-black/[0.06] bg-white px-3">
-            <div className="flex items-center gap-1 rounded-lg bg-[#f3f3f3] p-0.5">
-              <PreviewTab active={preview === 'site'} onClick={() => setPreview('site')} title="查看 Apollo 已发布的当前网站">成品网站</PreviewTab>
-              <PreviewTab active={preview === 'browser'} onClick={() => setPreview('browser')} title="查看 Apollo 正在研究的外部参考页面">参考网页</PreviewTab>
-            </div>
-            <span className="shrink-0 text-[#858585]" aria-hidden="true"><LockIcon /></span>
-            <div className="min-w-0 flex-1 truncate rounded-lg border border-black/[0.08] bg-[#f7f7f8] px-3 py-1.5 text-[9px] text-[#666]">
-              {preview === 'browser' ? browserView?.url || '参考网页将在这里打开' : selectedSite?.url || '站点发布后会自动出现在这里'}
-            </div>
-            <div className="flex items-center gap-1.5">
-              {notice && <span aria-live="polite" className="hidden max-w-48 truncate text-[9px] text-[#666] sm:block">{notice}</span>}
-              {selectedSite && preview === 'site' && <>
-                <button type="button" disabled={busySlug === selectedSite.slug} onClick={() => { void deploy(); }} className="h-7 cursor-pointer rounded-full px-2.5 text-[9px] font-medium text-[#555] transition-colors hover:bg-[#f2f2f2] disabled:cursor-wait disabled:opacity-50">{busySlug === selectedSite.slug ? '部署中…' : '重新部署'}</button>
-                <a href={selectedSite.url} target="_blank" rel="noreferrer" className="inline-flex h-7 cursor-pointer items-center rounded-full bg-[#171717] px-3 text-[9px] font-medium text-white transition-colors hover:bg-[#343434]">新窗口打开</a>
-              </>}
-            </div>
-          </div>
-
           <div className="relative min-h-0 flex-1 overflow-hidden p-3">
-            {preview === 'browser' ? (
-              <BrowserViewport view={browserView} className="app-state-motion h-full w-full rounded-xl border border-black/[0.09] shadow-[0_10px_30px_rgba(0,0,0,0.08)]" />
-            ) : selectedSite ? (
+            {selectedSite ? (
               <iframe
                 key={`${selectedSite.slug}:${selectedSite.publishedAt}`}
                 src={selectedSite.url}
@@ -237,14 +192,6 @@ export default function SitesWorkspace({
       </div>
     </div>
   );
-}
-
-function PreviewTab({ active, onClick, title, children }: { active: boolean; onClick: () => void; title: string; children: ReactNode }) {
-  return <button type="button" onClick={onClick} title={title} aria-label={title} className={`h-7 cursor-pointer rounded-md px-3 text-[9px] font-medium transition-colors ${active ? 'bg-white text-[#222] shadow-sm' : 'text-[#707070] hover:text-[#222]'}`}>{children}</button>;
-}
-
-function LockIcon() {
-  return <svg viewBox="0 0 24 24" width="14" height="14" fill="none" aria-hidden="true"><rect x="6.5" y="10" width="11" height="9" rx="2" stroke="currentColor" strokeWidth="1.6"/><path d="M9 10V7.8a3 3 0 0 1 6 0V10" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/></svg>;
 }
 
 function PreviewIcon() {
