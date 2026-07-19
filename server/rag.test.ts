@@ -6,6 +6,7 @@ import { insertWeKnoraText } from './rag-engines.js';
 import {
   createRagCollection,
   ensureRagSchema,
+  getRagDocumentChunks,
   getRagGraph,
   ingestRagDocument,
   refreshRagDocuments,
@@ -84,8 +85,11 @@ test('RAG uploads, queries and exposes the LightRAG graph', async () => {
     if (request.method === 'POST' && url.pathname === '/api/v1/knowledge-bases/wk-kb-1/knowledge/manual') return response.end(JSON.stringify({ success: true, data: { id: 'wk-manual-1', parse_status: 'processing' } }));
     if (request.method === 'POST' && url.pathname === '/api/v1/knowledge-bases/wk-kb-1/knowledge/file') return response.end(JSON.stringify({ success: true, data: { id: 'wk-doc-1', parse_status: 'processing' } }));
     if (request.method === 'GET' && url.pathname === '/api/v1/knowledge/wk-doc-1') return response.end(JSON.stringify({ success: true, data: { parse_status: 'completed' } }));
+    if (request.method === 'GET' && url.pathname === '/api/v1/chunks/wk-doc-1') return response.end(JSON.stringify({ success: true, total: 2, data: [{ id: 'chunk-1', chunk_index: 0, content: '建设单位承担安全责任。' }, { id: 'chunk-2', chunk_index: 1, content: '作业前必须完成审批。' }] }));
     if (request.method === 'POST' && url.pathname === '/api/v1/knowledge-bases/wk-kb-1/hybrid-search') return response.end(JSON.stringify({ success: true, data: [{ id: 'wk-chunk-1', knowledge_id: 'wk-doc-1', knowledge_filename: 'rules.txt', chunk_index: 0, content: 'WeKnora：建设单位承担安全责任。', score: 0.96 }] }));
     if (request.method === 'POST' && /\/light\/[^/]+\/documents\/upload$/.test(url.pathname)) return response.end(JSON.stringify({ status: 'success', track_id: 'lr-track-1' }));
+    if (request.method === 'POST' && /\/light\/[^/]+\/documents\/text$/.test(url.pathname)) return response.end(JSON.stringify({ status: 'success', track_id: 'lr-track-2' }));
+    if (request.method === 'DELETE' && /\/light\/[^/]+\/documents\/delete_document$/.test(url.pathname)) return response.end(JSON.stringify({ status: 'deletion_started' }));
     if (request.method === 'GET' && /\/light\/[^/]+\/documents\/track_status\/lr-track-1$/.test(url.pathname)) return response.end(JSON.stringify({ documents: [{ id: 'lr-doc-1', status: 'processed' }] }));
     if (request.method === 'POST' && /\/light\/[^/]+\/documents\/reprocess_failed$/.test(url.pathname)) return response.end(JSON.stringify({ status: 'reprocessing_started' }));
     if (request.method === 'POST' && /\/light\/[^/]+\/query\/data$/.test(url.pathname)) return response.end(JSON.stringify({ status: 'success', data: { chunks: [{ chunk_id: 'lr-chunk-1', file_path: 'rules.txt', content: 'LightRAG：审批关系来自制度图谱。' }], relationships: [] } }));
@@ -124,9 +128,13 @@ test('RAG uploads, queries and exposes the LightRAG graph', async () => {
     assert.equal(inserted.lightRagStatus, 'pending');
     const [refreshed] = await refreshRagDocuments(database, 'user-a', collection.id, services);
     assert.equal(refreshed?.status, 'ready');
+    const preview = await getRagDocumentChunks(database, 'user-a', inserted.id, services);
+    assert.equal(preview.total, 2);
+    assert.equal(preview.chunks[1]?.content, '作业前必须完成审批。');
 
     const result = await searchRagDetailed(database, 'user-a', '作业审批责任', collection.id, 6, services);
     assert.deepEqual(new Set(result.hits.map((hit) => hit.engine)), new Set(['weknora', 'lightrag']));
+    await searchRagDetailed(database, 'user-a', '你好', collection.id, 6, services);
     assert.throws(() => updateRagCollection(database, 'user-a', collection.id, { chunkSize: 800 }), /已有文档/);
     assert.equal(updateRagCollection(database, 'user-a', collection.id, { finalCount: 3 }).finalCount, 3);
     const graph = await getRagGraph(database, 'user-a', collection.id, '', services);
@@ -134,6 +142,8 @@ test('RAG uploads, queries and exposes the LightRAG graph', async () => {
     assert.equal(graph.nodes.length, 2);
     assert.deepEqual(graph.edges[0], { id: 'edge-1', source: '作业', target: '审批', type: 'REQUIRES', properties: {} });
     database.prepare("UPDATE rag_documents SET lightrag_status = 'failed' WHERE id = ?").run(inserted.id);
+    await retryRagDocument(database, 'user-a', inserted.id, services);
+    database.prepare("UPDATE rag_documents SET lightrag_status = 'failed', lightrag_error = 'legacy source file not found: rules.txt' WHERE id = ?").run(inserted.id);
     await retryRagDocument(database, 'user-a', inserted.id, services);
     assert.ok(requests.filter((item) => item.path.startsWith('/light/')).every((item) => item.workspace === collection.id.replaceAll('-', '_')));
     const createRequest = requests.find((item) => item.path.endsWith('/knowledge-bases'))!;
@@ -152,6 +162,8 @@ test('RAG uploads, queries and exposes the LightRAG graph', async () => {
     assert.deepEqual(JSON.parse(Buffer.from(lightRagRetry.lightRagConfig, 'base64url').toString()), {
       entityTypes: '人物\n组织', maxExtractionEntities: 36, relationConfig: '重点提取责任关系',
     });
+    const recoveredText = JSON.parse(requests.find((item) => item.path.endsWith('/documents/text'))!.body) as { text: string };
+    assert.match(recoveredText.text, /建设单位承担安全责任/);
     assert.equal(JSON.parse(requests.find((item) => item.path.endsWith('/knowledge/manual'))!.body).status, 'publish');
     assert.deepEqual(JSON.parse(requests.find((item) => item.path.endsWith('/hybrid-search'))!.body), {
       query_text: '作业审批责任',
@@ -166,6 +178,8 @@ test('RAG uploads, queries and exposes the LightRAG graph', async () => {
       query: '作业审批责任', mode: 'mix', top_k: 9, chunk_top_k: 9, enable_rerank: false,
       max_entity_tokens: 3000, max_relation_tokens: 4000, max_total_tokens: 16000,
     });
+    const shortQuery = requests.filter((item) => item.path.endsWith('/query/data')).map((item) => JSON.parse(item.body) as { query: string }).find((item) => item.query.startsWith('你好'));
+    assert.equal(shortQuery?.query, '你好？');
     assert.equal(requests.find((item) => item.path.endsWith('/graphs'))!.search, '?label=%E5%AE%A1%E6%89%B9&max_depth=3&max_nodes=200');
   } finally {
     database.close();

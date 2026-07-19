@@ -9,6 +9,7 @@ import {
   deleteWeKnoraKnowledgeBase,
   getLightRagGraph,
   getLightRagDocumentStatus,
+  getWeKnoraChunks,
   getWeKnoraDocumentStatus,
   insertLightRagFile,
   insertLightRagText,
@@ -99,6 +100,8 @@ export type RagDocument = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type RagChunkPreview = { id: string; index: number; content: string };
 
 export type RagHit = {
   id: string;
@@ -353,6 +356,22 @@ export function listRagDocuments(database: DatabaseSync, userId: string, collect
   return rows.map((row) => ({ ...row, status: combinedDocumentStatus(row.weknoraStatus, row.lightRagStatus) }));
 }
 
+export async function getRagDocumentChunks(
+  database: DatabaseSync,
+  userId: string,
+  documentId: string,
+  services: RagServices = {},
+): Promise<{ chunks: RagChunkPreview[]; total: number }> {
+  const document = database.prepare(`SELECT weknora_knowledge_id AS "weknoraKnowledgeId", weknora_status AS "weknoraStatus"
+    FROM rag_documents WHERE id = ? AND user_id = ?`).get(documentId, userId) as {
+      weknoraKnowledgeId: string; weknoraStatus: ExternalEngineStatus;
+    } | undefined;
+  if (!document) throw new Error('文档不存在');
+  if (document.weknoraStatus !== 'ready' || !document.weknoraKnowledgeId) throw new Error('WeKnora 尚未完成切片');
+  if (!weknoraConfigured(services)) throw new Error('未配置 WeKnora 服务');
+  return getWeKnoraChunks(document.weknoraKnowledgeId, services);
+}
+
 export async function refreshRagDocuments(database: DatabaseSync, userId: string, collectionId: string, services: RagServices = {}): Promise<RagDocument[]> {
   const documents = documentEngineRecords(database, userId, collectionId).filter((item) => item.weknoraStatus === 'pending' || item.lightRagStatus === 'pending');
   await Promise.all(documents.map(async (document) => {
@@ -377,10 +396,12 @@ export async function refreshRagDocuments(database: DatabaseSync, userId: string
 export async function retryRagDocument(database: DatabaseSync, userId: string, documentId: string, services: RagServices = {}): Promise<RagDocument> {
   const document = database.prepare(`SELECT id, collection_id AS "collectionId", name, parsed_text AS "parsedText",
     weknora_knowledge_id AS "weknoraKnowledgeId", weknora_status AS "weknoraStatus",
-    lightrag_track_id AS "lightRagTrackId", lightrag_status AS "lightRagStatus"
+    lightrag_track_id AS "lightRagTrackId", lightrag_document_id AS "lightRagDocumentId",
+    lightrag_status AS "lightRagStatus", lightrag_error AS "lightRagError"
     FROM rag_documents WHERE id = ? AND user_id = ?`).get(documentId, userId) as {
       id: string; collectionId: string; name: string; parsedText: string; weknoraKnowledgeId: string;
-      weknoraStatus: ExternalEngineStatus; lightRagTrackId: string; lightRagStatus: ExternalEngineStatus;
+      weknoraStatus: ExternalEngineStatus; lightRagTrackId: string; lightRagDocumentId: string;
+      lightRagStatus: ExternalEngineStatus; lightRagError: string;
   } | undefined;
   if (!document) throw new Error('文档不存在');
   if (!document.parsedText && ((!document.weknoraKnowledgeId && !['ready', 'pending'].includes(document.weknoraStatus)) || (!document.lightRagTrackId && !['ready', 'pending'].includes(document.lightRagStatus)))) {
@@ -398,6 +419,8 @@ export async function retryRagDocument(database: DatabaseSync, userId: string, d
     ? Promise.resolve(null)
     : !lightRagConfigured(services)
       ? Promise.reject(new Error('未配置 LightRAG 服务'))
+      : document.weknoraStatus === 'ready' && document.weknoraKnowledgeId && /source file not found/i.test(document.lightRagError)
+        ? recoverLightRagFromWeKnora(document, collection, services)
       : document.lightRagTrackId
         ? reprocessLightRagFailed(document.collectionId, lightRagBuildConfig(collection), services).then(() => ({ trackId: document.lightRagTrackId, fileSource: '', status: 'pending' as const, error: '' }))
         : insertLightRagText(document.collectionId, document.id, document.name, document.parsedText, lightRagBuildConfig(collection), services)
@@ -418,6 +441,27 @@ export async function retryRagDocument(database: DatabaseSync, userId: string, d
   );
   updateCollectionEngineStatus(database, userId, document.collectionId);
   return listRagDocuments(database, userId, document.collectionId).find((item) => item.id === documentId)!;
+}
+
+async function recoverLightRagFromWeKnora(
+  document: { id: string; collectionId: string; name: string; weknoraKnowledgeId: string; lightRagDocumentId: string },
+  collection: RagCollectionEngineRecord,
+  services: RagServices,
+): Promise<{ trackId: string; fileSource: string; status: 'pending'; error: string }> {
+  const chunks: RagChunkPreview[] = [];
+  let page = 1;
+  let total = 1;
+  while (chunks.length < total && page <= 50) {
+    const result = await getWeKnoraChunks(document.weknoraKnowledgeId, services, page, 100);
+    chunks.push(...result.chunks);
+    total = result.total;
+    page += 1;
+  }
+  const text = chunks.sort((left, right) => left.index - right.index).map((chunk) => chunk.content).join('\n\n').slice(0, MAX_EXTRACTED_CHARS);
+  if (!text) throw new Error('WeKnora 没有可用于恢复图谱的切片');
+  if (document.lightRagDocumentId) await deleteLightRagDocument(document.collectionId, document.lightRagDocumentId, services);
+  const result = await insertLightRagText(document.collectionId, document.id, document.name, text, lightRagBuildConfig(collection), services);
+  return { ...result, status: 'pending', error: '' };
 }
 
 export async function deleteRagDocument(database: DatabaseSync, userId: string, documentId: string, services: RagServices = {}): Promise<void> {

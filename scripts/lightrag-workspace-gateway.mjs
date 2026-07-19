@@ -95,7 +95,7 @@ async function workspaceInstance(workspace, config) {
   if (profile) { childEnv.PROMPT_DIR = promptRoot; childEnv.ENTITY_TYPE_PROMPT_FILE = profile; }
   const child = spawn(binary, [
     '--host', host, '--port', String(childPort), '--workspace', workspace,
-    '--working-dir', storage, '--input-dir', `${input}/${workspace}`, '--workers', '1', '--max-async', '2',
+    '--working-dir', storage, '--input-dir', input, '--workers', '1', '--max-async', '2',
   ], { env: childEnv, stdio: 'inherit' });
   const instance = { workspace, signature, port: childPort, process: child, active: 0, lastUsed: Date.now(), exited: false };
   child.once('exit', () => { instance.exited = true; if (instances.get(workspace) === instance) instances.delete(workspace); });

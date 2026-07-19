@@ -68,6 +68,8 @@ export type RagDocument = {
   updatedAt: string;
 };
 
+export type RagChunkPreview = { id: string; index: number; content: string };
+
 export type RagEngineStatus = 'unconfigured' | 'pending' | 'ready' | 'failed';
 
 export type RagHit = {
@@ -145,6 +147,10 @@ export async function deleteRagDocument(id: string): Promise<void> {
 
 export async function retryRagDocument(id: string): Promise<RagDocument> {
   return (await request<{ document: RagDocument }>(`/apollo-api/rag/documents/${encodeURIComponent(id)}/retry`, { method: 'POST' })).document;
+}
+
+export async function getRagDocumentChunks(id: string): Promise<{ chunks: RagChunkPreview[]; total: number }> {
+  return request(`/apollo-api/rag/documents/${encodeURIComponent(id)}/chunks`);
 }
 
 export async function searchRag(query: string, collectionId?: string): Promise<RagSearchResult> {

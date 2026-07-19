@@ -5,6 +5,7 @@ import {
   createRagCollection,
   deleteRagCollection,
   deleteRagDocument,
+  getRagDocumentChunks,
   getRagGraph,
   listRagCollections,
   listRagDocuments,
@@ -15,6 +16,7 @@ import {
   type RagCollection,
   type RagCollectionPatch,
   type RagChunkStrategy,
+  type RagChunkPreview,
   type RagDocument,
   type RagEngineReport,
   type RagGraph,
@@ -34,6 +36,7 @@ export default function RagWorkspace() {
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('');
   const selected = collections.find((item) => item.id === selectedId);
+  const hasPendingDocuments = documents.some((item) => item.status === 'pending');
 
   const refreshCollections = async (preferredId?: string) => {
     const next = await listRagCollections();
@@ -50,6 +53,16 @@ export default function RagWorkspace() {
     listRagDocuments(selectedId).then((items) => { if (!cancelled) setDocuments(items); }).catch((reason) => { if (!cancelled) setError(messageOf(reason)); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [selectedId]);
+  useEffect(() => {
+    if (!selectedId || !hasPendingDocuments) return;
+    let running = false;
+    const timer = window.setInterval(() => {
+      if (running) return;
+      running = true;
+      listRagDocuments(selectedId).then(setDocuments).catch(() => undefined).finally(() => { running = false; });
+    }, 4_000);
+    return () => window.clearInterval(timer);
+  }, [selectedId, hasPendingDocuments]);
 
   const updateSelected = async (patch: RagCollectionPatch): Promise<boolean> => {
     if (!selected) return false;
@@ -101,7 +114,7 @@ function CollectionDetail({ collection, documents, tab, loading, busy, error, on
     <header className="shrink-0 bg-white px-4 pt-3 md:px-7"><div className="flex items-center gap-3"><button type="button" onClick={onBack} aria-label="返回知识库" className="flex size-8 cursor-pointer items-center justify-center text-[#555] hover:text-black"><BackIcon /></button><span className="flex size-8 items-center justify-center text-black"><DatabaseIcon small /></span><h1 className="min-w-0 truncate text-[14px] font-semibold text-[#252525]">{collection.name}</h1></div>
       <nav className="mt-3 flex gap-5" aria-label="知识库功能">{([['documents', '文档'], ['graph', '知识图谱'], ['testing', '召回测试'], ['settings', '设置']] as Array<[DetailTab, string]>).map(([value, label]) => { const disabled = value === 'testing' && !documents.length; return <button type="button" key={value} disabled={disabled} title={disabled ? '处理至少一个文档后才能测试召回' : undefined} onClick={() => onTab(value)} className={`cursor-pointer border-b-2 px-1 pb-2.5 text-[11px] font-medium disabled:cursor-not-allowed disabled:text-black/25 ${tab === value ? 'border-black text-black' : 'border-transparent text-[#60646c] hover:text-black'}`}>{label}</button>; })}</nav>
     </header>
-    <div key={tab} className="app-view-motion min-h-0 flex-1 overflow-y-auto p-4 md:p-7">{error && <div role="alert" className="mx-auto mb-4 max-w-6xl border-l-2 border-black px-3.5 py-2.5 text-[11px] font-medium text-black">{error}</div>}{tab === 'documents' ? <DocumentsPanel collection={collection} documents={documents} loading={loading} busy={busy} onRefresh={onRefresh} onBusy={onBusy} onError={onError} onUpdate={onUpdate} onCancel={onBack} /> : tab === 'graph' ? <GraphPanel collection={collection} /> : tab === 'testing' ? <TestingPanel collection={collection} /> : <CollectionSettings collection={collection} busy={busy} hasDocuments={Boolean(documents.length)} onUpdate={onUpdate} onDelete={onDelete} />}</div>
+    <div key={tab} className="app-view-motion min-h-0 flex-1 overflow-y-auto p-4 md:p-7">{error && <div role="alert" className="mx-auto mb-4 max-w-6xl border-l-2 border-black px-3.5 py-2.5 text-[11px] font-medium text-black">{error}</div>}{tab === 'documents' ? <DocumentsPanel collection={collection} documents={documents} loading={loading} busy={busy} onRefresh={onRefresh} onBusy={onBusy} onError={onError} onUpdate={onUpdate} onCancel={onBack} /> : tab === 'graph' ? <GraphPanel collection={collection} documents={documents} /> : tab === 'testing' ? <TestingPanel collection={collection} /> : <CollectionSettings collection={collection} busy={busy} hasDocuments={Boolean(documents.length)} onUpdate={onUpdate} onDelete={onDelete} />}</div>
   </section>;
 }
 
@@ -139,6 +152,8 @@ function DocumentsPanel({ collection, documents, loading, busy, onRefresh, onBus
   const [lightRagMode, setLightRagMode] = useState(collection.lightRagMode);
   const [graphDepth, setGraphDepth] = useState(collection.graphDepth);
   const [lightRagTopK, setLightRagTopK] = useState(collection.lightRagTopK);
+  const [chunkPreview, setChunkPreview] = useState<{ document: RagDocument; chunks: RagChunkPreview[]; total: number } | null>(null);
+  const [chunkPreviewLoading, setChunkPreviewLoading] = useState('');
 
   useEffect(() => {
     setParser(collection.parser); setStrategy(collection.chunkStrategy); setChunkSize(collection.chunkSize);
@@ -180,6 +195,12 @@ function DocumentsPanel({ collection, documents, loading, busy, onRefresh, onBus
   };
   const remove = async (document: RagDocument) => { if (!window.confirm(`删除文档“${document.name}”？`)) return; onBusy(true); onError(''); try { await deleteRagDocument(document.id); await onRefresh(); } catch (reason) { onError(messageOf(reason)); } finally { onBusy(false); } };
   const retry = async (document: RagDocument) => { onBusy(true); onError(''); try { await retryRagDocument(document.id); await onRefresh(); } catch (reason) { onError(messageOf(reason)); } finally { onBusy(false); } };
+  const showChunks = async (document: RagDocument) => {
+    setChunkPreviewLoading(document.id); onError('');
+    try { const result = await getRagDocumentChunks(document.id); setChunkPreview({ document, ...result }); }
+    catch (reason) { onError(messageOf(reason)); }
+    finally { setChunkPreviewLoading(''); }
+  };
   const cancelWizard = () => { setFiles([]); setPreviews([]); setStep(1); if (documents.length) setWizardOpen(false); else onCancel(); };
 
   return <div className="mx-auto max-w-6xl">
@@ -216,17 +237,35 @@ function DocumentsPanel({ collection, documents, loading, busy, onRefresh, onBus
         {step === 4 ? <div className="py-3 text-center"><span className="mx-auto flex size-10 items-center justify-center text-black"><DatabaseIcon small /></span><h3 className="mt-3 text-[14px] font-semibold text-[#252525]">准备提交到双引擎</h3><p className="mx-auto mt-2 max-w-lg text-[9px] leading-4 text-[#60646c]">{files.length} 个文件将{parser === 'mineru' ? '先由 MinerU 提取内容，再写入两个引擎' : '分别交由两个引擎本地解析'}；WeKnora 使用“{chunkStrategies.find((item) => item.value === strategy)?.name}”，LightRAG 独立构建知识图谱。</p><WizardActions onBack={() => setStep(3)} nextLabel={busy ? '处理中…' : '开始处理'} nextDisabled={busy} onNext={() => { void processFiles(); }} /></div> : null}
       </div>
     </section> : null}
-    {documents.length || !wizardOpen ? <div className="mt-7"><div className="grid grid-cols-[minmax(0,1fr)_72px] gap-3 px-2 py-2.5 text-[9px] font-medium text-[#60646c]"><span>名称</span><span /></div>{loading ? <p className="py-16 text-center text-[11px] text-[#666]">正在读取…</p> : documents.length ? documents.map((document) => <div key={document.id} className="group grid min-h-16 grid-cols-[minmax(0,1fr)_72px] items-center gap-3 px-2 transition-colors hover:bg-white"><span className="min-w-0"><span className="block truncate text-[11px] font-medium text-[#333]">{document.name}</span><span className={`mt-0.5 block truncate text-[9px] ${document.weknoraError || document.lightRagError ? 'font-medium text-black' : 'text-[#60646c]'}`} title={document.weknoraError || document.lightRagError || ''}>{document.weknoraError || document.lightRagError || formatSize(document.size)}</span></span><span className="flex justify-end gap-1">{['failed', 'unconfigured'].includes(document.weknoraStatus) || ['failed', 'unconfigured'].includes(document.lightRagStatus) ? <button type="button" disabled={busy} onClick={() => { void retry(document); }} aria-label={`重试 ${document.name}`} title="重试" className="flex size-7 cursor-pointer items-center justify-center rounded-full text-[#555] hover:bg-black/[0.06] hover:text-black disabled:opacity-40"><RefreshIcon /></button> : null}<button type="button" disabled={busy} onClick={() => { void remove(document); }} aria-label={`删除 ${document.name}`} className="cursor-pointer px-1.5 py-1 text-[9px] text-[#777] opacity-0 hover:text-black group-hover:opacity-100 focus:opacity-100">删除</button></span></div>) : <p className="py-14 text-center text-[10px] text-[#737b86]">还没有已处理文档。</p>}</div> : null}
+    {documents.length || !wizardOpen ? <div className="mt-7">
+      <div className="grid grid-cols-[minmax(0,1fr)_120px] gap-3 px-2 py-2.5 text-[9px] font-medium text-[#60646c]"><span>名称</span><span /></div>
+      {loading ? <p className="py-16 text-center text-[11px] text-[#666]">正在读取…</p> : documents.length ? documents.map((document) => <div key={document.id} className="group grid min-h-20 grid-cols-[minmax(0,1fr)_120px] items-center gap-3 px-2 transition-colors hover:bg-white">
+        <span className="min-w-0">
+          <span className="block truncate text-[11px] font-medium text-[#333]">{document.name}</span>
+          <span role={document.status === 'pending' ? 'status' : undefined} className="mt-1 block truncate text-[9px] font-medium text-[#555]">{documentIndexStatus(document)}</span>
+          {document.weknoraError || document.lightRagError ? <span className="mt-0.5 block truncate text-[9px] text-black" title={document.weknoraError || document.lightRagError}>{document.weknoraError || document.lightRagError}</span> : <span className="mt-0.5 block text-[8px] text-[#888]">{formatSize(document.size)}</span>}
+        </span>
+        <span className="flex justify-end gap-1">
+          {document.weknoraStatus === 'ready' ? <button type="button" disabled={chunkPreviewLoading === document.id} onClick={() => { void showChunks(document); }} className="cursor-pointer px-1.5 py-1 text-[9px] text-[#666] hover:text-black disabled:opacity-40">{chunkPreviewLoading === document.id ? '读取中' : '切片'}</button> : null}
+          {['failed', 'unconfigured'].includes(document.weknoraStatus) || ['failed', 'unconfigured'].includes(document.lightRagStatus) ? <button type="button" disabled={busy} onClick={() => { void retry(document); }} aria-label={`重试 ${document.name}`} title="重试" className="flex size-7 cursor-pointer items-center justify-center rounded-full text-[#555] hover:bg-black/[0.06] hover:text-black disabled:opacity-40"><RefreshIcon /></button> : null}
+          <button type="button" disabled={busy} onClick={() => { void remove(document); }} aria-label={`删除 ${document.name}`} className="cursor-pointer px-1.5 py-1 text-[9px] text-[#777] opacity-0 hover:text-black group-hover:opacity-100 focus:opacity-100">删除</button>
+        </span>
+      </div>) : <p className="py-14 text-center text-[10px] text-[#737b86]">还没有已处理文档。</p>}
+      {chunkPreview ? <section className="mt-5 border-t border-black/[0.09] pt-5"><div className="flex items-center justify-between gap-3"><div><h3 className="text-[11px] font-semibold text-[#333]">{chunkPreview.document.name} · 实际切片</h3><p className="mt-1 text-[9px] text-[#666]">WeKnora 已生成 {chunkPreview.total} 个切片，当前显示前 {chunkPreview.chunks.length} 个。</p></div><button type="button" onClick={() => setChunkPreview(null)} className="cursor-pointer px-2 py-1 text-[9px] text-[#666] hover:text-black">收起</button></div><div className="mt-3 max-h-[480px] overflow-y-auto">{chunkPreview.chunks.map((chunk) => <article key={chunk.id} className="border-b border-black/[0.06] px-1 py-3"><p className="text-[9px] font-medium text-[#666]">切片 {chunk.index + 1}</p><p className="mt-2 whitespace-pre-wrap text-[10px] leading-5 text-[#333]">{chunk.content}</p></article>)}</div></section> : null}
+    </div> : null}
   </div>;
 }
 
-function GraphPanel({ collection }: { collection: RagCollection }) {
+function GraphPanel({ collection, documents }: { collection: RagCollection; documents: RagDocument[] }) {
   const [graph, setGraph] = useState<RagGraph | null>(null);
   const [activeNode, setActiveNode] = useState<RagGraph['nodes'][number] | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const load = async (label = '') => { setLoading(true); setError(''); try { const next = await getRagGraph(collection.id, label); setGraph(next); setActiveNode(null); } catch (reason) { setError(messageOf(reason)); } finally { setLoading(false); } };
-  useEffect(() => { void load(); }, [collection.id]);
+  const graphVersion = documents.map((item) => item.lightRagStatus).join(',');
+  const graphPending = documents.some((item) => item.lightRagStatus === 'pending');
+  const graphFailed = documents.some((item) => item.lightRagStatus === 'failed');
+  useEffect(() => { void load(); }, [collection.id, graphVersion]);
   const nodes = useMemo<Array<Node>>(() => {
     if (!graph) return [];
     const root = graph.nodes.find((item) => item.id === graph.label);
@@ -240,7 +279,7 @@ function GraphPanel({ collection }: { collection: RagCollection }) {
   }, [graph]);
   const edges = useMemo<Array<Edge>>(() => graph?.edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target, label: edge.type || undefined, type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed, color: '#888' }, style: { stroke: '#888' }, labelStyle: { fontSize: 8, fill: '#555' } })) ?? [], [graph]);
   return <div className="mx-auto flex h-full min-h-[620px] max-w-[1500px] flex-col">{graph?.labels.length ? <div className="flex justify-end"><label htmlFor="graph-root" className="text-[9px] font-medium text-[#555]">中心实体<select id="graph-root" value={graph.label} onChange={(event) => { void load(event.target.value); }} className="mt-1 block h-9 max-w-64 cursor-pointer rounded-md bg-black/[0.035] px-3 text-[10px] text-[#333] outline-none focus:bg-white focus:ring-1 focus:ring-black/20"><option value="">选择实体</option>{graph.labels.map((label) => <option key={label} value={label}>{label}</option>)}</select></label></div> : null}
-    <div aria-live="polite" className="mt-4 grid min-h-0 flex-1 overflow-hidden bg-white lg:grid-cols-[minmax(0,1fr)_280px]">{loading ? <p className="flex min-h-[540px] items-center justify-center text-[11px] text-[#60646c]">正在读取 LightRAG 图谱…</p> : error ? <div className="flex min-h-[540px] flex-col items-center justify-center p-6 text-center"><p className="text-[11px] font-medium text-black">{error}</p><button type="button" onClick={() => { void load(graph?.label || ''); }} aria-label="重试加载知识图谱" title="重试" className="mt-3 flex size-9 cursor-pointer items-center justify-center rounded-full text-[#555] hover:bg-black/[0.06] hover:text-black"><RefreshIcon /></button></div> : nodes.length ? <div className="min-h-[540px] min-w-0"><ReactFlow nodes={nodes} edges={edges} fitView fitViewOptions={{ padding: 0.2 }} minZoom={0.08} maxZoom={2.5} nodesConnectable={false} onNodeClick={(_, node) => setActiveNode(graph?.nodes.find((item) => item.id === node.id) ?? null)} proOptions={{ hideAttribution: true }}><Background color="#e5e5e5" gap={22} size={1} /><Controls position="bottom-left" showInteractive /><MiniMap pannable zoomable nodeColor={(node) => node.id === graph?.label ? '#111' : '#999'} maskColor="rgba(255,255,255,.75)" /></ReactFlow></div> : <div className="flex min-h-[540px] flex-col items-center justify-center p-6 text-center"><GraphIcon /><p className="mt-3 text-[12px] font-medium text-[#444]">图谱尚未生成</p><p className="mt-1 text-[10px] text-[#60646c]">等待 LightRAG 完成文档处理后再查看。</p></div>}<aside className="border-t border-black/[0.07] p-5 lg:border-l lg:border-t-0">{activeNode ? <><span className="text-[9px] font-medium text-black">{textProperty(activeNode.properties.entity_type) || activeNode.labels[0] || '实体'}</span><h3 className="mt-3 break-words text-[13px] font-semibold text-[#222]">{activeNode.id}</h3><p className="mt-3 whitespace-pre-wrap text-[10px] leading-5 text-[#555]">{textProperty(activeNode.properties.description) || '暂无实体说明。'}</p></> : <div className="flex h-full min-h-32 flex-col items-center justify-center text-center"><GraphIcon /><p className="mt-3 text-[10px] text-[#60646c]">点击实体查看说明</p></div>}</aside></div>
+    <div aria-live="polite" className="mt-4 grid min-h-0 flex-1 overflow-hidden bg-white lg:grid-cols-[minmax(0,1fr)_280px]">{loading ? <p className="flex min-h-[540px] items-center justify-center text-[11px] text-[#60646c]">正在读取 LightRAG 图谱…</p> : error ? <div className="flex min-h-[540px] flex-col items-center justify-center p-6 text-center"><p className="text-[11px] font-medium text-black">{error}</p><button type="button" onClick={() => { void load(graph?.label || ''); }} aria-label="重试加载知识图谱" title="重试" className="mt-3 flex size-9 cursor-pointer items-center justify-center rounded-full text-[#555] hover:bg-black/[0.06] hover:text-black"><RefreshIcon /></button></div> : nodes.length ? <div className="min-h-[540px] min-w-0"><ReactFlow nodes={nodes} edges={edges} fitView fitViewOptions={{ padding: 0.2 }} minZoom={0.08} maxZoom={2.5} nodesConnectable={false} onNodeClick={(_, node) => setActiveNode(graph?.nodes.find((item) => item.id === node.id) ?? null)} proOptions={{ hideAttribution: true }}><Background color="#e5e5e5" gap={22} size={1} /><Controls position="bottom-left" showInteractive /><MiniMap pannable zoomable nodeColor={(node) => node.id === graph?.label ? '#111' : '#999'} maskColor="rgba(255,255,255,.75)" /></ReactFlow></div> : <div className="flex min-h-[540px] flex-col items-center justify-center p-6 text-center"><GraphIcon /><p className="mt-3 text-[12px] font-medium text-[#444]">{graphPending ? '知识图谱正在构建' : graphFailed ? '知识图谱构建失败' : documents.length ? '未提取到实体关系' : '尚未上传文档'}</p><p className="mt-1 text-[10px] text-[#60646c]">{graphPending ? 'LightRAG 完成后会自动显示。' : graphFailed ? '请回到文档页点击重试。' : documents.length ? '当前文档没有生成可展示的图谱。' : '上传并处理文档后生成知识图谱。'}</p></div>}<aside className="border-t border-black/[0.07] p-5 lg:border-l lg:border-t-0">{activeNode ? <><span className="text-[9px] font-medium text-black">{textProperty(activeNode.properties.entity_type) || activeNode.labels[0] || '实体'}</span><h3 className="mt-3 break-words text-[13px] font-semibold text-[#222]">{activeNode.id}</h3><p className="mt-3 whitespace-pre-wrap text-[10px] leading-5 text-[#555]">{textProperty(activeNode.properties.description) || '暂无实体说明。'}</p></> : <div className="flex h-full min-h-32 flex-col items-center justify-center text-center"><GraphIcon /><p className="mt-3 text-[10px] text-[#60646c]">点击实体查看说明</p></div>}</aside></div>
   </div>;
 }
 
@@ -389,6 +428,13 @@ function escapeRegExp(value: string): string {
 function textProperty(value: unknown): string { return typeof value === 'string' ? value : ''; }
 function messageOf(reason: unknown): string { return reason instanceof Error ? reason.message : String(reason); }
 function formatSize(bytes: number): string { return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`; }
+function documentIndexStatus(document: RagDocument): string {
+  if (document.weknoraStatus === 'ready' && document.lightRagStatus === 'ready') return '索引完成 · 向量索引与知识图谱均已就绪';
+  if (document.weknoraStatus === 'pending' || document.lightRagStatus === 'pending') return `索引中 · WeKnora ${engineStatusLabel(document.weknoraStatus)} · LightRAG ${engineStatusLabel(document.lightRagStatus)}`;
+  if (document.weknoraStatus === 'ready' || document.lightRagStatus === 'ready') return `部分完成 · WeKnora ${engineStatusLabel(document.weknoraStatus)} · LightRAG ${engineStatusLabel(document.lightRagStatus)}`;
+  return `索引失败 · WeKnora ${engineStatusLabel(document.weknoraStatus)} · LightRAG ${engineStatusLabel(document.lightRagStatus)}`;
+}
+function engineStatusLabel(status: RagDocument['weknoraStatus']): string { return status === 'ready' ? '完成' : status === 'pending' ? '处理中' : status === 'failed' ? '失败' : '未配置'; }
 function engineLabel(engine?: RagEngineReport['engine'] | RagHit['engine']): string { return engine === 'weknora' ? 'WeKnora' : engine === 'lightrag' ? 'LightRAG' : engine === 'reranker' ? 'Apollo 重排' : '未知引擎'; }
 function reportStatusLabel(status: RagEngineReport['status']): string { return status === 'ok' ? '正常' : status === 'partial' ? '部分可用' : status === 'error' ? '失败' : '未配置'; }
 function ChunkStrategyIcon({ strategy }: { strategy: RagChunkStrategy }) {

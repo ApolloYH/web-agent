@@ -18,6 +18,8 @@ export type ExternalEngineHit = {
 
 export type ExternalEngineStatus = 'unconfigured' | 'pending' | 'ready' | 'failed';
 
+export type WeKnoraChunk = { id: string; index: number; content: string };
+
 export type LightRagGraph = {
   label: string;
   labels: string[];
@@ -121,6 +123,28 @@ export async function getWeKnoraDocumentStatus(
   );
   if (!response.success || !response.data) throw new Error(response.message || response.error || 'WeKnora 状态查询失败');
   return { status: weknoraStatus(response.data.parse_status), error: response.data.error_message || '' };
+}
+
+export async function getWeKnoraChunks(
+  knowledgeId: string,
+  services: ExternalRagServices,
+  page = 1,
+  pageSize = 100,
+): Promise<{ chunks: WeKnoraChunk[]; total: number }> {
+  const response = await engineJson<WeKnoraEnvelope<Array<{ id?: string; chunk_index?: number; content?: string }>> & { total?: number }>(
+    engineUrl(services.weknoraBaseUrl!, `/chunks/${encodeURIComponent(knowledgeId)}?page=${page}&page_size=${pageSize}`),
+    { headers: apiHeaders(services.weknoraApiKey!, false) },
+    services,
+  );
+  if (!response.success || !Array.isArray(response.data)) throw new Error(response.message || response.error || 'WeKnora 切片查询失败');
+  return {
+    chunks: response.data.filter((item) => item.content).map((item, index) => ({
+      id: item.id || `${knowledgeId}-${page}-${index}`,
+      index: item.chunk_index ?? (page - 1) * pageSize + index,
+      content: item.content!,
+    })),
+    total: response.total ?? response.data.length,
+  };
 }
 
 export async function reparseWeKnoraDocument(knowledgeId: string, services: ExternalRagServices): Promise<ExternalEngineStatus> {
@@ -283,6 +307,7 @@ export async function searchLightRag(
   tokenBudget: { entity: number; relation: number; total: number },
   services: ExternalRagServices,
 ): Promise<ExternalEngineHit[]> {
+  const lightRagQuery = [...query].length < 3 ? `${query}？` : query;
   const response = await engineJson<{
     status?: string;
     message?: string;
@@ -295,7 +320,7 @@ export async function searchLightRag(
     method: 'POST',
     headers: lightRagHeaders(services.lightRagApiKey!, collectionId),
     body: JSON.stringify({
-      query,
+      query: lightRagQuery,
       mode,
       top_k: limit,
       chunk_top_k: limit,
