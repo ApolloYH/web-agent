@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Apollo RAG engine data backup
+
+[Timer]
+OnCalendar=*-*-* 03:40:00
+RandomizedDelaySec=20m
+Persistent=true
+Unit=rag-engines-backup.service
+
+[Install]
+WantedBy=timers.target

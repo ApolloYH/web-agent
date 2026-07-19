@@ -1,0 +1,13 @@
+[Unit]
+Description=Apollo RAG engine data backup
+After=weknora.service lightrag-workspace-gateway.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/apollo-web-agent/current/scripts/backup-rag-engines.sh
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/apollo-rag/backups

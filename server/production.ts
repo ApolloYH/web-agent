@@ -28,12 +28,17 @@ const apollo = createApolloMiddleware({
   sitesBaseUrl: process.env.APOLLO_SITES_BASE_URL || '',
   rag: {
     siliconflowApiKey: process.env.SILICONFLOW_API_KEY || '',
-    embeddingModel: process.env.RAG_EMBEDDING_MODEL || 'BAAI/bge-m3',
     rerankerModel: process.env.RAG_RERANKER_MODEL || 'BAAI/bge-reranker-v2-m3',
     mineruApiKey: process.env.MINERU_API_KEY || '',
     chatApiKey: process.env.RAG_CHAT_API_KEY || '',
     chatBaseUrl: process.env.RAG_CHAT_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4',
     chatModel: process.env.RAG_CHAT_MODEL || 'glm-4.7-flashx',
+    weknoraBaseUrl: process.env.WEKNORA_BASE_URL || '',
+    weknoraApiKey: process.env.WEKNORA_API_KEY || '',
+    weknoraEmbeddingModelId: process.env.WEKNORA_EMBEDDING_MODEL_ID || '',
+    lightRagBaseUrlTemplate: process.env.LIGHTRAG_BASE_URL_TEMPLATE || '',
+    lightRagApiKey: process.env.LIGHTRAG_API_KEY || '',
+    externalTimeoutMs: Number(process.env.RAG_EXTERNAL_TIMEOUT_MS || 300_000),
   },
   entry: {
     langcoreApiKey: process.env.LANGCORE_API_KEY || '',

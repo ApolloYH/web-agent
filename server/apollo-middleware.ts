@@ -19,7 +19,7 @@ import { createDocumentTools } from './document-tools.js';
 import { createBrowserTools } from './browser-tools.js';
 import { createManagedBrowserTools } from './managed-browser-tools.js';
 import { createSiteTools, deletePublishedSite, listPublishedSites, publishSite, servePublishedSite, type PublishedSite } from './site-tools.js';
-import { createRagCollection, createRagTools, deleteRagCollection, deleteRagDocument, ensureRagSchema, ingestRagDocument, listRagCollections, listRagDocuments, searchRag, updateRagCollection, type RagChunkMethod, type RagPipelineGraph, type RagPipelineTemplate, type RagServices } from './rag.js';
+import { createRagCollection, createRagTools, deleteRagCollection, deleteRagDocument, ensureRagSchema, getRagGraph, ingestRagDocument, listRagCollections, refreshRagDocuments, retryRagDocument, searchRagDetailed, updateRagCollection, type RagCollectionPatch, type RagServices } from './rag.js';
 import { agentRunKey, capacityReason, consumeFixedWindow, pruneExpiredWindows, type RateLimitWindow } from './concurrency.js';
 import { inspectTelegramBot, TelegramGateway, type TelegramChannelConfig } from './telegram-gateway.js';
 import {
@@ -603,9 +603,9 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       if (req.method === 'GET') return json(res, 200, { collections: listRagCollections(database, user.id) });
       if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
       try {
-        const body = JSON.parse(await readBody(req, 8 * 1024)) as { name?: unknown; description?: unknown; chunkMethod?: unknown; pipelineTemplate?: unknown };
-        if (typeof body.name !== 'string' || (body.description !== undefined && typeof body.description !== 'string') || (body.chunkMethod !== undefined && typeof body.chunkMethod !== 'string') || (body.pipelineTemplate !== undefined && typeof body.pipelineTemplate !== 'string')) throw new Error('知识库参数无效');
-        return json(res, 201, { collection: createRagCollection(database, user.id, body.name, body.description ?? '', (body.chunkMethod || 'general') as RagChunkMethod, (body.pipelineTemplate || 'general') as RagPipelineTemplate) });
+        const body = JSON.parse(await readBody(req, 8 * 1024)) as { name?: unknown; description?: unknown };
+        if (typeof body.name !== 'string' || (body.description !== undefined && typeof body.description !== 'string')) throw new Error('知识库参数无效');
+        return json(res, 201, { collection: createRagCollection(database, user.id, body.name, body.description ?? '') });
       } catch (error) {
         return jsonError(res, 400, error instanceof Error ? error.message : String(error));
       }
@@ -616,7 +616,28 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
         const body = JSON.parse(await readBody(req, 8 * 1024)) as { query?: unknown; collectionId?: unknown; limit?: unknown };
         if (typeof body.query !== 'string' || (body.collectionId !== undefined && typeof body.collectionId !== 'string')) throw new Error('检索参数无效');
         const limit = typeof body.limit === 'number' ? body.limit : 6;
-        return json(res, 200, { hits: await searchRag(database, user.id, body.query, body.collectionId ?? '', limit, rag) });
+        return json(res, 200, await searchRagDetailed(database, user.id, body.query, body.collectionId ?? '', limit, rag));
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    const ragGraph = apiPath.match(/^\/apollo-api\/rag\/([^/]+)\/graph$/);
+    if (ragGraph) {
+      if (req.method !== 'GET') return jsonError(res, 405, 'Method not allowed');
+      try {
+        const label = new URL(req.url!, 'http://localhost').searchParams.get('label') || '';
+        return json(res, 200, await getRagGraph(database, user.id, decodeURIComponent(ragGraph[1]!), label, rag));
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    const ragDocumentRetry = apiPath.match(/^\/apollo-api\/rag\/documents\/([^/]+)\/retry$/);
+    if (ragDocumentRetry) {
+      if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
+      try {
+        return json(res, 200, { document: await retryRagDocument(database, user.id, decodeURIComponent(ragDocumentRetry[1]!), rag) });
       } catch (error) {
         return jsonError(res, 400, error instanceof Error ? error.message : String(error));
       }
@@ -626,7 +647,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     if (ragDocumentDelete) {
       if (req.method !== 'DELETE') return jsonError(res, 405, 'Method not allowed');
       try {
-        deleteRagDocument(database, user.id, decodeURIComponent(ragDocumentDelete[1]!));
+        await deleteRagDocument(database, user.id, decodeURIComponent(ragDocumentDelete[1]!), rag);
         return json(res, 200, { ok: true });
       } catch (error) {
         return jsonError(res, 404, error instanceof Error ? error.message : String(error));
@@ -637,7 +658,7 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     if (ragDocuments) {
       const collectionId = decodeURIComponent(ragDocuments[1]!);
       if (req.method === 'GET') {
-        try { return json(res, 200, { documents: listRagDocuments(database, user.id, collectionId) }); }
+        try { return json(res, 200, { documents: await refreshRagDocuments(database, user.id, collectionId, rag) }); }
         catch (error) { return jsonError(res, 404, error instanceof Error ? error.message : String(error)); }
       }
       if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
@@ -650,7 +671,8 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
           headers: req.headers as HeadersInit,
           body: new Uint8Array(bytes).buffer,
         });
-        const files = (await request.formData()).getAll('files');
+        const form = await request.formData();
+        const files = form.getAll('files');
         if (!files.length || files.length > 8) throw new Error('每次请选择 1–8 个文件');
         const documents = [];
         for (const file of files) {
@@ -668,16 +690,16 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       const collectionId = decodeURIComponent(ragCollection[1]!);
       if (req.method === 'PATCH') {
         try {
-          const body = JSON.parse(await readBody(req, 72 * 1024)) as { name?: unknown; description?: unknown; chunkMethod?: unknown; pipelineTemplate?: unknown; pipelineGraph?: unknown };
-          if ((body.name !== undefined && typeof body.name !== 'string') || (body.description !== undefined && typeof body.description !== 'string') || (body.chunkMethod !== undefined && typeof body.chunkMethod !== 'string') || (body.pipelineTemplate !== undefined && typeof body.pipelineTemplate !== 'string')) throw new Error('知识库参数无效');
-          return json(res, 200, { collection: updateRagCollection(database, user.id, collectionId, body as { name?: string; description?: string; chunkMethod?: RagChunkMethod; pipelineTemplate?: RagPipelineTemplate; pipelineGraph?: RagPipelineGraph | null }) });
+          const body = JSON.parse(await readBody(req, 16 * 1024)) as RagCollectionPatch & { name?: unknown; description?: unknown };
+          if ((body.name !== undefined && typeof body.name !== 'string') || (body.description !== undefined && typeof body.description !== 'string')) throw new Error('知识库参数无效');
+          return json(res, 200, { collection: updateRagCollection(database, user.id, collectionId, body as RagCollectionPatch) });
         } catch (error) {
           return jsonError(res, 400, error instanceof Error ? error.message : String(error));
         }
       }
       if (req.method !== 'DELETE') return jsonError(res, 405, 'Method not allowed');
       try {
-        deleteRagCollection(database, user.id, collectionId);
+        await deleteRagCollection(database, user.id, collectionId, rag);
         return json(res, 200, { ok: true });
       } catch (error) {
         return jsonError(res, 404, error instanceof Error ? error.message : String(error));

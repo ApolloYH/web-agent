@@ -26,12 +26,17 @@ export default defineConfig(({ mode }) => {
     } : undefined,
     rag: {
       siliconflowApiKey: env.SILICONFLOW_API_KEY || '',
-      embeddingModel: env.RAG_EMBEDDING_MODEL || 'BAAI/bge-m3',
       rerankerModel: env.RAG_RERANKER_MODEL || 'BAAI/bge-reranker-v2-m3',
       mineruApiKey: env.MINERU_API_KEY || '',
       chatApiKey: env.RAG_CHAT_API_KEY || '',
       chatBaseUrl: env.RAG_CHAT_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4',
       chatModel: env.RAG_CHAT_MODEL || 'glm-4.7-flashx',
+      weknoraBaseUrl: env.WEKNORA_BASE_URL || '',
+      weknoraApiKey: env.WEKNORA_API_KEY || '',
+      weknoraEmbeddingModelId: env.WEKNORA_EMBEDDING_MODEL_ID || '',
+      lightRagBaseUrlTemplate: env.LIGHTRAG_BASE_URL_TEMPLATE || '',
+      lightRagApiKey: env.LIGHTRAG_API_KEY || '',
+      externalTimeoutMs: Number(env.RAG_EXTERNAL_TIMEOUT_MS || 300_000),
     },
     entry: {
       langcoreApiKey: env.LANGCORE_API_KEY || '',

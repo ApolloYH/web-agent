@@ -1,0 +1,29 @@
+[Unit]
+Description=Apollo LightRAG workspace gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=apollo-agent
+Group=apollo-agent
+WorkingDirectory=/opt/apollo-rag/lightrag
+EnvironmentFile=/opt/apollo-rag/shared/lightrag.env
+Environment=LIGHTRAG_GATEWAY_PORT=9700
+Environment=LIGHTRAG_MAX_WORKSPACES=3
+Environment=LIGHTRAG_WORKSPACE_IDLE_MS=1800000
+ExecStart=/usr/bin/node /opt/apollo-rag/lightrag-workspace-gateway.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/apollo-rag/shared/lightrag
+MemoryMax=2200M
+TasksMax=512
+
+[Install]
+WantedBy=multi-user.target
