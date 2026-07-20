@@ -12,6 +12,7 @@ EnvironmentFile=/opt/apollo-rag/shared/lightrag.env
 Environment=LIGHTRAG_GATEWAY_PORT=9700
 Environment=LIGHTRAG_MAX_WORKSPACES=3
 Environment=LIGHTRAG_WORKSPACE_IDLE_MS=1800000
+Environment=SUMMARY_LANGUAGE=Chinese
 ExecStart=/usr/bin/node /opt/apollo-rag/lightrag-workspace-gateway.mjs
 Restart=on-failure
 RestartSec=5

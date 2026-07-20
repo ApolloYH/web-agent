@@ -153,6 +153,8 @@ export async function getRagDocumentChunks(id: string): Promise<{ chunks: RagChu
   return request(`/apollo-api/rag/documents/${encodeURIComponent(id)}/chunks`);
 }
 
+export function ragDocumentSourceUrl(id: string): string { return `/apollo-api/rag/documents/${encodeURIComponent(id)}/source`; }
+
 export async function searchRag(query: string, collectionId?: string): Promise<RagSearchResult> {
   return request<RagSearchResult>('/apollo-api/rag/search', {
     method: 'POST',

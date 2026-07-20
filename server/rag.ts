@@ -4,6 +4,7 @@ import { unzipSync } from 'fflate';
 import type { ToolDefinition } from '@apolloyh/apollo-agent';
 import {
   createWeKnoraKnowledgeBase,
+  downloadWeKnoraDocument,
   deleteLightRagDocument,
   deleteWeKnoraDocument,
   deleteWeKnoraKnowledgeBase,
@@ -370,6 +371,15 @@ export async function getRagDocumentChunks(
   if (document.weknoraStatus !== 'ready' || !document.weknoraKnowledgeId) throw new Error('WeKnora 尚未完成切片');
   if (!weknoraConfigured(services)) throw new Error('未配置 WeKnora 服务');
   return getWeKnoraChunks(document.weknoraKnowledgeId, services);
+}
+
+export async function getRagDocumentSource(database: DatabaseSync, userId: string, documentId: string, services: RagServices = {}): Promise<{ bytes: Uint8Array; contentType: string; name: string }> {
+  const document = database.prepare(`SELECT name, weknora_knowledge_id AS "weknoraKnowledgeId" FROM rag_documents WHERE id = ? AND user_id = ?`)
+    .get(documentId, userId) as { name: string; weknoraKnowledgeId: string } | undefined;
+  if (!document) throw new Error('文档不存在');
+  if (!document.weknoraKnowledgeId) throw new Error('原文尚未就绪');
+  if (!weknoraConfigured(services)) throw new Error('未配置 WeKnora 服务');
+  return { ...await downloadWeKnoraDocument(document.weknoraKnowledgeId, services), name: document.name };
 }
 
 export async function refreshRagDocuments(database: DatabaseSync, userId: string, collectionId: string, services: RagServices = {}): Promise<RagDocument[]> {

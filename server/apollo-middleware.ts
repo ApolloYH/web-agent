@@ -19,7 +19,7 @@ import { createDocumentTools } from './document-tools.js';
 import { createBrowserTools } from './browser-tools.js';
 import { createManagedBrowserTools } from './managed-browser-tools.js';
 import { createSiteTools, deletePublishedSite, listPublishedSites, publishSite, servePublishedSite, type PublishedSite } from './site-tools.js';
-import { createRagCollection, createRagTools, deleteRagCollection, deleteRagDocument, ensureRagSchema, getRagDocumentChunks, getRagGraph, ingestRagDocument, listRagCollections, refreshRagDocuments, retryRagDocument, searchRagDetailed, updateRagCollection, type RagCollectionPatch, type RagServices } from './rag.js';
+import { createRagCollection, createRagTools, deleteRagCollection, deleteRagDocument, ensureRagSchema, getRagDocumentChunks, getRagDocumentSource, getRagGraph, ingestRagDocument, listRagCollections, refreshRagDocuments, retryRagDocument, searchRagDetailed, updateRagCollection, type RagCollectionPatch, type RagServices } from './rag.js';
 import { agentRunKey, capacityReason, consumeFixedWindow, pruneExpiredWindows, type RateLimitWindow } from './concurrency.js';
 import { inspectTelegramBot, TelegramGateway, type TelegramChannelConfig } from './telegram-gateway.js';
 import {
@@ -648,6 +648,20 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
       if (req.method !== 'GET') return jsonError(res, 405, 'Method not allowed');
       try {
         return json(res, 200, await getRagDocumentChunks(database, user.id, decodeURIComponent(ragDocumentChunks[1]!), rag));
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    const ragDocumentSource = apiPath.match(/^\/apollo-api\/rag\/documents\/([^/]+)\/source$/);
+    if (ragDocumentSource) {
+      if (req.method !== 'GET') return jsonError(res, 405, 'Method not allowed');
+      try {
+        const source = await getRagDocumentSource(database, user.id, decodeURIComponent(ragDocumentSource[1]!), rag);
+        res.statusCode = 200;
+        res.setHeader('Content-Type', source.contentType === 'application/octet-stream' ? artifactMime(path.extname(source.name).toLowerCase()) : source.contentType);
+        res.setHeader('Cache-Control', 'private, max-age=300');
+        return res.end(Buffer.from(source.bytes));
       } catch (error) {
         return jsonError(res, 400, error instanceof Error ? error.message : String(error));
       }

@@ -147,6 +147,15 @@ export async function getWeKnoraChunks(
   };
 }
 
+export async function downloadWeKnoraDocument(knowledgeId: string, services: ExternalRagServices): Promise<{ bytes: Uint8Array; contentType: string }> {
+  const response = await fetch(engineUrl(services.weknoraBaseUrl!, `/knowledge/${encodeURIComponent(knowledgeId)}/download`), {
+    headers: apiHeaders(services.weknoraApiKey!, false),
+    signal: AbortSignal.timeout(Math.max(1_000, Math.min(300_000, services.externalTimeoutMs || 300_000))),
+  });
+  if (!response.ok) throw new Error(`WeKnora 原文读取失败 ${response.status}`);
+  return { bytes: new Uint8Array(await response.arrayBuffer()), contentType: response.headers.get('content-type') || 'application/octet-stream' };
+}
+
 export async function reparseWeKnoraDocument(knowledgeId: string, services: ExternalRagServices): Promise<ExternalEngineStatus> {
   const response = await engineJson<WeKnoraEnvelope<{ parse_status?: string }>>(
     engineUrl(services.weknoraBaseUrl!, `/knowledge/${encodeURIComponent(knowledgeId)}/reparse`),
@@ -322,6 +331,8 @@ export async function searchLightRag(
     body: JSON.stringify({
       query: lightRagQuery,
       mode,
+      hl_keywords: [lightRagQuery],
+      ll_keywords: [lightRagQuery],
       top_k: limit,
       chunk_top_k: limit,
       enable_rerank: false,
@@ -363,7 +374,7 @@ export async function getLightRagGraph(collectionId: string, label: string, dept
   const selected = label.trim() || labels[0] || '';
   if (!selected) return { label: '', labels, nodes: [], edges: [] };
   const graph = await engineJson<Pick<LightRagGraph, 'nodes' | 'edges'>>(
-    lightRagUrl(services, collectionId, `/graphs?label=${encodeURIComponent(selected)}&max_depth=${depth}&max_nodes=200`),
+    lightRagUrl(services, collectionId, `/graphs?label=${encodeURIComponent(selected)}&max_depth=${depth}&max_nodes=60`),
     { headers: lightRagHeaders(services.lightRagApiKey!, collectionId, false) },
     services,
   );

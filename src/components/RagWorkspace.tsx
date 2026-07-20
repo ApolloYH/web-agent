@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import ReactFlow, { Background, Controls, MarkerType, MiniMap, type Edge, type Node } from 'reactflow';
 import 'reactflow/dist/style.css';
+import WordView from './WordView';
 import {
   createRagCollection,
   deleteRagCollection,
@@ -10,6 +11,7 @@ import {
   listRagCollections,
   listRagDocuments,
   retryRagDocument,
+  ragDocumentSourceUrl,
   searchRag,
   updateRagCollection,
   uploadRagDocuments,
@@ -203,6 +205,8 @@ function DocumentsPanel({ collection, documents, loading, busy, onRefresh, onBus
   };
   const cancelWizard = () => { setFiles([]); setPreviews([]); setStep(1); if (documents.length) setWizardOpen(false); else onCancel(); };
 
+  if (chunkPreview) return <ChunkWorkspace preview={chunkPreview} onClose={() => setChunkPreview(null)} />;
+
   return <div className="mx-auto max-w-6xl">
     {documents.length && !wizardOpen ? <div className="flex justify-end"><button type="button" onClick={() => { setWizardOpen(true); setStep(1); }} className="cursor-pointer rounded-md bg-black px-3.5 py-2 text-[10px] font-medium text-white hover:bg-[#333]">添加文档</button></div> : null}
     {wizardOpen ? <section className="mt-2">
@@ -251,8 +255,21 @@ function DocumentsPanel({ collection, documents, loading, busy, onRefresh, onBus
           <button type="button" disabled={busy} onClick={() => { void remove(document); }} aria-label={`删除 ${document.name}`} className="cursor-pointer px-1.5 py-1 text-[9px] text-[#777] opacity-0 hover:text-black group-hover:opacity-100 focus:opacity-100">删除</button>
         </span>
       </div>) : <p className="py-14 text-center text-[10px] text-[#737b86]">还没有已处理文档。</p>}
-      {chunkPreview ? <section className="mt-5 border-t border-black/[0.09] pt-5"><div className="flex items-center justify-between gap-3"><div><h3 className="text-[11px] font-semibold text-[#333]">{chunkPreview.document.name} · 实际切片</h3><p className="mt-1 text-[9px] text-[#666]">WeKnora 已生成 {chunkPreview.total} 个切片，当前显示前 {chunkPreview.chunks.length} 个。</p></div><button type="button" onClick={() => setChunkPreview(null)} className="cursor-pointer px-2 py-1 text-[9px] text-[#666] hover:text-black">收起</button></div><div className="mt-3 max-h-[480px] overflow-y-auto">{chunkPreview.chunks.map((chunk) => <article key={chunk.id} className="border-b border-black/[0.06] px-1 py-3"><p className="text-[9px] font-medium text-[#666]">切片 {chunk.index + 1}</p><p className="mt-2 whitespace-pre-wrap text-[10px] leading-5 text-[#333]">{chunk.content}</p></article>)}</div></section> : null}
     </div> : null}
+  </div>;
+}
+
+function ChunkWorkspace({ preview, onClose }: { preview: { document: RagDocument; chunks: RagChunkPreview[]; total: number }; onClose: () => void }) {
+  const [query, setQuery] = useState('');
+  const sourceUrl = ragDocumentSourceUrl(preview.document.id);
+  const chunks = preview.chunks.filter((chunk) => chunk.content.toLowerCase().includes(query.trim().toLowerCase()));
+  const isWord = /\.docx$/i.test(preview.document.name);
+  return <div className="mx-auto flex h-[calc(100vh-190px)] min-h-[640px] max-w-[1500px] flex-col overflow-hidden bg-white">
+    <header className="flex h-14 shrink-0 items-center justify-between border-b border-black/[0.08] px-4"><div className="min-w-0"><h2 className="truncate text-[12px] font-semibold text-[#222]">{preview.document.name}</h2><p className="mt-0.5 text-[9px] text-[#777]">原文与 WeKnora 实际切片对照</p></div><button type="button" onClick={onClose} className="cursor-pointer rounded-md px-3 py-2 text-[10px] text-[#555] hover:bg-black/[0.04] hover:text-black">返回文档</button></header>
+    <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_minmax(420px,0.95fr)]">
+      <section className="flex min-h-[360px] min-w-0 flex-col border-b border-black/[0.08] lg:border-b-0 lg:border-r"><div className="flex h-12 shrink-0 items-center justify-between px-4"><h3 className="text-[10px] font-semibold text-[#444]">文件预览</h3><a href={sourceUrl} download={preview.document.name} className="text-[9px] text-[#666] hover:text-black">下载原文</a></div><div className="min-h-0 flex-1 overflow-hidden bg-[#f5f5f5]">{isWord ? <WordView url={sourceUrl} fileName={preview.document.name} /> : <iframe title={`${preview.document.name} 原文预览`} src={sourceUrl} className="h-full w-full border-0 bg-white" />}</div></section>
+      <section className="flex min-h-0 min-w-0 flex-col"><div className="shrink-0 border-b border-black/[0.08] px-4 py-3"><div className="flex items-center justify-between gap-3"><div><h3 className="text-[10px] font-semibold text-[#444]">文本切片</h3><p className="mt-0.5 text-[8px] text-[#888]">已索引 {preview.total} 个</p></div><label className="flex h-9 w-56 max-w-[55%] items-center rounded-md bg-black/[0.035] px-3"><span className="sr-only">搜索切片内容</span><SearchIcon /><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索切片内容" className="min-w-0 flex-1 bg-transparent px-2 text-[9px] outline-none" /></label></div></div><div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-[#fafafa] p-4">{chunks.length ? chunks.map((chunk) => <article key={chunk.id} className="bg-white px-4 py-4"><div className="flex items-center justify-between gap-3"><p className="text-[9px] font-semibold text-[#555]">#{chunk.index + 1}</p><span className="text-[8px] text-[#777]">{chunk.content.length} 字 · 已索引</span></div><p className="mt-3 whitespace-pre-wrap text-[10px] leading-5 text-[#333]">{chunk.content}</p></article>) : <p className="flex h-full items-center justify-center text-[10px] text-[#777]">没有匹配的切片</p>}</div></section>
+    </div>
   </div>;
 }
 
@@ -277,7 +294,7 @@ function GraphPanel({ collection, documents }: { collection: RagCollection; docu
       return { id: item.id, position: isRoot ? { x: 0, y: 0 } : { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius }, data: { label: item.id }, style: { width: 150, borderRadius: 0, border: `1px solid ${isRoot ? '#111' : '#ccc'}`, background: '#fff', color: '#222', fontSize: 10, padding: 10, boxShadow: 'none' } };
     });
   }, [graph]);
-  const edges = useMemo<Array<Edge>>(() => graph?.edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target, label: edge.type || undefined, type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed, color: '#888' }, style: { stroke: '#888' }, labelStyle: { fontSize: 8, fill: '#555' } })) ?? [], [graph]);
+  const edges = useMemo<Array<Edge>>(() => graph?.edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target, label: edge.type && edge.type !== 'DIRECTED' ? edge.type : undefined, type: 'smoothstep', markerEnd: { type: MarkerType.ArrowClosed, color: '#888' }, style: { stroke: '#888' }, labelStyle: { fontSize: 8, fill: '#555' } })) ?? [], [graph]);
   return <div className="mx-auto flex h-full min-h-[620px] max-w-[1500px] flex-col">{graph?.labels.length ? <div className="flex justify-end"><label htmlFor="graph-root" className="text-[9px] font-medium text-[#555]">中心实体<select id="graph-root" value={graph.label} onChange={(event) => { void load(event.target.value); }} className="mt-1 block h-9 max-w-64 cursor-pointer rounded-md bg-black/[0.035] px-3 text-[10px] text-[#333] outline-none focus:bg-white focus:ring-1 focus:ring-black/20"><option value="">选择实体</option>{graph.labels.map((label) => <option key={label} value={label}>{label}</option>)}</select></label></div> : null}
     <div aria-live="polite" className="mt-4 grid min-h-0 flex-1 overflow-hidden bg-white lg:grid-cols-[minmax(0,1fr)_280px]">{loading ? <p className="flex min-h-[540px] items-center justify-center text-[11px] text-[#60646c]">正在读取 LightRAG 图谱…</p> : error ? <div className="flex min-h-[540px] flex-col items-center justify-center p-6 text-center"><p className="text-[11px] font-medium text-black">{error}</p><button type="button" onClick={() => { void load(graph?.label || ''); }} aria-label="重试加载知识图谱" title="重试" className="mt-3 flex size-9 cursor-pointer items-center justify-center rounded-full text-[#555] hover:bg-black/[0.06] hover:text-black"><RefreshIcon /></button></div> : nodes.length ? <div className="min-h-[540px] min-w-0"><ReactFlow nodes={nodes} edges={edges} fitView fitViewOptions={{ padding: 0.2 }} minZoom={0.08} maxZoom={2.5} nodesConnectable={false} onNodeClick={(_, node) => setActiveNode(graph?.nodes.find((item) => item.id === node.id) ?? null)} proOptions={{ hideAttribution: true }}><Background color="#e5e5e5" gap={22} size={1} /><Controls position="bottom-left" showInteractive /><MiniMap pannable zoomable nodeColor={(node) => node.id === graph?.label ? '#111' : '#999'} maskColor="rgba(255,255,255,.75)" /></ReactFlow></div> : <div className="flex min-h-[540px] flex-col items-center justify-center p-6 text-center"><GraphIcon /><p className="mt-3 text-[12px] font-medium text-[#444]">{graphPending ? '知识图谱正在构建' : graphFailed ? '知识图谱构建失败' : documents.length ? '未提取到实体关系' : '尚未上传文档'}</p><p className="mt-1 text-[10px] text-[#60646c]">{graphPending ? 'LightRAG 完成后会自动显示。' : graphFailed ? '请回到文档页点击重试。' : documents.length ? '当前文档没有生成可展示的图谱。' : '上传并处理文档后生成知识图谱。'}</p></div>}<aside className="border-t border-black/[0.07] p-5 lg:border-l lg:border-t-0">{activeNode ? <><span className="text-[9px] font-medium text-black">{textProperty(activeNode.properties.entity_type) || activeNode.labels[0] || '实体'}</span><h3 className="mt-3 break-words text-[13px] font-semibold text-[#222]">{activeNode.id}</h3><p className="mt-3 whitespace-pre-wrap text-[10px] leading-5 text-[#555]">{textProperty(activeNode.properties.description) || '暂无实体说明。'}</p></> : <div className="flex h-full min-h-32 flex-col items-center justify-center text-center"><GraphIcon /><p className="mt-3 text-[10px] text-[#60646c]">点击实体查看说明</p></div>}</aside></div>
   </div>;
