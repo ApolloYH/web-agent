@@ -125,6 +125,10 @@ test('RAG uploads, queries and exposes the LightRAG graph', async () => {
       lightRagMaxEntityTokens: 3000, lightRagMaxRelationTokens: 4000, lightRagMaxTotalTokens: 16000,
       finalCount: 4, rerankEnabled: false,
     });
+    await assert.rejects(
+      ingestRagDocument(database, 'user-a', collection.id, 'legacy.doc', new Uint8Array([1]), services),
+      /旧版 DOC 需要 MinerU/,
+    );
     const inserted = await ingestRagDocument(database, 'user-a', collection.id, 'rules.txt', new TextEncoder().encode('建设单位承担安全责任。'), services);
     assert.equal(inserted.weknoraStatus, 'pending');
     assert.equal(inserted.lightRagStatus, 'pending');

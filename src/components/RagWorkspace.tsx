@@ -142,6 +142,7 @@ function DocumentsPanel({ collection, documents, loading, busy, onRefresh, onBus
   const [step, setStep] = useState<UploadStep>(1);
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<ChunkPreview[]>([]);
+  const [previewFileName, setPreviewFileName] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
   const [parser, setParser] = useState(collection.parser);
   const [strategy, setStrategy] = useState(collection.chunkStrategy);
@@ -176,14 +177,17 @@ function DocumentsPanel({ collection, documents, loading, busy, onRefresh, onBus
     });
     if (saved) setStep(2);
   };
-  const selectFiles = (selected: File[]) => { setFiles(selected.slice(0, 8)); setPreviews([]); };
+  const selectFiles = (selected: File[]) => {
+    const next = selected.slice(0, 8);
+    setFiles(next); setPreviews([]); setPreviewFileName(next[0]?.name || '');
+  };
   const buildPreview = async () => {
     setPreviewLoading(true); onError('');
     try {
       const next = (await Promise.all(files.map(async (file) => {
         try {
           const extracted = await previewText(file);
-          if (extracted === null) return [{ fileName: file.name, index: 0, content: `${file.name} 需要由 ${parser === 'mineru' ? 'MinerU' : '本地解析器'}提取内容，处理完成后可在文档列表查看实际切片。`, estimated: true }];
+          if (extracted === null) return [{ fileName: file.name, index: 0, content: `${file.name} 需要由 ${parser === 'mineru' || /\.doc$/i.test(file.name) ? 'MinerU' : '本地解析器'}提取内容，处理完成后可在文档列表查看实际切片。`, estimated: true }];
           const text = extracted.trim();
           if (!text) return [{ fileName: file.name, index: 0, content: `${file.name} 没有读取到可预览文字；如果是扫描件，处理后由解析器识别。`, estimated: true }];
           return splitPreviewText(text, chunkSize, chunkOverlap, chunkSeparators).slice(0, 24).map((content, index) => ({ fileName: file.name, index, content, estimated: !['recursive', 'custom'].includes(strategy) }));
@@ -192,6 +196,7 @@ function DocumentsPanel({ collection, documents, loading, busy, onRefresh, onBus
         }
       }))).flat();
       setPreviews(next);
+      setPreviewFileName(files[0]?.name || '');
       setStep(3);
     } finally { setPreviewLoading(false); }
   };
@@ -247,39 +252,67 @@ function DocumentsPanel({ collection, documents, loading, busy, onRefresh, onBus
           <WizardActions onCancel={cancelWizard} nextLabel="下一步" nextDisabled={busy} onNext={() => { void saveStrategy(); }} />
         </div> : null}
         {step === 2 ? <div><h3 className="text-[14px] font-semibold text-[#252525]">上传待处理文件</h3><p className="mt-1 text-[9px] text-[#60646c]">最多 8 个文件，单个不超过 20MB；文件在确认处理前不会写入知识库。</p><button type="button" onClick={() => input.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); selectFiles([...event.dataTransfer.files]); }} className="mt-4 flex min-h-40 w-full cursor-pointer flex-col items-center justify-center border-y border-dashed border-black/25 text-center transition-colors hover:border-black hover:bg-black/[0.02]"><UploadIcon /><span className="mt-3 text-[11px] font-medium text-[#333]">拖拽文件到这里，或点击选择</span><span className="mt-1 text-[9px] text-[#666]">PDF、Office、图片、Markdown、文本等</span></button><input ref={input} type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.webp,.txt,.md,.markdown,.csv,.html,.htm,.json" onChange={(event) => selectFiles([...(event.target.files || [])])} className="sr-only" />{files.length ? <div className="mt-4"><div className="flex items-center justify-between px-1 py-2 text-[9px] font-medium text-[#666]"><span>已选择文件</span><span>{files.length} 个</span></div>{files.map((file) => <div key={`${file.name}-${file.size}`} className="flex items-center gap-3 border-b border-black/[0.06] px-1 py-2.5"><span className="min-w-0 flex-1 truncate text-[10px] font-medium text-[#333]">{file.name}</span><span className="text-[9px] text-[#777]">{formatSize(file.size)}</span><button type="button" aria-label={`移除 ${file.name}`} onClick={() => setFiles((items) => items.filter((item) => item !== file))} className="cursor-pointer rounded-md px-2 py-1 text-[9px] text-[#555] hover:bg-black/[0.04] hover:text-black">移除</button></div>)}</div> : null}<WizardActions onBack={() => setStep(1)} nextLabel={previewLoading ? '正在生成…' : '生成切片预览'} nextDisabled={!files.length || previewLoading} onNext={() => { void buildPreview(); }} /></div> : null}
-        {step === 3 ? <div><h3 className="text-[14px] font-semibold text-[#252525]">切片预览</h3><p className="mt-1 text-[9px] text-[#60646c]">PDF、DOCX 和文本文件会在浏览器中提取文字并预览；实际入库切片以 WeKnora 处理结果为准。</p><div className="mt-4 max-h-[430px] space-y-3 overflow-y-auto">{previews.map((preview) => <article key={`${preview.fileName}-${preview.index}`} className="px-1 py-3"><div className="flex items-center justify-between gap-3"><p className="truncate text-[9px] font-medium text-[#555]">{preview.fileName} · 切片 {preview.index + 1}</p><span className="shrink-0 text-[8px] text-[#888]">{preview.estimated ? '预估切片' : `${preview.content.length} 字符`}</span></div><p className="mt-2 whitespace-pre-wrap text-[10px] leading-5 text-[#333]">{preview.content}</p></article>)}</div><WizardActions onBack={() => setStep(2)} nextLabel="确认预览" onNext={() => setStep(4)} /></div> : null}
-        {step === 4 ? <div className="py-3 text-center"><span className="mx-auto flex size-10 items-center justify-center text-black"><DatabaseIcon small /></span><h3 className="mt-3 text-[14px] font-semibold text-[#252525]">准备提交到双引擎</h3><p className="mx-auto mt-2 max-w-lg text-[9px] leading-4 text-[#60646c]">{files.length} 个文件将{parser === 'mineru' ? '先由 MinerU 提取内容，再写入两个引擎' : '分别交由两个引擎本地解析'}；WeKnora 使用“{chunkStrategies.find((item) => item.value === strategy)?.name}”，LightRAG 独立构建知识图谱。</p><WizardActions onBack={() => setStep(3)} nextLabel={busy ? '处理中…' : '开始处理'} nextDisabled={busy} onNext={() => { void processFiles(); }} /></div> : null}
+        {step === 3 ? <div><h3 className="text-[14px] font-semibold text-[#252525]">切片预览</h3><UploadChunkWorkspace files={files} previews={previews} activeFileName={previewFileName} onActiveFile={setPreviewFileName} /><WizardActions onBack={() => setStep(2)} nextLabel="下一步" onNext={() => setStep(4)} /></div> : null}
+        {step === 4 ? <div className="py-3 text-center"><span className="mx-auto flex size-10 items-center justify-center text-black"><DatabaseIcon small /></span><h3 className="mt-3 text-[14px] font-semibold text-[#252525]">提交引擎</h3><WizardActions onBack={() => setStep(3)} nextLabel={busy ? '提交中…' : '完成'} nextDisabled={busy} onNext={() => { void processFiles(); }} /></div> : null}
       </div>
     </section> : null}
-    {!wizardOpen ? <div className="mt-7">
-      <div className="grid grid-cols-[minmax(0,1fr)_120px] gap-3 px-2 py-2.5 text-[9px] font-medium text-[#60646c]"><span>名称</span><span /></div>
-      {loading ? <p className="py-16 text-center text-[11px] text-[#666]">正在读取…</p> : documents.length ? documents.map((document) => <div key={document.id} className="group grid min-h-20 grid-cols-[minmax(0,1fr)_120px] items-center gap-3 px-2 transition-colors hover:bg-white">
-        <span className="min-w-0">
-          <span className="block truncate text-[11px] font-medium text-[#333]">{document.name}</span>
-          <span role={document.status === 'pending' ? 'status' : undefined} className="mt-1 block truncate text-[9px] font-medium text-[#555]">{documentIndexStatus(document)}</span>
-          {document.weknoraError || document.lightRagError ? <span className="mt-0.5 block truncate text-[9px] text-black" title={document.weknoraError || document.lightRagError}>{document.weknoraError || document.lightRagError}</span> : <span className="mt-0.5 block text-[8px] text-[#888]">{formatSize(document.size)}</span>}
-        </span>
-        <span className="flex justify-end gap-1">
-          {document.weknoraStatus === 'ready' ? <button type="button" disabled={chunkPreviewLoading === document.id} onClick={() => { void showChunks(document); }} className="cursor-pointer px-1.5 py-1 text-[9px] text-[#666] hover:text-black disabled:opacity-40">{chunkPreviewLoading === document.id ? '读取中' : '切片'}</button> : null}
-          {['failed', 'unconfigured'].includes(document.weknoraStatus) || ['failed', 'unconfigured'].includes(document.lightRagStatus) ? <button type="button" disabled={busy} onClick={() => { void retry(document); }} aria-label={`重试 ${document.name}`} title="重试" className="flex size-7 cursor-pointer items-center justify-center rounded-full text-[#555] hover:bg-black/[0.06] hover:text-black disabled:opacity-40"><RefreshIcon /></button> : null}
-          <button type="button" disabled={busy} onClick={() => { void remove(document); }} aria-label={`删除 ${document.name}`} className="cursor-pointer px-1.5 py-1 text-[9px] text-[#777] opacity-0 hover:text-black group-hover:opacity-100 focus:opacity-100">删除</button>
-        </span>
-      </div>) : <p className="py-14 text-center text-[10px] text-[#737b86]">还没有已处理文档。</p>}
+    {!wizardOpen ? <div className="mt-7 overflow-x-auto">
+      <div className="min-w-[920px]">
+        <div className="grid grid-cols-[minmax(260px,1.7fr)_80px_90px_150px_minmax(250px,1.25fr)_150px] gap-4 border-b border-black/[0.1] px-3 py-3 text-[9px] font-semibold text-[#555]"><span>文件名</span><span>类型</span><span>大小</span><span>上传时间</span><span>状态</span><span>操作</span></div>
+        {loading ? <p className="py-16 text-center text-[11px] text-[#666]">正在读取…</p> : documents.length ? documents.map((document) => <div key={document.id} className="group grid min-h-24 grid-cols-[minmax(260px,1.7fr)_80px_90px_150px_minmax(250px,1.25fr)_150px] items-center gap-4 border-b border-black/[0.07] px-3 py-4 transition-colors hover:bg-white">
+          <span className="flex min-w-0 items-center gap-3"><FileIcon /><span className="min-w-0"><span className="block truncate text-[11px] font-medium text-[#292929]">{document.name}</span><span className="mt-1 block text-[8px] text-[#888]">更新于 {formatUploadedAt(document.updatedAt)}</span></span></span>
+          <span className="text-[10px] text-[#555]">{fileType(document.name)}</span>
+          <span className="text-[10px] text-[#555]">{formatSize(document.size)}</span>
+          <span className="text-[9px] leading-4 text-[#555]">{formatUploadedAt(document.createdAt)}</span>
+          <span className="min-w-0" role={document.status === 'pending' ? 'status' : undefined}>
+            <span className="block text-[10px] font-semibold text-[#333]">{documentStatusLabel(document.status)}</span>
+            <span className="mt-1 block text-[8px] text-[#666]">WeKnora {engineStatusLabel(document.weknoraStatus)} · LightRAG {engineStatusLabel(document.lightRagStatus)}</span>
+            {document.weknoraError ? <span className="mt-1 block line-clamp-2 text-[8px] leading-3.5 text-black" title={document.weknoraError}>WeKnora：{document.weknoraError}</span> : null}
+            {document.lightRagError ? <span className="mt-1 block line-clamp-2 text-[8px] leading-3.5 text-black" title={document.lightRagError}>LightRAG：{document.lightRagError}</span> : null}
+          </span>
+          <span className="flex items-center gap-1">
+            {document.weknoraStatus === 'ready' ? <button type="button" disabled={chunkPreviewLoading === document.id} onClick={() => { void showChunks(document); }} aria-label={`查看 ${document.name} 切片`} title="查看切片" className="flex size-8 cursor-pointer items-center justify-center rounded-full text-[#555] hover:bg-black/[0.06] hover:text-black disabled:opacity-40">{chunkPreviewLoading === document.id ? <span className="text-[8px]">读取</span> : <EyeIcon />}</button> : null}
+            {document.weknoraStatus === 'ready' ? <a href={ragDocumentSourceUrl(document.id)} download={document.name} aria-label={`下载 ${document.name}`} title="下载原文" className="flex size-8 cursor-pointer items-center justify-center rounded-full text-[#555] hover:bg-black/[0.06] hover:text-black"><DownloadIcon /></a> : null}
+            {['failed', 'unconfigured'].includes(document.weknoraStatus) || ['failed', 'unconfigured'].includes(document.lightRagStatus) ? <button type="button" disabled={busy} onClick={() => { void retry(document); }} aria-label={`重试 ${document.name}`} title="重试" className="flex size-8 cursor-pointer items-center justify-center rounded-full text-[#555] hover:bg-black/[0.06] hover:text-black disabled:opacity-40"><RefreshIcon /></button> : null}
+            <button type="button" disabled={busy} onClick={() => { void remove(document); }} aria-label={`删除 ${document.name}`} title="删除" className="flex size-8 cursor-pointer items-center justify-center rounded-full text-[#777] opacity-0 hover:bg-black/[0.06] hover:text-black group-hover:opacity-100 focus:opacity-100"><TrashIcon /></button>
+          </span>
+        </div>) : <p className="py-14 text-center text-[10px] text-[#737b86]">还没有已处理文档。</p>}
+      </div>
     </div> : null}
   </div>;
 }
 
 function ChunkWorkspace({ preview, onClose }: { preview: { document: RagDocument; chunks: RagChunkPreview[]; total: number }; onClose: () => void }) {
-  const [query, setQuery] = useState('');
   const sourceUrl = ragDocumentSourceUrl(preview.document.id);
-  const chunks = preview.chunks.filter((chunk) => chunk.content.toLowerCase().includes(query.trim().toLowerCase()));
-  const isWord = /\.docx$/i.test(preview.document.name);
   return <div className="mx-auto flex h-[calc(100vh-190px)] min-h-[640px] max-w-[1500px] flex-col overflow-hidden bg-white">
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-black/[0.08] px-4"><div className="min-w-0"><h2 className="truncate text-[12px] font-semibold text-[#222]">{preview.document.name}</h2><p className="mt-0.5 text-[9px] text-[#777]">原文与 WeKnora 实际切片对照</p></div><button type="button" onClick={onClose} className="cursor-pointer rounded-md px-3 py-2 text-[10px] text-[#555] hover:bg-black/[0.04] hover:text-black">返回文档</button></header>
-    <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_minmax(420px,0.95fr)]">
-      <section className="flex min-h-[360px] min-w-0 flex-col border-b border-black/[0.08] lg:border-b-0 lg:border-r"><div className="flex h-12 shrink-0 items-center justify-between px-4"><h3 className="text-[10px] font-semibold text-[#444]">文件预览</h3><a href={sourceUrl} download={preview.document.name} className="text-[9px] text-[#666] hover:text-black">下载原文</a></div><div className="min-h-0 flex-1 overflow-hidden bg-[#f5f5f5]">{isWord ? <WordView url={sourceUrl} fileName={preview.document.name} /> : <iframe title={`${preview.document.name} 原文预览`} src={sourceUrl} className="h-full w-full border-0 bg-white" />}</div></section>
-      <section className="flex min-h-0 min-w-0 flex-col"><div className="shrink-0 border-b border-black/[0.08] px-4 py-3"><div className="flex items-center justify-between gap-3"><div><h3 className="text-[10px] font-semibold text-[#444]">文本切片</h3><p className="mt-0.5 text-[8px] text-[#888]">已索引 {preview.total} 个</p></div><label className="flex h-9 w-56 max-w-[55%] items-center rounded-md bg-black/[0.035] px-3"><span className="sr-only">搜索切片内容</span><SearchIcon /><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索切片内容" className="min-w-0 flex-1 bg-transparent px-2 text-[9px] outline-none" /></label></div></div><div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-[#fafafa] p-4">{chunks.length ? chunks.map((chunk) => <article key={chunk.id} className="bg-white px-4 py-4"><div className="flex items-center justify-between gap-3"><p className="text-[9px] font-semibold text-[#555]">#{chunk.index + 1}</p><span className="text-[8px] text-[#777]">{chunk.content.length} 字 · 已索引</span></div><p className="mt-3 whitespace-pre-wrap text-[10px] leading-5 text-[#333]">{chunk.content}</p></article>) : <p className="flex h-full items-center justify-center text-[10px] text-[#777]">没有匹配的切片</p>}</div></section>
-    </div>
+    <ChunkComparison fileName={preview.document.name} sourceUrl={sourceUrl} chunks={preview.chunks} total={preview.total} stateLabel="已索引" className="min-h-0 flex-1" />
+  </div>;
+}
+
+function UploadChunkWorkspace({ files, previews, activeFileName, onActiveFile }: {
+  files: File[]; previews: ChunkPreview[]; activeFileName: string; onActiveFile: (name: string) => void;
+}) {
+  const file = files.find((item) => item.name === activeFileName) || files[0];
+  const sourceUrl = useMemo(() => file ? URL.createObjectURL(file) : '', [file]);
+  useEffect(() => () => { if (sourceUrl) URL.revokeObjectURL(sourceUrl); }, [sourceUrl]);
+  const chunks = previews.filter((item) => item.fileName === file?.name).map((item) => ({ id: `${item.fileName}-${item.index}`, index: item.index, content: item.content }));
+  return <div className="mt-4">
+    {files.length > 1 ? <label className="mb-3 block max-w-sm text-[9px] font-medium text-[#555]">预览文件<select value={file?.name || ''} onChange={(event) => onActiveFile(event.target.value)} className={`${fieldClass} h-10 cursor-pointer`}>{files.map((item) => <option key={`${item.name}-${item.size}`} value={item.name}>{item.name}</option>)}</select></label> : null}
+    <ChunkComparison fileName={file?.name || ''} sourceUrl={sourceUrl} chunks={chunks} total={chunks.length} stateLabel="预估切片" className="h-[520px] border-y border-black/[0.08]" />
+  </div>;
+}
+
+function ChunkComparison({ fileName, sourceUrl, chunks, total, stateLabel, className }: {
+  fileName: string; sourceUrl: string; chunks: RagChunkPreview[]; total: number; stateLabel: string; className: string;
+}) {
+  const [query, setQuery] = useState('');
+  const visibleChunks = chunks.filter((chunk) => chunk.content.toLowerCase().includes(query.trim().toLowerCase()));
+  const isWord = /\.docx$/i.test(fileName);
+  const browserPreviewable = /\.(docx|pdf|png|jpe?g|webp|txt|md|markdown|csv|json|html|htm)$/i.test(fileName);
+  return <div className={`grid min-h-0 lg:grid-cols-[minmax(0,1fr)_minmax(420px,0.95fr)] ${className}`}>
+    <section className="flex min-h-[300px] min-w-0 flex-col border-b border-black/[0.08] lg:border-b-0 lg:border-r"><div className="flex h-12 shrink-0 items-center justify-between px-4"><h3 className="text-[10px] font-semibold text-[#444]">文件预览</h3><a href={sourceUrl} download={fileName} className="text-[9px] text-[#666] hover:text-black">下载原文</a></div><div className="min-h-0 flex-1 overflow-hidden bg-[#f5f5f5]">{isWord ? <WordView url={sourceUrl} fileName={fileName} /> : browserPreviewable ? <iframe title={`${fileName} 原文预览`} src={sourceUrl} className="h-full w-full border-0 bg-white" /> : <p className="flex h-full items-center justify-center px-6 text-center text-[10px] text-[#666]">该格式无法在浏览器直接显示，提交后仍会正常解析。</p>}</div></section>
+    <section className="flex min-h-0 min-w-0 flex-col"><div className="shrink-0 border-b border-black/[0.08] px-4 py-3"><div className="flex items-center justify-between gap-3"><div><h3 className="text-[10px] font-semibold text-[#444]">文本切片</h3><p className="mt-0.5 text-[8px] text-[#888]">{stateLabel} {total} 个</p></div><label className="flex h-9 w-56 max-w-[55%] items-center rounded-md bg-black/[0.035] px-3"><span className="sr-only">搜索切片内容</span><SearchIcon /><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索切片内容" className="min-w-0 flex-1 bg-transparent px-2 text-[9px] outline-none" /></label></div></div><div className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-[#fafafa] p-4">{visibleChunks.length ? visibleChunks.map((chunk) => <article key={chunk.id} className="bg-white px-4 py-4"><div className="flex items-center justify-between gap-3"><p className="text-[9px] font-semibold text-[#555]">#{chunk.index + 1}</p><span className="text-[8px] text-[#777]">{chunk.content.length} 字 · {stateLabel}</span></div><p className="mt-3 whitespace-pre-wrap text-[10px] leading-5 text-[#333]">{chunk.content}</p></article>) : <p className="flex h-full items-center justify-center text-[10px] text-[#777]">没有匹配的切片</p>}</div></section>
   </div>;
 }
 
@@ -458,12 +491,9 @@ function escapeRegExp(value: string): string {
 function textProperty(value: unknown): string { return typeof value === 'string' ? value : ''; }
 function messageOf(reason: unknown): string { return reason instanceof Error ? reason.message : String(reason); }
 function formatSize(bytes: number): string { return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`; }
-function documentIndexStatus(document: RagDocument): string {
-  if (document.weknoraStatus === 'ready' && document.lightRagStatus === 'ready') return '索引完成 · 向量索引与知识图谱均已就绪';
-  if (document.weknoraStatus === 'pending' || document.lightRagStatus === 'pending') return `索引中 · WeKnora ${engineStatusLabel(document.weknoraStatus)} · LightRAG ${engineStatusLabel(document.lightRagStatus)}`;
-  if (document.weknoraStatus === 'ready' || document.lightRagStatus === 'ready') return `部分完成 · WeKnora ${engineStatusLabel(document.weknoraStatus)} · LightRAG ${engineStatusLabel(document.lightRagStatus)}`;
-  return `索引失败 · WeKnora ${engineStatusLabel(document.weknoraStatus)} · LightRAG ${engineStatusLabel(document.lightRagStatus)}`;
-}
+function fileType(name: string): string { return name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toUpperCase() : '文件'; }
+function formatUploadedAt(value: string): string { return new Date(value).toLocaleString('zh-CN', { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }); }
+function documentStatusLabel(status: RagDocument['status']): string { return status === 'ready' ? '已完成' : status === 'pending' ? '处理中' : status === 'partial' ? '部分完成' : status === 'failed' ? '索引失败' : '未配置'; }
 function engineStatusLabel(status: RagDocument['weknoraStatus']): string { return status === 'ready' ? '完成' : status === 'pending' ? '处理中' : status === 'failed' ? '失败' : '未配置'; }
 function engineLabel(engine?: RagEngineReport['engine'] | RagHit['engine']): string { return engine === 'weknora' ? 'WeKnora' : engine === 'lightrag' ? 'LightRAG' : engine === 'reranker' ? 'Apollo 重排' : '未知引擎'; }
 function reportStatusLabel(status: RagEngineReport['status']): string { return status === 'ok' ? '正常' : status === 'partial' ? '部分可用' : status === 'error' ? '失败' : '未配置'; }
@@ -475,4 +505,8 @@ function UploadIcon() { return <svg viewBox="0 0 24 24" width="24" height="24" f
 function BackIcon() { return <svg viewBox="0 0 24 24" width="18" height="18" fill="none" aria-hidden="true"><path d="m14.5 5-7 7 7 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
 function SearchIcon() { return <svg viewBox="0 0 24 24" width="16" height="16" fill="none" className="text-[#777]" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6" stroke="currentColor" strokeWidth="1.7"/><path d="m15 15 4 4" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></svg>; }
 function RefreshIcon() { return <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true"><path d="M19 7v4h-4M5 17v-4h4M7.4 8.2A6 6 0 0 1 17.8 10M16.6 15.8A6 6 0 0 1 6.2 14" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
+function FileIcon() { return <svg viewBox="0 0 24 24" width="18" height="18" fill="none" className="shrink-0 text-[#555]" aria-hidden="true"><path d="M6 3.5h7l5 5v12H6v-17Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/><path d="M13 3.5v5h5" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round"/></svg>; }
+function EyeIcon() { return <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path d="M3 12s3.3-5 9-5 9 5 9 5-3.3 5-9 5-9-5-9-5Z" stroke="currentColor" strokeWidth="1.6"/><circle cx="12" cy="12" r="2.3" stroke="currentColor" strokeWidth="1.6"/></svg>; }
+function DownloadIcon() { return <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 19h14" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
+function TrashIcon() { return <svg viewBox="0 0 24 24" width="15" height="15" fill="none" aria-hidden="true"><path d="M5 7h14M9 7V4h6v3m2 0-1 13H8L7 7m3 4v5m4-5v5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/></svg>; }
 function GraphIcon() { return <svg viewBox="0 0 24 24" width="24" height="24" fill="none" className="text-[#666]" aria-hidden="true"><circle cx="6" cy="6" r="2" stroke="currentColor" strokeWidth="1.6"/><circle cx="18" cy="8" r="2" stroke="currentColor" strokeWidth="1.6"/><circle cx="8" cy="18" r="2" stroke="currentColor" strokeWidth="1.6"/><circle cx="18" cy="17" r="2" stroke="currentColor" strokeWidth="1.6"/><path d="m8 6.4 8 1.2M7 8l1 8m2-9 7 9M10 18h6" stroke="currentColor" strokeWidth="1.5"/></svg>; }

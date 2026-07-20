@@ -414,7 +414,15 @@ export async function retryRagDocument(database: DatabaseSync, userId: string, d
       lightRagStatus: ExternalEngineStatus; lightRagError: string;
   } | undefined;
   if (!document) throw new Error('文档不存在');
-  if (!document.parsedText && ((!document.weknoraKnowledgeId && !['ready', 'pending'].includes(document.weknoraStatus)) || (!document.lightRagTrackId && !['ready', 'pending'].includes(document.lightRagStatus)))) {
+  let parsedText = document.parsedText;
+  if (!parsedText && /\.doc$/i.test(document.name) && document.weknoraKnowledgeId && services.mineruApiKey && weknoraConfigured(services)) {
+    const source = await downloadWeKnoraDocument(document.weknoraKnowledgeId, services);
+    parsedText = (await parseWithMinerU(document.name, source.bytes, services.mineruApiKey)).trim().slice(0, MAX_EXTRACTED_CHARS);
+    if (!parsedText) throw new Error('MinerU 没有解析出可索引文字');
+    database.prepare('UPDATE rag_documents SET parsed_text = ?, updated_at = ? WHERE id = ? AND user_id = ?')
+      .run(parsedText, new Date().toISOString(), documentId, userId);
+  }
+  if (!parsedText && ((!document.weknoraKnowledgeId && !['ready', 'pending'].includes(document.weknoraStatus)) || (!document.lightRagTrackId && !['ready', 'pending'].includes(document.lightRagStatus)))) {
     throw new Error('内置解析首次提交失败，请删除后重新上传原文件');
   }
   const collection = collectionEngineRecord(database, userId, document.collectionId);
@@ -422,9 +430,12 @@ export async function retryRagDocument(database: DatabaseSync, userId: string, d
     ? Promise.resolve(null)
     : !weknoraConfigured(services)
       ? Promise.reject(new Error('未配置 WeKnora 服务'))
+      : /\.doc$/i.test(document.name) && parsedText
+        ? ingestIntoWeKnora(database, userId, document.collectionId, collection, document.name, parsedText, services)
+          .then(async (result) => { if (document.weknoraKnowledgeId) await deleteWeKnoraDocument(document.weknoraKnowledgeId, services).catch(() => undefined); return result; })
       : document.weknoraKnowledgeId
         ? reparseWeKnoraDocument(document.weknoraKnowledgeId, services).then((status) => ({ knowledgeId: document.weknoraKnowledgeId, status, error: '' }))
-        : ingestIntoWeKnora(database, userId, document.collectionId, collection, document.name, document.parsedText, services);
+        : ingestIntoWeKnora(database, userId, document.collectionId, collection, document.name, parsedText, services);
   const retryLightRag = document.lightRagStatus === 'ready' || document.lightRagStatus === 'pending'
     ? Promise.resolve(null)
     : !lightRagConfigured(services)
@@ -433,7 +444,7 @@ export async function retryRagDocument(database: DatabaseSync, userId: string, d
         ? recoverLightRagFromWeKnora(document, collection, services)
       : document.lightRagTrackId
         ? reprocessLightRagFailed(document.collectionId, lightRagBuildConfig(collection), services).then(() => ({ trackId: document.lightRagTrackId, fileSource: '', status: 'pending' as const, error: '' }))
-        : insertLightRagText(document.collectionId, document.id, document.name, document.parsedText, lightRagBuildConfig(collection), services)
+        : insertLightRagText(document.collectionId, document.id, document.name, parsedText, lightRagBuildConfig(collection), services)
           .then((result) => ({ ...result, status: 'pending' as const, error: '' }));
   const [weknora, lightrag] = await Promise.allSettled([retryWeKnora, retryLightRag]);
   const weknoraValue = weknora.status === 'fulfilled' ? weknora.value : { knowledgeId: document.weknoraKnowledgeId, status: 'failed' as const, error: messageOf(weknora.reason) };
@@ -513,9 +524,9 @@ export async function ingestRagDocument(database: DatabaseSync, userId: string, 
   if (!SUPPORTED_EXTENSIONS.has(extension)) throw new Error(`暂不支持 ${extension || '该'} 文件`);
   parser ??= collection.parser;
   if (!PARSERS.has(parser)) throw new Error('文档解析方式无效');
-  const native = parser === 'native';
+  const native = parser === 'native' && extension !== '.doc';
   if (native && !weknoraConfigured(services) && !lightRagConfigured(services)) throw new Error('内置解析至少需要配置 WeKnora 或 LightRAG');
-  if (!native && !services.mineruApiKey) throw new Error('请先配置 MINERU_API_KEY');
+  if (!native && !services.mineruApiKey) throw new Error(extension === '.doc' ? '旧版 DOC 需要 MinerU 解析，请先配置 MINERU_API_KEY' : '请先配置 MINERU_API_KEY');
   const parsedText = native ? '' : (await parseWithMinerU(name, bytes, services.mineruApiKey!)).trim().slice(0, MAX_EXTRACTED_CHARS);
   if (!native && !parsedText) throw new Error('MinerU 没有解析出可索引文字');
   const id = randomUUID();
