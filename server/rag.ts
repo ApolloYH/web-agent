@@ -1036,9 +1036,10 @@ function bearerHeaders(apiKey: string): Record<string, string> {
   return { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' };
 }
 
-function assertMinerUDownloadUrl(value: string): string {
+export function assertMinerUDownloadUrl(value: string): string {
   const url = new URL(value);
-  if (url.protocol !== 'https:' || !url.hostname.endsWith('.openxlab.org.cn')) throw new Error('MinerU 返回了不受信任的下载地址');
+  const trustedHost = url.hostname === 'mineru.oss-cn-shanghai.aliyuncs.com' || url.hostname.endsWith('.openxlab.org.cn');
+  if (url.protocol !== 'https:' || !trustedHost) throw new Error('MinerU 返回了不受信任的下载地址');
   return url.href;
 }
 

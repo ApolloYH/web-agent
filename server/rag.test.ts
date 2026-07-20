@@ -4,6 +4,7 @@ import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { insertWeKnoraText } from './rag-engines.js';
 import {
+  assertMinerUDownloadUrl,
   createRagCollection,
   ensureRagSchema,
   getRagDocumentChunks,
@@ -15,6 +16,13 @@ import {
   searchRagDetailed,
   updateRagCollection,
 } from './rag.js';
+
+test('MinerU only accepts known HTTPS storage hosts', () => {
+  assert.equal(assertMinerUDownloadUrl('https://mineru.oss-cn-shanghai.aliyuncs.com/upload?id=1'), 'https://mineru.oss-cn-shanghai.aliyuncs.com/upload?id=1');
+  assert.equal(assertMinerUDownloadUrl('https://download.openxlab.org.cn/result.zip'), 'https://download.openxlab.org.cn/result.zip');
+  assert.throws(() => assertMinerUDownloadUrl('https://openxlab.org.cn.evil.example/result.zip'), /不受信任/);
+  assert.throws(() => assertMinerUDownloadUrl('http://mineru.oss-cn-shanghai.aliyuncs.com/upload'), /不受信任/);
+});
 
 test('RAG removes the legacy local-index schema and keeps tenants isolated', async () => {
   const database = new DatabaseSync(':memory:');
