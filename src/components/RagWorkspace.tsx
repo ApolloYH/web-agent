@@ -142,6 +142,7 @@ function DocumentsPanel({ collection, documents, loading, busy, onRefresh, onBus
   const [step, setStep] = useState<UploadStep>(1);
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<ChunkPreview[]>([]);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [parser, setParser] = useState(collection.parser);
   const [strategy, setStrategy] = useState(collection.chunkStrategy);
   const [chunkSize, setChunkSize] = useState(collection.chunkSize);
@@ -177,13 +178,22 @@ function DocumentsPanel({ collection, documents, loading, busy, onRefresh, onBus
   };
   const selectFiles = (selected: File[]) => { setFiles(selected.slice(0, 8)); setPreviews([]); };
   const buildPreview = async () => {
-    const next = (await Promise.all(files.map(async (file) => {
-      if (!isPreviewableText(file.name)) return [{ fileName: file.name, index: 0, content: `${file.name} 将由 ${parser === 'mineru' ? 'MinerU' : '本地解析器'}提取内容，处理后生成实际切片。`, estimated: true }];
-      const text = (await file.text()).trim();
-      return splitPreviewText(text, chunkSize, chunkOverlap, chunkSeparators).slice(0, 24).map((content, index) => ({ fileName: file.name, index, content, estimated: !['recursive', 'custom'].includes(strategy) }));
-    }))).flat();
-    setPreviews(next);
-    setStep(3);
+    setPreviewLoading(true); onError('');
+    try {
+      const next = (await Promise.all(files.map(async (file) => {
+        try {
+          const extracted = await previewText(file);
+          if (extracted === null) return [{ fileName: file.name, index: 0, content: `${file.name} 需要由 ${parser === 'mineru' ? 'MinerU' : '本地解析器'}提取内容，处理完成后可在文档列表查看实际切片。`, estimated: true }];
+          const text = extracted.trim();
+          if (!text) return [{ fileName: file.name, index: 0, content: `${file.name} 没有读取到可预览文字；如果是扫描件，处理后由解析器识别。`, estimated: true }];
+          return splitPreviewText(text, chunkSize, chunkOverlap, chunkSeparators).slice(0, 24).map((content, index) => ({ fileName: file.name, index, content, estimated: !['recursive', 'custom'].includes(strategy) }));
+        } catch (reason) {
+          return [{ fileName: file.name, index: 0, content: `${file.name} 预览读取失败：${messageOf(reason)}`, estimated: true }];
+        }
+      }))).flat();
+      setPreviews(next);
+      setStep(3);
+    } finally { setPreviewLoading(false); }
   };
   const processFiles = async () => {
     onBusy(true); onError('');
@@ -236,12 +246,12 @@ function DocumentsPanel({ collection, documents, loading, busy, onRefresh, onBus
           <div className="mt-8 border-t border-black/[0.08] pt-6"><h3 className="text-[14px] font-semibold text-[#252525]">知识图谱配置</h3><p className="mt-1 text-[9px] text-[#666]">由 LightRAG 独立构建图谱；不使用上面的切段策略。</p><div className="mt-4 grid gap-4 sm:grid-cols-3"><SelectField label="查询模式" value={lightRagMode} onChange={(value) => setLightRagMode(value as RagCollection['lightRagMode'])} options={[['local', 'Local'], ['global', 'Global'], ['hybrid', 'Hybrid'], ['mix', 'Mix']]} /><NumberField label="图谱展示深度" value={graphDepth} min={1} max={4} onChange={setGraphDepth} /><NumberField label="图谱召回数量" value={lightRagTopK} min={1} max={100} onChange={setLightRagTopK} /></div></div>
           <WizardActions onCancel={cancelWizard} nextLabel="下一步" nextDisabled={busy} onNext={() => { void saveStrategy(); }} />
         </div> : null}
-        {step === 2 ? <div><h3 className="text-[14px] font-semibold text-[#252525]">上传待处理文件</h3><p className="mt-1 text-[9px] text-[#60646c]">最多 8 个文件，单个不超过 20MB；文件在确认处理前不会写入知识库。</p><button type="button" onClick={() => input.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); selectFiles([...event.dataTransfer.files]); }} className="mt-4 flex min-h-40 w-full cursor-pointer flex-col items-center justify-center border-y border-dashed border-black/25 text-center transition-colors hover:border-black hover:bg-black/[0.02]"><UploadIcon /><span className="mt-3 text-[11px] font-medium text-[#333]">拖拽文件到这里，或点击选择</span><span className="mt-1 text-[9px] text-[#666]">PDF、Office、图片、Markdown、文本等</span></button><input ref={input} type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.webp,.txt,.md,.markdown,.csv,.html,.htm,.json" onChange={(event) => selectFiles([...(event.target.files || [])])} className="sr-only" />{files.length ? <div className="mt-4"><div className="flex items-center justify-between px-1 py-2 text-[9px] font-medium text-[#666]"><span>已选择文件</span><span>{files.length} 个</span></div>{files.map((file) => <div key={`${file.name}-${file.size}`} className="flex items-center gap-3 border-b border-black/[0.06] px-1 py-2.5"><span className="min-w-0 flex-1 truncate text-[10px] font-medium text-[#333]">{file.name}</span><span className="text-[9px] text-[#777]">{formatSize(file.size)}</span><button type="button" aria-label={`移除 ${file.name}`} onClick={() => setFiles((items) => items.filter((item) => item !== file))} className="cursor-pointer rounded-md px-2 py-1 text-[9px] text-[#555] hover:bg-black/[0.04] hover:text-black">移除</button></div>)}</div> : null}<WizardActions onBack={() => setStep(1)} nextLabel="生成切片预览" nextDisabled={!files.length} onNext={() => { void buildPreview(); }} /></div> : null}
-        {step === 3 ? <div><h3 className="text-[14px] font-semibold text-[#252525]">切片预览</h3><p className="mt-1 text-[9px] text-[#60646c]">文本类文件按当前参数预览；二进制文件会在正式解析后生成实际切片。</p><div className="mt-4 max-h-[430px] space-y-3 overflow-y-auto">{previews.map((preview) => <article key={`${preview.fileName}-${preview.index}`} className="px-1 py-3"><div className="flex items-center justify-between gap-3"><p className="truncate text-[9px] font-medium text-[#555]">{preview.fileName} · 切片 {preview.index + 1}</p><span className="shrink-0 text-[8px] text-[#888]">{preview.estimated ? '引擎处理后确认' : `${preview.content.length} 字符`}</span></div><p className="mt-2 whitespace-pre-wrap text-[10px] leading-5 text-[#333]">{preview.content}</p></article>)}</div><WizardActions onBack={() => setStep(2)} nextLabel="确认预览" onNext={() => setStep(4)} /></div> : null}
+        {step === 2 ? <div><h3 className="text-[14px] font-semibold text-[#252525]">上传待处理文件</h3><p className="mt-1 text-[9px] text-[#60646c]">最多 8 个文件，单个不超过 20MB；文件在确认处理前不会写入知识库。</p><button type="button" onClick={() => input.current?.click()} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); selectFiles([...event.dataTransfer.files]); }} className="mt-4 flex min-h-40 w-full cursor-pointer flex-col items-center justify-center border-y border-dashed border-black/25 text-center transition-colors hover:border-black hover:bg-black/[0.02]"><UploadIcon /><span className="mt-3 text-[11px] font-medium text-[#333]">拖拽文件到这里，或点击选择</span><span className="mt-1 text-[9px] text-[#666]">PDF、Office、图片、Markdown、文本等</span></button><input ref={input} type="file" multiple accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.png,.jpg,.jpeg,.webp,.txt,.md,.markdown,.csv,.html,.htm,.json" onChange={(event) => selectFiles([...(event.target.files || [])])} className="sr-only" />{files.length ? <div className="mt-4"><div className="flex items-center justify-between px-1 py-2 text-[9px] font-medium text-[#666]"><span>已选择文件</span><span>{files.length} 个</span></div>{files.map((file) => <div key={`${file.name}-${file.size}`} className="flex items-center gap-3 border-b border-black/[0.06] px-1 py-2.5"><span className="min-w-0 flex-1 truncate text-[10px] font-medium text-[#333]">{file.name}</span><span className="text-[9px] text-[#777]">{formatSize(file.size)}</span><button type="button" aria-label={`移除 ${file.name}`} onClick={() => setFiles((items) => items.filter((item) => item !== file))} className="cursor-pointer rounded-md px-2 py-1 text-[9px] text-[#555] hover:bg-black/[0.04] hover:text-black">移除</button></div>)}</div> : null}<WizardActions onBack={() => setStep(1)} nextLabel={previewLoading ? '正在生成…' : '生成切片预览'} nextDisabled={!files.length || previewLoading} onNext={() => { void buildPreview(); }} /></div> : null}
+        {step === 3 ? <div><h3 className="text-[14px] font-semibold text-[#252525]">切片预览</h3><p className="mt-1 text-[9px] text-[#60646c]">PDF、DOCX 和文本文件会在浏览器中提取文字并预览；实际入库切片以 WeKnora 处理结果为准。</p><div className="mt-4 max-h-[430px] space-y-3 overflow-y-auto">{previews.map((preview) => <article key={`${preview.fileName}-${preview.index}`} className="px-1 py-3"><div className="flex items-center justify-between gap-3"><p className="truncate text-[9px] font-medium text-[#555]">{preview.fileName} · 切片 {preview.index + 1}</p><span className="shrink-0 text-[8px] text-[#888]">{preview.estimated ? '预估切片' : `${preview.content.length} 字符`}</span></div><p className="mt-2 whitespace-pre-wrap text-[10px] leading-5 text-[#333]">{preview.content}</p></article>)}</div><WizardActions onBack={() => setStep(2)} nextLabel="确认预览" onNext={() => setStep(4)} /></div> : null}
         {step === 4 ? <div className="py-3 text-center"><span className="mx-auto flex size-10 items-center justify-center text-black"><DatabaseIcon small /></span><h3 className="mt-3 text-[14px] font-semibold text-[#252525]">准备提交到双引擎</h3><p className="mx-auto mt-2 max-w-lg text-[9px] leading-4 text-[#60646c]">{files.length} 个文件将{parser === 'mineru' ? '先由 MinerU 提取内容，再写入两个引擎' : '分别交由两个引擎本地解析'}；WeKnora 使用“{chunkStrategies.find((item) => item.value === strategy)?.name}”，LightRAG 独立构建知识图谱。</p><WizardActions onBack={() => setStep(3)} nextLabel={busy ? '处理中…' : '开始处理'} nextDisabled={busy} onNext={() => { void processFiles(); }} /></div> : null}
       </div>
     </section> : null}
-    {documents.length || !wizardOpen ? <div className="mt-7">
+    {!wizardOpen ? <div className="mt-7">
       <div className="grid grid-cols-[minmax(0,1fr)_120px] gap-3 px-2 py-2.5 text-[9px] font-medium text-[#60646c]"><span>名称</span><span /></div>
       {loading ? <p className="py-16 text-center text-[11px] text-[#666]">正在读取…</p> : documents.length ? documents.map((document) => <div key={document.id} className="group grid min-h-20 grid-cols-[minmax(0,1fr)_120px] items-center gap-3 px-2 transition-colors hover:bg-white">
         <span className="min-w-0">
@@ -402,8 +412,11 @@ function SelectField({ label, value, options, onChange }: { label: string; value
   return <label className="block text-[9px] font-medium text-[#555]">{label}<select value={value} onChange={(event) => onChange(event.target.value)} className={`${fieldClass} h-10 cursor-pointer`}>{options.map(([optionValue, optionLabel]) => <option key={optionValue} value={optionValue}>{optionLabel}</option>)}</select></label>;
 }
 
-function isPreviewableText(fileName: string): boolean {
-  return /\.(txt|md|markdown|csv|json|html|htm)$/i.test(fileName);
+async function previewText(file: File): Promise<string | null> {
+  if (/\.(txt|md|markdown|csv|json|html|htm)$/i.test(file.name)) return file.text();
+  if (/\.docx$/i.test(file.name)) return import('@/lib/docxText').then(({ extractDocxText }) => extractDocxText(file));
+  if (/\.pdf$/i.test(file.name)) return import('@/lib/pdfText').then(({ extractPdfText }) => extractPdfText(file, 250_000)).then((result) => result.content);
+  return null;
 }
 
 function splitPreviewText(text: string, chunkSize: number, overlap: number, separators: string): string[] {
