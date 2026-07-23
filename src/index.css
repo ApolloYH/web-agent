@@ -152,6 +152,15 @@ summary:focus-visible {
   }
 }
 
+/* 聊天正文采用更松的阅读节奏，避免全局字号放大后显得拥挤。 */
+.chat-message .prose-chat { font-size: 16px; line-height: 1.75; }
+.chat-message .prose-chat p { margin: 0 0 1em; line-height: inherit; }
+.chat-message .prose-chat p:last-child { margin-bottom: 0; }
+.chat-message .prose-chat ul,
+.chat-message .prose-chat ol { margin: 0.5em 0 1em; }
+.chat-message .prose-chat li { margin: 0.2em 0; }
+.chat-message .prose-chat strong { font-weight: 600; }
+
 /* markdown 正文排版 */
 .prose-chat h1 { font-size: 21.8px; line-height: 29px; font-weight: 700; margin: 0.55em 0 0.25em; }
 .prose-chat h2 { font-size: 19.4px; line-height: 26.6px; font-weight: 700; margin: 0.55em 0 0.25em; }
@@ -206,8 +215,12 @@ summary:focus-visible {
 .diff-gutter { border-color: #3b3b3b; color: #9b9ba5; }
 .diff-add { color: var(--palette-green); }
 .diff-remove { color: var(--palette-red); }
-.prose-chat table { border-collapse: collapse; margin: 0.6em 0; }
-.prose-chat th, .prose-chat td { border: 1px solid #d0d7de; padding: 0.35em 0.7em; }
+.prose-chat table { width: 100%; border: 1px solid #e2e5e9; border-radius: 10px; border-spacing: 0; margin: 1em 0; overflow: hidden; font-size: 0.94em; }
+.prose-chat th, .prose-chat td { border: 0; border-bottom: 1px solid #e7e9ec; padding: 0.7em 0.85em; text-align: left; vertical-align: top; }
+.prose-chat th { background: #f6f7f8; color: #202123; font-weight: 600; }
+.prose-chat tbody tr:nth-child(even) { background: #fafafa; }
+.prose-chat tbody tr:last-child td { border-bottom: 0; }
+.prose-chat th + th, .prose-chat td + td { border-left: 1px solid #e7e9ec; }
 .prose-chat a { color: #2563eb; text-decoration: underline; }
 .prose-chat img { display: inline-block; max-width: 100%; height: auto; vertical-align: middle; }
 .prose-chat blockquote { border-left: 3px solid #d0d7de; padding-left: 0.8em; color: #57606a; margin: 0.5em 0; }

@@ -54,6 +54,8 @@ export type RagGraph = {
   edges: Array<{ id: string; source: string; target: string; type: string; properties: Record<string, unknown> }>;
 };
 
+export type RagEngineProgress = { stage: string; current: number | null; total: number | null; percent: number | null };
+
 export type RagDocument = {
   id: string;
   collectionId: string;
@@ -62,6 +64,8 @@ export type RagDocument = {
   status: RagEngineStatus | 'partial';
   weknoraStatus: RagEngineStatus;
   lightRagStatus: RagEngineStatus;
+  weknoraProgress: RagEngineProgress;
+  lightRagProgress: RagEngineProgress;
   weknoraError: string;
   lightRagError: string;
   createdAt: string;
@@ -132,7 +136,9 @@ export async function listRagDocuments(collectionId: string): Promise<RagDocumen
 }
 
 export async function getRagGraph(collectionId: string, label = ''): Promise<RagGraph> {
-  return request<RagGraph>(`/apollo-api/rag/${encodeURIComponent(collectionId)}/graph${label ? `?label=${encodeURIComponent(label)}` : ''}`);
+  return request<RagGraph>(`/apollo-api/rag/${encodeURIComponent(collectionId)}/graph${label ? `?label=${encodeURIComponent(label)}` : ''}`, {
+    signal: AbortSignal.timeout(180_000),
+  });
 }
 
 export async function uploadRagDocuments(collectionId: string, files: File[]): Promise<RagDocument[]> {

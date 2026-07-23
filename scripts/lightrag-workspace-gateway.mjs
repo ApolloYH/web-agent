@@ -1,6 +1,7 @@
 import { createServer, request as proxyRequest } from 'node:http';
 import { spawn } from 'node:child_process';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { handleAnthropicChat } from './openai-anthropic-adapter.mjs';
 
 const host = '127.0.0.1';
 const port = Number(process.env.LIGHTRAG_GATEWAY_PORT || 9700);
@@ -13,6 +14,7 @@ const promptRoot = process.env.LIGHTRAG_PROMPT_DIR || `${storage}/prompts`;
 const promptSample = process.env.LIGHTRAG_PROMPT_SAMPLE || `${process.cwd()}/prompts/samples/entity_type_prompt.sample.yml`;
 const instances = new Map();
 let nextPort = Number(process.env.LIGHTRAG_WORKSPACE_PORT_START || 9800);
+let launchQueue = Promise.resolve();
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -32,7 +34,7 @@ async function ready(instance) {
 function stop(instance) {
   instance.exited = true;
   instance.process.kill('SIGTERM');
-  instances.delete(instance.workspace);
+  if (instances.get(instance.workspace) === instance) instances.delete(instance.workspace);
 }
 
 function parseBuildConfig(headers) {
@@ -71,37 +73,49 @@ async function promptProfile(workspace, config) {
 }
 
 async function workspaceInstance(workspace, config) {
-  const signature = config ? JSON.stringify(config) : '';
-  const existing = instances.get(workspace);
-  if (existing && !existing.exited) {
-    if (!config || existing.signature === signature) {
-      existing.lastUsed = Date.now();
-      await existing.starting;
-      return existing;
+  const previousLaunch = launchQueue;
+  let releaseLaunch;
+  launchQueue = new Promise((resolve) => { releaseLaunch = resolve; });
+  await previousLaunch;
+
+  let instance;
+  try {
+    const signature = config ? JSON.stringify(config) : '';
+    const existing = instances.get(workspace);
+    if (existing && !existing.exited) {
+      if (!config || existing.signature === signature) {
+        existing.lastUsed = Date.now();
+        instance = existing;
+      } else {
+        if (existing.active) throw new Error('LightRAG workspace is busy');
+        stop(existing);
+      }
     }
-    if (existing.active) throw new Error('LightRAG workspace is busy');
-    stop(existing);
+    if (!instance) {
+      if (instances.size >= maxInstances) {
+        const candidate = [...instances.values()].filter((item) => item.active === 0 && Date.now() - item.lastUsed >= idleMs).sort((a, b) => a.lastUsed - b.lastUsed)[0];
+        if (!candidate) throw new Error('LightRAG workspace capacity reached');
+        stop(candidate);
+      }
+      await mkdir(`${input}/${workspace}`, { recursive: true });
+      const profile = await promptProfile(workspace, config);
+      const childPort = nextPort++;
+      const childEnv = { ...process.env };
+      if (config?.maxExtractionEntities) childEnv.MAX_EXTRACTION_ENTITIES = String(config.maxExtractionEntities);
+      if (profile) { childEnv.PROMPT_DIR = promptRoot; childEnv.ENTITY_TYPE_PROMPT_FILE = profile; }
+      const child = spawn(binary, [
+        '--host', host, '--port', String(childPort), '--workspace', workspace,
+        '--working-dir', storage, '--input-dir', input, '--workers', '1', '--max-async', '2',
+      ], { env: childEnv, stdio: 'inherit' });
+      instance = { workspace, signature, port: childPort, process: child, active: 0, lastUsed: Date.now(), exited: false };
+      child.once('exit', () => { instance.exited = true; if (instances.get(workspace) === instance) instances.delete(workspace); });
+      child.once('error', () => { instance.exited = true; if (instances.get(workspace) === instance) instances.delete(workspace); });
+      instance.starting = ready(instance).catch((error) => { stop(instance); throw error; });
+      instances.set(workspace, instance);
+    }
+  } finally {
+    releaseLaunch();
   }
-  if (instances.size >= maxInstances) {
-    const candidate = [...instances.values()].filter((item) => item.active === 0 && Date.now() - item.lastUsed >= idleMs).sort((a, b) => a.lastUsed - b.lastUsed)[0];
-    if (!candidate) throw new Error('LightRAG workspace capacity reached');
-    stop(candidate);
-  }
-  await mkdir(`${input}/${workspace}`, { recursive: true });
-  const profile = await promptProfile(workspace, config);
-  const childPort = nextPort++;
-  const childEnv = { ...process.env };
-  if (config?.maxExtractionEntities) childEnv.MAX_EXTRACTION_ENTITIES = String(config.maxExtractionEntities);
-  if (profile) { childEnv.PROMPT_DIR = promptRoot; childEnv.ENTITY_TYPE_PROMPT_FILE = profile; }
-  const child = spawn(binary, [
-    '--host', host, '--port', String(childPort), '--workspace', workspace,
-    '--working-dir', storage, '--input-dir', input, '--workers', '1', '--max-async', '2',
-  ], { env: childEnv, stdio: 'inherit' });
-  const instance = { workspace, signature, port: childPort, process: child, active: 0, lastUsed: Date.now(), exited: false };
-  child.once('exit', () => { instance.exited = true; if (instances.get(workspace) === instance) instances.delete(workspace); });
-  child.once('error', () => { instance.exited = true; if (instances.get(workspace) === instance) instances.delete(workspace); });
-  instance.starting = ready(instance).catch((error) => { stop(instance); throw error; });
-  instances.set(workspace, instance);
   await instance.starting;
   return instance;
 }
@@ -109,21 +123,22 @@ async function workspaceInstance(workspace, config) {
 function proxy(req, res, instance, path) {
   instance.active += 1;
   instance.lastUsed = Date.now();
+  let released = false;
+  const release = () => { if (!released) { released = true; instance.active -= 1; instance.lastUsed = Date.now(); } };
   const headers = { ...req.headers, host: `${host}:${instance.port}` };
   delete headers['x-apollo-lightrag-config'];
   const upstream = proxyRequest({ host, port: instance.port, path, method: req.method, headers }, (response) => {
-    let released = false;
-    const release = () => { if (!released) { released = true; instance.active -= 1; instance.lastUsed = Date.now(); } };
     res.writeHead(response.statusCode || 502, response.headers);
     response.pipe(res);
     response.once('end', release);
     response.once('close', release);
   });
-  upstream.once('error', (error) => { instance.active -= 1; if (!res.headersSent) res.writeHead(502); res.end(error.message); });
+  upstream.once('error', (error) => { release(); if (!res.headersSent) res.writeHead(502); res.end(error.message); });
   req.pipe(upstream);
 }
 
 const server = createServer(async (req, res) => {
+  if (req.url === '/llm/v1/chat/completions') return handleAnthropicChat(req, res);
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify({ status: 'healthy', workspaces: instances.size, capacity: maxInstances }));

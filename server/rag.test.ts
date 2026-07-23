@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
-import { insertWeKnoraText } from './rag-engines.js';
+import { getLightRagDocumentStatus, getWeKnoraDocumentStatus, insertWeKnoraText } from './rag-engines.js';
 import {
   assertMinerUDownloadUrl,
   createRagCollection,
@@ -79,6 +79,47 @@ test('RAG removes the legacy local-index schema and keeps tenants isolated', asy
   assert.deepEqual(empty.engines.map((item) => item.engine), ['weknora', 'lightrag']);
   await assert.rejects(searchRagDetailed(database, 'user-b', '安全责任', collection.id), /知识库不存在/);
   database.close();
+});
+
+test('RAG engine adapters expose real processing progress', async () => {
+  const server = createServer((request, response) => {
+    const url = new URL(request.url || '/', 'http://localhost');
+    response.setHeader('Content-Type', 'application/json');
+    if (url.pathname === '/api/v1/knowledge/wk-progress') return response.end(JSON.stringify({ success: true, data: { parse_status: 'processing' } }));
+    if (url.pathname === '/api/v1/knowledge/wk-progress/spans') return response.end(JSON.stringify({
+      success: true,
+      data: {
+        current_stage: 'embedding',
+        trace: { children: [
+          { name: 'docreader', kind: 'stage', status: 'done' },
+          { name: 'chunking', kind: 'stage', status: 'done' },
+          { name: 'embedding', kind: 'stage', status: 'running' },
+          { name: 'multimodal', kind: 'stage', status: 'pending' },
+          { name: 'postprocess', kind: 'stage', status: 'pending' },
+        ] },
+      },
+    }));
+    if (/\/documents\/track_status\/lr-progress$/.test(url.pathname)) return response.end(JSON.stringify({ documents: [{ id: 'doc-progress', status: 'processing', chunks_count: 698 }] }));
+    if (/\/documents\/pipeline_status$/.test(url.pathname)) return response.end(JSON.stringify({ latest_message: 'Chunk 26 of 698 extracted 36 Ent + 43 Rel doc-progress-chunk-025' }));
+    response.statusCode = 404;
+    response.end('{}');
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const services = {
+      weknoraBaseUrl: `${baseUrl}/api/v1`, weknoraApiKey: 'wk-key', weknoraEmbeddingModelId: 'wk-model',
+      lightRagBaseUrlTemplate: `${baseUrl}/light/{collectionId}`, lightRagApiKey: 'lr-key',
+    };
+    const weknora = await getWeKnoraDocumentStatus('wk-progress', services);
+    assert.deepEqual(weknora.progress, { stage: 'embedding', current: 2, total: 5, percent: 40 });
+    const lightrag = await getLightRagDocumentStatus('collection-a', 'lr-progress', services);
+    assert.deepEqual(lightrag.progress, { stage: 'processing', current: 26, total: 698, percent: 4 });
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
 });
 
 test('RAG uploads, queries and exposes the LightRAG graph', async () => {

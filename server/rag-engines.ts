@@ -18,6 +18,13 @@ export type ExternalEngineHit = {
 
 export type ExternalEngineStatus = 'unconfigured' | 'pending' | 'ready' | 'failed';
 
+export type ExternalEngineProgress = {
+  stage: string;
+  current: number | null;
+  total: number | null;
+  percent: number | null;
+};
+
 export type WeKnoraChunk = { id: string; index: number; content: string };
 
 export type LightRagGraph = {
@@ -56,6 +63,7 @@ export async function createWeKnoraKnowledgeBase(
         type: 'document',
         is_temporary: false,
         embedding_model_id: services.weknoraEmbeddingModelId,
+        storage_provider_config: { provider: 'local' },
         chunking_config: {
           chunk_size: chunking.size,
           chunk_overlap: chunking.overlap,
@@ -115,14 +123,31 @@ export async function insertWeKnoraFile(
 export async function getWeKnoraDocumentStatus(
   knowledgeId: string,
   services: ExternalRagServices,
-): Promise<{ status: ExternalEngineStatus; error: string }> {
+): Promise<{ status: ExternalEngineStatus; error: string; progress: ExternalEngineProgress }> {
   const response = await engineJson<WeKnoraEnvelope<{ parse_status?: string; error_message?: string }>>(
     engineUrl(services.weknoraBaseUrl!, `/knowledge/${encodeURIComponent(knowledgeId)}`),
     { headers: apiHeaders(services.weknoraApiKey!, false) },
     services,
   );
   if (!response.success || !response.data) throw new Error(response.message || response.error || 'WeKnora 状态查询失败');
-  return { status: weknoraStatus(response.data.parse_status), error: response.data.error_message || '' };
+  const status = weknoraStatus(response.data.parse_status);
+  if (status !== 'pending') return { status, error: response.data.error_message || '', progress: completedProgress(status) };
+  const spans = await engineJson<WeKnoraEnvelope<{
+    current_stage?: string;
+    trace?: { children?: Array<{ name?: string; kind?: string; status?: string }> };
+  }>>(engineUrl(services.weknoraBaseUrl!, `/knowledge/${encodeURIComponent(knowledgeId)}/spans`), {
+    headers: apiHeaders(services.weknoraApiKey!, false),
+  }, services).catch(() => null);
+  const stages = spans?.data?.trace?.children?.filter((item) => item.kind === 'stage') || [];
+  const total = stages.length;
+  const current = stages.filter((item) => ['done', 'skipped'].includes(item.status || '')).length;
+  return {
+    status,
+    error: response.data.error_message || '',
+    progress: total
+      ? { stage: spans?.data?.current_stage || 'pending', current, total, percent: Math.round(current / total * 100) }
+      : completedProgress(status),
+  };
 }
 
 export async function getWeKnoraChunks(
@@ -270,19 +295,31 @@ export async function getLightRagDocumentStatus(
   collectionId: string,
   trackId: string,
   services: ExternalRagServices,
-): Promise<{ status: ExternalEngineStatus; documentId: string; error: string }> {
-  const response = await engineJson<{
-    documents?: Array<{ id?: string; status?: string; error_msg?: string }>;
-  }>(lightRagUrl(services, collectionId, `/documents/track_status/${encodeURIComponent(trackId)}`), {
-    headers: lightRagHeaders(services.lightRagApiKey!, collectionId, false),
-  }, services);
+): Promise<{ status: ExternalEngineStatus; documentId: string; error: string; progress: ExternalEngineProgress }> {
+  const headers = lightRagHeaders(services.lightRagApiKey!, collectionId, false);
+  const [response, pipeline] = await Promise.all([
+    engineJson<{ documents?: Array<{ id?: string; status?: string; error_msg?: string; chunks_count?: number }> }>(
+      lightRagUrl(services, collectionId, `/documents/track_status/${encodeURIComponent(trackId)}`), { headers }, services,
+    ),
+    engineJson<{ latest_message?: string }>(lightRagUrl(services, collectionId, '/documents/pipeline_status'), { headers }, services).catch(() => null),
+  ]);
   const document = response.documents?.[0];
-  if (!document) return { status: 'pending', documentId: '', error: '' };
-  const status = String(document.status || '').toLowerCase();
+  if (!document) return { status: 'pending', documentId: '', error: '', progress: completedProgress('pending') };
+  const stage = String(document.status || 'pending').toLowerCase();
+  const status = stage === 'processed' ? 'ready' : stage === 'failed' ? 'failed' : 'pending';
+  if (status !== 'pending') return { status, documentId: document.id || '', error: document.error_msg || '', progress: completedProgress(status) };
+  const total = Number.isFinite(document.chunks_count) && document.chunks_count! > 0 ? document.chunks_count! : null;
+  const match = pipeline?.latest_message?.match(/\bChunk (\d+) of (\d+) extracted\b.*\s([^\s]+-chunk-\d+)\s*$/);
+  const current = match ? Number(match[1]) : null;
+  const messageTotal = match ? Number(match[2]) : null;
+  const messageDocumentId = match?.[3] || '';
+  const valid = current !== null && total !== null && current <= total && messageTotal === total
+    && messageDocumentId.startsWith(`${document.id}-chunk-`);
   return {
-    status: status === 'processed' ? 'ready' : status === 'failed' ? 'failed' : 'pending',
+    status,
     documentId: document.id || '',
     error: document.error_msg || '',
+    progress: { stage, current: valid ? current : null, total, percent: valid ? Math.round(current / total * 100) : null },
   };
 }
 
@@ -379,6 +416,12 @@ export async function getLightRagGraph(collectionId: string, label: string, dept
     services,
   );
   return { label: selected, labels, nodes: graph.nodes || [], edges: graph.edges || [] };
+}
+
+function completedProgress(status: ExternalEngineStatus): ExternalEngineProgress {
+  return status === 'ready'
+    ? { stage: 'completed', current: 1, total: 1, percent: 100 }
+    : { stage: status, current: null, total: null, percent: null };
 }
 
 function lightRagUrl(services: ExternalRagServices, collectionId: string, path: string): string {

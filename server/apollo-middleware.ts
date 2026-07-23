@@ -2505,6 +2505,7 @@ function artifactMime(ext: string): string {
   if (ext === '.pdf') return 'application/pdf';
   if (ext === '.md' || ext === '.markdown') return 'text/markdown; charset=utf-8';
   if (ext === '.json') return 'application/json; charset=utf-8';
+  if (ext === '.txt') return 'text/plain; charset=utf-8';
   if (ext === '.png') return 'image/png';
   if (ext === '.webp') return 'image/webp';
   return 'image/jpeg';

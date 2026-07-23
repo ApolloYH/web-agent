@@ -12,13 +12,37 @@ export default function ProcessTimeline({
   onRespond?: (stepId: string, answer: string) => Promise<void>;
 }) {
   const visibleSteps = steps.filter(isImportantStep);
+  const waitingForResponse = visibleSteps.some((step) =>
+    step.pending && (step.kind === 'approval' || step.kind === 'question'),
+  );
+  const active = streaming || waitingForResponse;
+  const hasError = visibleSteps.some((step) => step.tone === 'error');
+  const [open, setOpen] = useState(active);
+  useEffect(() => setOpen(active), [active]);
   if (!visibleSteps.length) return null;
+
+  const duration = visibleSteps.reduce((total, step) => total + (step.durationSec ?? 0), 0);
+  const status = waitingForResponse ? '等待操作' : streaming ? '正在执行' : hasError ? '执行异常' : '执行完成';
   return (
-    <div className="mb-3 space-y-1">
-      {visibleSteps.map((step) => (
-        <ProcessStepRow key={step.id} step={step} streaming={streaming} onRespond={onRespond} />
-      ))}
-    </div>
+    <details
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+      className="group mb-4 overflow-hidden rounded-xl border border-black/[0.07] bg-[#f7f7f7]"
+    >
+      <summary className="flex list-none items-center gap-2.5 px-3.5 py-2.5 text-[11px] text-[#555] hover:bg-black/[0.025] [&::-webkit-details-marker]:hidden">
+        <span className={`size-2 shrink-0 rounded-full ${active ? 'animate-pulse bg-[#d99a19]' : hasError ? 'bg-[#c83c3c]' : 'bg-[#2f8a4b]'}`} />
+        <span className="font-medium text-[#303030]">{status}</span>
+        <span className="min-w-0 flex-1 truncate">
+          {visibleSteps.length} 个步骤{!active && duration > 0 ? ` · ${duration.toFixed(1)}s` : ''}
+        </span>
+        <span aria-hidden="true" className="text-[14px] text-[#888] transition-transform group-open:rotate-90 motion-reduce:transform-none">›</span>
+      </summary>
+      <div className="space-y-1 border-t border-black/[0.06] bg-white px-2 py-2">
+        {visibleSteps.map((step) => (
+          <ProcessStepRow key={step.id} step={step} streaming={streaming} onRespond={onRespond} />
+        ))}
+      </div>
+    </details>
   );
 }
 

@@ -186,7 +186,7 @@ export default function ChatPanel({
                     )}
 
                     {message.content ? (
-                      <div className="[&_.prose-chat]:h-auto [&_.prose-chat]:overflow-visible [&_.prose-chat]:p-0 [&_.prose-chat]:text-[13px] [&_.prose-chat]:leading-5">
+                      <div className="chat-message [&_.prose-chat]:h-auto [&_.prose-chat]:overflow-visible [&_.prose-chat]:p-0">
                         <MarkdownView content={message.content} />
                       </div>
                     ) : message.streaming && (!message.steps || message.steps.every((step) => !step.pending)) ? (

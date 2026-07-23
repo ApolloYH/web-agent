@@ -23,6 +23,7 @@ import {
   searchWeKnora,
   weknoraConfigured,
   type ExternalEngineHit,
+  type ExternalEngineProgress,
   type ExternalEngineStatus,
   type ExternalRagServices,
   type LightRagGraph,
@@ -96,6 +97,8 @@ export type RagDocument = {
   status: ExternalEngineStatus | 'partial';
   weknoraStatus: ExternalEngineStatus;
   lightRagStatus: ExternalEngineStatus;
+  weknoraProgress: ExternalEngineProgress;
+  lightRagProgress: ExternalEngineProgress;
   weknoraError: string;
   lightRagError: string;
   createdAt: string;
@@ -353,8 +356,13 @@ export function listRagDocuments(database: DatabaseSync, userId: string, collect
       weknora_error AS "weknoraError", lightrag_error AS "lightRagError",
       created_at AS "createdAt", updated_at AS "updatedAt"
     FROM rag_documents WHERE user_id = ? AND collection_id = ? ORDER BY created_at DESC
-  `).all(userId, collectionId) as Array<Omit<RagDocument, 'status'>>;
-  return rows.map((row) => ({ ...row, status: combinedDocumentStatus(row.weknoraStatus, row.lightRagStatus) }));
+  `).all(userId, collectionId) as Array<Omit<RagDocument, 'status' | 'weknoraProgress' | 'lightRagProgress'>>;
+  return rows.map((row) => ({
+    ...row,
+    status: combinedDocumentStatus(row.weknoraStatus, row.lightRagStatus),
+    weknoraProgress: defaultEngineProgress(row.weknoraStatus),
+    lightRagProgress: defaultEngineProgress(row.lightRagStatus),
+  }));
 }
 
 export async function getRagDocumentChunks(
@@ -384,15 +392,17 @@ export async function getRagDocumentSource(database: DatabaseSync, userId: strin
 
 export async function refreshRagDocuments(database: DatabaseSync, userId: string, collectionId: string, services: RagServices = {}): Promise<RagDocument[]> {
   const documents = documentEngineRecords(database, userId, collectionId).filter((item) => item.weknoraStatus === 'pending' || item.lightRagStatus === 'pending');
+  const progress = new Map<string, { weknora?: ExternalEngineProgress; lightrag?: ExternalEngineProgress }>();
   await Promise.all(documents.map(async (document) => {
     const [weknora, lightrag] = await Promise.all([
       document.weknoraStatus === 'pending' && document.weknoraKnowledgeId && weknoraConfigured(services)
-        ? getWeKnoraDocumentStatus(document.weknoraKnowledgeId, services).catch((error) => ({ status: 'pending' as const, error: `状态查询失败：${messageOf(error)}` }))
+        ? getWeKnoraDocumentStatus(document.weknoraKnowledgeId, services).catch((error) => ({ status: 'pending' as const, error: `状态查询失败：${messageOf(error)}`, progress: defaultEngineProgress('pending') }))
         : null,
       document.lightRagStatus === 'pending' && document.lightRagTrackId && lightRagConfigured(services)
-        ? getLightRagDocumentStatus(collectionId, document.lightRagTrackId, services).catch((error) => ({ status: 'pending' as const, documentId: '', error: `状态查询失败：${messageOf(error)}` }))
+        ? getLightRagDocumentStatus(collectionId, document.lightRagTrackId, services).catch((error) => ({ status: 'pending' as const, documentId: '', error: `状态查询失败：${messageOf(error)}`, progress: defaultEngineProgress('pending') }))
         : null,
     ]);
+    progress.set(document.id, { weknora: weknora?.progress, lightrag: lightrag?.progress });
     database.prepare(`UPDATE rag_documents SET
       weknora_status = COALESCE(?, weknora_status), weknora_error = COALESCE(?, weknora_error),
       lightrag_status = COALESCE(?, lightrag_status), lightrag_document_id = CASE WHEN ? != '' THEN ? ELSE lightrag_document_id END,
@@ -400,7 +410,11 @@ export async function refreshRagDocuments(database: DatabaseSync, userId: string
       .run(weknora?.status ?? null, weknora?.error ?? null, lightrag?.status ?? null, lightrag?.documentId ?? '', lightrag?.documentId ?? '', lightrag?.error ?? null, new Date().toISOString(), document.id, userId);
   }));
   updateCollectionEngineStatus(database, userId, collectionId);
-  return listRagDocuments(database, userId, collectionId);
+  return listRagDocuments(database, userId, collectionId).map((document) => ({
+    ...document,
+    weknoraProgress: progress.get(document.id)?.weknora || document.weknoraProgress,
+    lightRagProgress: progress.get(document.id)?.lightrag || document.lightRagProgress,
+  }));
 }
 
 export async function retryRagDocument(database: DatabaseSync, userId: string, documentId: string, services: RagServices = {}): Promise<RagDocument> {
@@ -849,6 +863,12 @@ function updateCollectionEngineStatus(database: DatabaseSync, userId: string, co
     .get(userId, collectionId) as { weknoraError: string; lightRagError: string } | undefined;
   database.prepare(`UPDATE rag_collections SET weknora_status = ?, lightrag_status = ?, weknora_error = ?, lightrag_error = ?
     WHERE id = ? AND user_id = ?`).run(statusFor('weknoraStatus'), statusFor('lightRagStatus'), errors?.weknoraError || '', errors?.lightRagError || '', collectionId, userId);
+}
+
+function defaultEngineProgress(status: ExternalEngineStatus): ExternalEngineProgress {
+  return status === 'ready'
+    ? { stage: 'completed', current: 1, total: 1, percent: 100 }
+    : { stage: status, current: null, total: null, percent: null };
 }
 
 function combinedDocumentStatus(weknora: ExternalEngineStatus, lightRag: ExternalEngineStatus): ExternalEngineStatus | 'partial' {

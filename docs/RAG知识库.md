@@ -2,6 +2,14 @@
 
 Apollo 只保留一条清楚的知识库主链路：文档解析、WeKnora 与 LightRAG 双路入库、双路召回融合、LightRAG 知识图谱展示。上游前端、流水线画布、General / QA / Parent-child 模板和 Apollo 本地检索均不再保留。
 
+## 上游集成约定
+
+- 能作为库或前端组件复用的功能直接嵌入 Apollo，只引入实际使用的模块，不运行上游完整前端。
+- 跨语言引擎不重写：由 Apollo 启停一个轻量本地进程，并统一管理配置、数据目录和健康检查。
+- 项目运行不依赖 Docker；没有必要时不引入上游的数据库、消息队列和管理后台。
+- LightRAG 前端只复用 Sigma 图谱画布；Python 核心运行在项目 venv，由工作区网关按知识库隔离。
+- WeKnora 使用官方 Lite 单二进制版本（SQLite、内存队列），不运行标准版的 PostgreSQL、Redis、DocReader 和完整 Web UI。
+
 ## 文档入库
 
 新知识库按固定顺序处理：选择策略与参数 → 上传文件 → 切片预览 → 确认处理 → 召回测试。文本、Markdown、CSV、JSON 和 HTML 可在浏览器中直接预览切片；PDF、Office 和图片会在正式解析后生成实际切片，避免仅为预览重复调用 MinerU。
@@ -43,23 +51,25 @@ LIGHTRAG_BASE_URL_TEMPLATE=http://127.0.0.1:9700/{collectionId}
 真实密钥只写在 `.env` 或生产环境，不提交 Git。
 
 ```dotenv
-WEKNORA_BASE_URL=http://127.0.0.1:8080/api/v1
+WEKNORA_BASE_URL=http://127.0.0.1:18473/api/v1
 WEKNORA_API_KEY=
-WEKNORA_EMBEDDING_MODEL_ID=builtin-apollo-embedding
+WEKNORA_EMBEDDING_MODEL_ID=
 LIGHTRAG_BASE_URL_TEMPLATE=http://127.0.0.1:9700/{collectionId}
 LIGHTRAG_API_KEY=
 RAG_EXTERNAL_TIMEOUT_MS=300000
 
 SILICONFLOW_API_KEY=
+RAG_EMBEDDING_MODEL=BAAI/bge-m3
+RAG_EMBEDDING_BASE_URL=https://api.siliconflow.cn/v1
 RAG_RERANKER_MODEL=BAAI/bge-reranker-v2-m3
 
 RAG_CHAT_API_KEY=
 RAG_CHAT_BASE_URL=https://open.bigmodel.cn/api/paas/v4
-RAG_CHAT_MODEL=glm-4.7-flashx
+RAG_CHAT_MODEL=glm-5.2
 MINERU_API_KEY=
 ```
 
-LightRAG 服务自身的 LLM 配置应复用 Apollo 底座模型。Docker 不是硬要求：可以用 Python venv 运行 LightRAG、从源码运行 WeKnora，并由 systemd 和反向代理管理服务。
+LightRAG 服务自身的 LLM 配置默认复用 Apollo 的 OpenAI 兼容模型；配置 `ANTHROPIC_AUTH_TOKEN` 后，启动脚本会自动改用本地协议适配器，并读取 `ANTHROPIC_BASE_URL` 与 `ANTHROPIC_MODEL`。本地执行 `pnpm rag:start` 会启动 LightRAG Python 工作区网关和 WeKnora Lite v0.6.0 原生单程序；v0.7.0 的官方 SQLite 初始迁移与其当前结构体不一致，修复前不用于新库。当前 Lite 构建只补了 SQLite 漏列、启动字段名和 POST 检索路由，未改动检索与切片逻辑。两套引擎均不运行上游完整 UI 或 Docker。
 
 ## SQLite 迁移
 
