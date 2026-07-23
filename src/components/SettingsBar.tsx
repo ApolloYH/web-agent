@@ -3,10 +3,12 @@ import {
   deleteApolloMemory,
   getApolloConfig,
   getImSettings,
+  getLightRagRuntimeSettings,
   listApolloMemories,
   pollWeixinLogin,
   saveApolloConfig,
   saveImChannel,
+  saveLightRagRuntimeSettings,
   saveApolloMemory,
   saveTelegramSettings,
   startWeixinLogin,
@@ -343,6 +345,50 @@ function Field({ label, value, onChange, placeholder, type = 'text' }: { label: 
   );
 }
 
+function LightRagRuntimePanel() {
+  const [maxAsync, setMaxAsync] = useState(2);
+  const [activeWorkspaces, setActiveWorkspaces] = useState(0);
+  const [state, setState] = useState<'loading' | 'idle' | 'saving' | 'saved' | 'error'>('loading');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    getLightRagRuntimeSettings().then((settings) => {
+      setMaxAsync(settings.maxAsync);
+      setActiveWorkspaces(settings.activeWorkspaces);
+      setState('idle');
+    }).catch((reason) => {
+      setError(reason instanceof Error ? reason.message : String(reason));
+      setState('error');
+    });
+  }, []);
+
+  const save = async () => {
+    setState('saving');
+    setError('');
+    try {
+      const settings = await saveLightRagRuntimeSettings(maxAsync);
+      setMaxAsync(settings.maxAsync);
+      setActiveWorkspaces(settings.activeWorkspaces);
+      setState('saved');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+      setState('error');
+    }
+  };
+
+  return <section className="border-b border-black/[0.07] pb-4">
+    <div className="flex items-end gap-3">
+      <label htmlFor="lightrag-max-async" className="min-w-0 flex-1 font-medium text-gray-600">LightRAG 并发数（MAX_ASYNC）
+        <input id="lightrag-max-async" type="number" min={1} max={16} value={maxAsync} disabled={state === 'loading'} onChange={(event) => { setMaxAsync(Number(event.target.value)); setState('idle'); }} className="mt-1.5 h-9 w-full border border-gray-300 bg-white px-2.5 text-[11px] text-gray-800 outline-none focus:border-gray-600" />
+      </label>
+      <button type="button" onClick={save} disabled={state === 'loading' || state === 'saving' || !Number.isInteger(maxAsync) || maxAsync < 1 || maxAsync > 16} className="h-9 shrink-0 bg-gray-900 px-3 font-medium text-white transition-colors hover:bg-gray-700 disabled:cursor-default disabled:bg-gray-300">{state === 'saving' ? '保存中…' : '应用'}</button>
+    </div>
+    <p className="mt-1.5 text-[10px] leading-4 text-gray-400">范围 1–16。新启动的 LightRAG 工作进程使用新值；当前 {activeWorkspaces} 个进程不会被中断。</p>
+    {state === 'saved' && <p className="mt-1 text-emerald-600">已保存，无需修改配置文件。</p>}
+    {state === 'error' && <p className="mt-1 text-red-500">{error}</p>}
+  </section>;
+}
+
 function ApolloConfigPanel({ permissionMode }: { permissionMode: ApolloPermissionMode }) {
   const [config, setConfig] = useState('');
   const [configPath, setConfigPath] = useState('当前用户/.apollo/assistant-config.json');
@@ -392,7 +438,8 @@ function ApolloConfigPanel({ permissionMode }: { permissionMode: ApolloPermissio
   };
 
   return (
-    <div className="space-y-2 text-[11px]">
+    <div className="space-y-4 text-[11px]">
+      <LightRagRuntimePanel />
       <label htmlFor="apollo-config" className="block font-medium text-gray-600">
         Apollo 配置
       </label>

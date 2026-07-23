@@ -106,6 +106,7 @@ export type RagDocument = {
 };
 
 export type RagChunkPreview = { id: string; index: number; content: string };
+export type RagCollectionStats = { tokenCount: number; chunkCount: number; countedDocumentCount: number; documentCount: number; estimated: true };
 
 export type RagHit = {
   id: string;
@@ -206,6 +207,8 @@ export function ensureRagSchema(database: DatabaseSync): void {
       lightrag_file_source TEXT NOT NULL DEFAULT '',
       lightrag_status TEXT NOT NULL DEFAULT 'unconfigured',
       lightrag_error TEXT NOT NULL DEFAULT '',
+      token_count INTEGER,
+      indexed_chunk_count INTEGER,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL DEFAULT '',
       FOREIGN KEY(collection_id) REFERENCES rag_collections(id) ON DELETE CASCADE
@@ -251,6 +254,8 @@ export function ensureRagSchema(database: DatabaseSync): void {
   addColumn(database, 'rag_documents', 'lightrag_file_source', "TEXT NOT NULL DEFAULT ''");
   addColumn(database, 'rag_documents', 'lightrag_status', "TEXT NOT NULL DEFAULT 'unconfigured'");
   addColumn(database, 'rag_documents', 'lightrag_error', "TEXT NOT NULL DEFAULT ''");
+  addColumn(database, 'rag_documents', 'token_count', 'INTEGER');
+  addColumn(database, 'rag_documents', 'indexed_chunk_count', 'INTEGER');
   addColumn(database, 'rag_documents', 'updated_at', "TEXT NOT NULL DEFAULT ''");
   database.exec("UPDATE rag_documents SET updated_at = created_at WHERE updated_at = ''");
 }
@@ -379,6 +384,56 @@ export async function getRagDocumentChunks(
   if (document.weknoraStatus !== 'ready' || !document.weknoraKnowledgeId) throw new Error('WeKnora 尚未完成切片');
   if (!weknoraConfigured(services)) throw new Error('未配置 WeKnora 服务');
   return getWeKnoraChunks(document.weknoraKnowledgeId, services);
+}
+
+export async function getRagCollectionStats(database: DatabaseSync, userId: string, collectionId: string, services: RagServices = {}): Promise<RagCollectionStats> {
+  assertCollection(database, userId, collectionId);
+  const documents = database.prepare(`SELECT id, weknora_knowledge_id AS "weknoraKnowledgeId",
+    weknora_status AS "weknoraStatus", token_count AS "tokenCount", indexed_chunk_count AS "chunkCount"
+    FROM rag_documents WHERE user_id = ? AND collection_id = ?`).all(userId, collectionId) as Array<{
+      id: string; weknoraKnowledgeId: string; weknoraStatus: ExternalEngineStatus; tokenCount: number | null; chunkCount: number | null;
+    }>;
+  for (const document of documents) {
+    if (document.tokenCount !== null) continue;
+    if (document.weknoraStatus !== 'ready' || !document.weknoraKnowledgeId || !weknoraConfigured(services)) continue;
+    let text = '';
+    let chunkCount = 0;
+    try {
+      const chunks: RagChunkPreview[] = [];
+      let page = 1;
+      let total = 1;
+      while (chunks.length < total) {
+        const result = await getWeKnoraChunks(document.weknoraKnowledgeId, services, page, 100);
+        if (!result.chunks.length) break;
+        chunks.push(...result.chunks);
+        total = result.total;
+        page += 1;
+      }
+      text = chunks.map((chunk) => chunk.content).join('\n');
+      chunkCount = chunks.length;
+    } catch { continue; }
+    const tokenCount = estimateTokenCount(text);
+    database.prepare('UPDATE rag_documents SET token_count = ?, indexed_chunk_count = ? WHERE id = ? AND user_id = ?')
+      .run(tokenCount, chunkCount, document.id, userId);
+    document.tokenCount = tokenCount;
+    document.chunkCount = chunkCount;
+  }
+  return {
+    tokenCount: documents.reduce((sum, item) => sum + (item.tokenCount ?? 0), 0),
+    chunkCount: documents.reduce((sum, item) => sum + (item.chunkCount ?? 0), 0),
+    countedDocumentCount: documents.filter((item) => item.tokenCount !== null).length,
+    documentCount: documents.length,
+    estimated: true,
+  };
+}
+
+export function estimateTokenCount(text: string): number {
+  let count = 0;
+  for (const match of text.matchAll(/[\p{L}\p{N}_]+|[^\s\p{L}\p{N}_]/gu)) {
+    const value = match[0];
+    count += /[^\x00-\xff]/.test(value) ? [...value].length : Math.ceil(value.length / 4);
+  }
+  return count;
 }
 
 export async function getRagDocumentSource(database: DatabaseSync, userId: string, documentId: string, services: RagServices = {}): Promise<{ bytes: Uint8Array; contentType: string; name: string }> {

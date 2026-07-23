@@ -7,6 +7,8 @@ import {
   assertMinerUDownloadUrl,
   createRagCollection,
   ensureRagSchema,
+  estimateTokenCount,
+  getRagCollectionStats,
   getRagDocumentChunks,
   getRagDocumentSource,
   getRagGraph,
@@ -50,6 +52,7 @@ test('RAG removes the legacy local-index schema and keeps tenants isolated', asy
   assert.equal(collectionColumns.includes('pipeline_template'), false);
   assert.equal(collectionColumns.includes('chunk_method'), false);
   assert.equal(documentColumns.includes('chunk_count'), false);
+  assert.equal(documentColumns.includes('token_count'), true);
   assert.equal((database.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE name = 'rag_chunks'").get() as { count: number }).count, 0);
 
   const collection = createRagCollection(database, 'user-a', '安全制度');
@@ -186,6 +189,11 @@ test('RAG uploads, queries and exposes the LightRAG graph', async () => {
     const preview = await getRagDocumentChunks(database, 'user-a', inserted.id, services);
     assert.equal(preview.total, 2);
     assert.equal(preview.chunks[1]?.content, '作业前必须完成审批。');
+    const stats = await getRagCollectionStats(database, 'user-a', collection.id, services);
+    assert.deepEqual(stats, {
+      tokenCount: estimateTokenCount('建设单位承担安全责任。\n作业前必须完成审批。'),
+      chunkCount: 2, countedDocumentCount: 1, documentCount: 1, estimated: true,
+    });
     const source = await getRagDocumentSource(database, 'user-a', inserted.id, services);
     assert.equal(new TextDecoder().decode(source.bytes), '建设单位承担安全责任。');
 

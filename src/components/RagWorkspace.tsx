@@ -5,6 +5,7 @@ import {
   createRagCollection,
   deleteRagCollection,
   deleteRagDocument,
+  getRagCollectionStats,
   getRagDocumentChunks,
   getRagGraph,
   listRagCollections,
@@ -16,6 +17,7 @@ import {
   uploadRagDocuments,
   type RagCollection,
   type RagCollectionPatch,
+  type RagCollectionStats,
   type RagChunkStrategy,
   type RagChunkPreview,
   type RagDocument,
@@ -398,9 +400,17 @@ function TestingPanel({ collection }: { collection: RagCollection }) {
 
 function CollectionSettings({ collection, busy, hasDocuments, onUpdate, onDelete }: { collection: RagCollection; busy: boolean; hasDocuments: boolean; onUpdate: (patch: RagCollectionPatch) => Promise<boolean>; onDelete: () => Promise<void> }) {
   const [draft, setDraft] = useState(collection);
+  const [stats, setStats] = useState<RagCollectionStats>();
+  const [statsError, setStatsError] = useState('');
   const [notice, setNotice] = useState('');
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   useEffect(() => { setDraft(collection); setNotice(''); }, [collection.id, collection.updatedAt]);
+  useEffect(() => {
+    let cancelled = false;
+    setStats(undefined); setStatsError('');
+    getRagCollectionStats(collection.id).then((value) => { if (!cancelled) setStats(value); }).catch((reason) => { if (!cancelled) setStatsError(messageOf(reason)); });
+    return () => { cancelled = true; };
+  }, [collection.id, collection.updatedAt]);
   const patch = <K extends keyof RagCollection>(key: K, value: RagCollection[K]) => setDraft((current) => ({ ...current, [key]: value }));
   const save = async () => {
     const saved = await onUpdate({
@@ -421,6 +431,7 @@ function CollectionSettings({ collection, busy, hasDocuments, onUpdate, onDelete
   return <div className="mx-auto max-w-4xl"><div className="flex items-end justify-between gap-3"><div><h2 className="text-[18px] font-semibold text-[#222]">知识库设置</h2><p className="mt-1 text-[10px] text-[#60646c]">处理参数决定如何入库，检索参数可随时调整。</p></div>{notice ? <span role="status" className="text-[9px] font-medium text-black">{notice}</span> : null}</div>
     <div className="mt-8">
       <SettingsSection title="基本信息" description="用于识别和说明这个知识库。"><div className="grid gap-4 sm:grid-cols-2"><TextField label="名称" value={draft.name} onChange={(value) => patch('name', value)} maxLength={80} /><label className="block text-[9px] font-medium text-[#555] sm:col-span-2">说明<textarea value={draft.description} onChange={(event) => patch('description', event.target.value)} maxLength={500} rows={3} className={`${fieldClass} resize-y py-2 leading-5`} /></label></div></SettingsSection>
+      <SettingsSection title="容量统计" description="按已完成的实际切片估算，便于评估知识库规模。"><div aria-live="polite">{stats ? <><p className="text-[22px] font-semibold tracking-[-0.03em] text-[#252525]">约 {formatCount(stats.tokenCount)} Token</p><p className="mt-1 text-[9px] text-[#6b7280]">{formatCount(stats.chunkCount)} 个切片 · 已统计 {stats.countedDocumentCount}/{stats.documentCount} 个文档{stats.countedDocumentCount < stats.documentCount ? '，其余处理完成后更新' : ''}</p></> : <p className={`text-[10px] ${statsError ? 'text-red-600' : 'text-[#6b7280]'}`}>{statsError || '正在统计…'}</p>}</div></SettingsSection>
       <SettingsSection title="文档解析" description={hasDocuments ? '已有文档，解析方式已锁定。' : '本地解析时两个引擎各自处理；MinerU 时共用提取文本。'}><fieldset disabled={hasDocuments || busy}><SelectField label="解析方式" value={draft.parser} onChange={(value) => patch('parser', value as RagCollection['parser'])} options={[['native', '本地解析'], ['mineru', 'MinerU 高精度']]} /></fieldset></SettingsSection>
       <SettingsSection title="向量检索配置" description={hasDocuments ? 'WeKnora 已有文档，建库和切片参数已锁定。' : '由 WeKnora 负责切片、向量与关键词检索。'}>
         <div className="space-y-5">
@@ -547,6 +558,8 @@ function escapeRegExp(value: string): string {
 }
 
 function textProperty(value: unknown): string { return typeof value === 'string' ? value : ''; }
+function formatCount(value: number): string { return new Intl.NumberFormat('zh-CN').format(value); }
+
 function messageOf(reason: unknown): string { return reason instanceof Error ? reason.message : String(reason); }
 function formatSize(bytes: number): string { return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`; }
 function fileType(name: string): string { return name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toUpperCase() : '文件'; }

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -46,6 +46,8 @@ server.listen(Number(value('--port')), value('--host'));
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => server.close(() => process.exit()));
 `);
   await chmod(binary, 0o755);
+  await mkdir(join(directory, 'storage'));
+  await writeFile(join(directory, 'storage', 'runtime-settings.json'), JSON.stringify({ maxAsync: 5 }));
   const gateway = spawn(process.execPath, ['scripts/lightrag-workspace-gateway.mjs'], {
     cwd: process.cwd(),
     env: {
@@ -58,11 +60,21 @@ for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => server.cl
       LIGHTRAG_PROMPT_DIR: join(directory, 'prompts'),
       SPAWN_LOG: spawnLog,
       MAX_ASYNC: '4',
+      LIGHTRAG_API_KEY: 'test-secret',
     },
     stdio: 'ignore',
   });
   try {
     await waitFor(`http://127.0.0.1:${gatewayPort}/health`);
+    assert.equal((await fetch(`http://127.0.0.1:${gatewayPort}/admin/settings`)).status, 401);
+    const initial = await fetch(`http://127.0.0.1:${gatewayPort}/admin/settings`, { headers: { Authorization: 'Bearer test-secret' } });
+    assert.deepEqual(await initial.json(), { maxAsync: 5, activeWorkspaces: 0 });
+    const settings = await fetch(`http://127.0.0.1:${gatewayPort}/admin/settings`, {
+      method: 'PUT',
+      headers: { Authorization: 'Bearer test-secret', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ maxAsync: 6 }),
+    });
+    assert.deepEqual(await settings.json(), { maxAsync: 6, activeWorkspaces: 0 });
     const responses = await Promise.all([
       fetch(`http://127.0.0.1:${gatewayPort}/same/documents/track_status/a`, { headers: { Connection: 'close' } }),
       fetch(`http://127.0.0.1:${gatewayPort}/same/documents/track_status/b`, { headers: { Connection: 'close' } }),
@@ -70,7 +82,8 @@ for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => server.cl
     assert.deepEqual(responses.map((response) => response.status), [200, 200]);
     await Promise.all(responses.map((response) => response.arrayBuffer()));
     const launches = (await readFile(spawnLog, 'utf8')).trim().split('\n').map(JSON.parse);
-    assert.deepEqual(launches, [{ workspace: 'same', maxAsync: '4' }]);
+    assert.deepEqual(launches, [{ workspace: 'same', maxAsync: '6' }]);
+    assert.deepEqual(JSON.parse(await readFile(join(directory, 'storage', 'runtime-settings.json'), 'utf8')), { maxAsync: 6 });
   } finally {
     const exited = new Promise((resolve) => gateway.once('exit', resolve));
     gateway.kill('SIGTERM');

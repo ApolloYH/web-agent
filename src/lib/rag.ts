@@ -73,6 +73,7 @@ export type RagDocument = {
 };
 
 export type RagChunkPreview = { id: string; index: number; content: string };
+export type RagCollectionStats = { tokenCount: number; chunkCount: number; countedDocumentCount: number; documentCount: number; estimated: true };
 
 export type RagEngineStatus = 'unconfigured' | 'pending' | 'ready' | 'failed';
 
@@ -133,6 +134,10 @@ export async function deleteRagCollection(id: string): Promise<void> {
 
 export async function listRagDocuments(collectionId: string): Promise<RagDocument[]> {
   return (await request<{ documents: RagDocument[] }>(`/apollo-api/rag/${encodeURIComponent(collectionId)}/documents`)).documents;
+}
+
+export async function getRagCollectionStats(collectionId: string): Promise<RagCollectionStats> {
+  return request<RagCollectionStats>(`/apollo-api/rag/${encodeURIComponent(collectionId)}/stats`);
 }
 
 export async function getRagGraph(collectionId: string, label = ''): Promise<RagGraph> {

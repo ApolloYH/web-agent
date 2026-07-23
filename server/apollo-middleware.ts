@@ -19,7 +19,8 @@ import { createDocumentTools } from './document-tools.js';
 import { createBrowserTools } from './browser-tools.js';
 import { createManagedBrowserTools } from './managed-browser-tools.js';
 import { createSiteTools, deletePublishedSite, listPublishedSites, publishSite, servePublishedSite, type PublishedSite } from './site-tools.js';
-import { createRagCollection, createRagTools, deleteRagCollection, deleteRagDocument, ensureRagSchema, getRagDocumentChunks, getRagDocumentSource, getRagGraph, ingestRagDocument, listRagCollections, refreshRagDocuments, retryRagDocument, searchRagDetailed, updateRagCollection, type RagCollectionPatch, type RagServices } from './rag.js';
+import { createRagCollection, createRagTools, deleteRagCollection, deleteRagDocument, ensureRagSchema, getRagCollectionStats, getRagDocumentChunks, getRagDocumentSource, getRagGraph, ingestRagDocument, listRagCollections, refreshRagDocuments, retryRagDocument, searchRagDetailed, updateRagCollection, type RagCollectionPatch, type RagServices } from './rag.js';
+import { getLightRagRuntimeSettings, updateLightRagRuntimeSettings } from './rag-engines.js';
 import { agentRunKey, capacityReason, consumeFixedWindow, pruneExpiredWindows, type RateLimitWindow } from './concurrency.js';
 import { inspectTelegramBot, TelegramGateway, type TelegramChannelConfig } from './telegram-gateway.js';
 import {
@@ -599,6 +600,19 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     const userArtifactRoot = path.join(userWorkspaceRoot, 'artifacts');
     const apiPath = req.url.split('?', 1)[0]!;
 
+    if (apiPath === '/apollo-api/rag-runtime-settings') {
+      if (!user.admin) return jsonError(res, 403, '只有管理员可以管理知识引擎配置');
+      try {
+        if (req.method === 'GET') return json(res, 200, await getLightRagRuntimeSettings(rag));
+        if (req.method !== 'PUT') return jsonError(res, 405, 'Method not allowed');
+        const body = JSON.parse(await readBody(req, 1_024)) as { maxAsync?: unknown };
+        if (!Number.isInteger(body.maxAsync) || Number(body.maxAsync) < 1 || Number(body.maxAsync) > 16) throw new Error('MAX_ASYNC 应为 1–16 的整数');
+        return json(res, 200, await updateLightRagRuntimeSettings(Number(body.maxAsync), rag));
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
+    }
+
     if (apiPath === '/apollo-api/rag') {
       if (req.method === 'GET') return json(res, 200, { collections: listRagCollections(database, user.id) });
       if (req.method !== 'POST') return jsonError(res, 405, 'Method not allowed');
@@ -617,6 +631,16 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
         if (typeof body.query !== 'string' || (body.collectionId !== undefined && typeof body.collectionId !== 'string')) throw new Error('检索参数无效');
         const limit = typeof body.limit === 'number' ? body.limit : 6;
         return json(res, 200, await searchRagDetailed(database, user.id, body.query, body.collectionId ?? '', limit, rag));
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    const ragStats = apiPath.match(/^\/apollo-api\/rag\/([^/]+)\/stats$/);
+    if (ragStats) {
+      if (req.method !== 'GET') return jsonError(res, 405, 'Method not allowed');
+      try {
+        return json(res, 200, await getRagCollectionStats(database, user.id, decodeURIComponent(ragStats[1]!), rag));
       } catch (error) {
         return jsonError(res, 400, error instanceof Error ? error.message : String(error));
       }

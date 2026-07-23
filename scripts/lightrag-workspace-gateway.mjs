@@ -1,6 +1,8 @@
 import { createServer, request as proxyRequest } from 'node:http';
 import { spawn } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { timingSafeEqual } from 'node:crypto';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { handleAnthropicChat } from './openai-anthropic-adapter.mjs';
 
 const host = '127.0.0.1';
@@ -8,17 +10,60 @@ const port = Number(process.env.LIGHTRAG_GATEWAY_PORT || 9700);
 const maxInstances = Number(process.env.LIGHTRAG_MAX_WORKSPACES || 3);
 const idleMs = Number(process.env.LIGHTRAG_WORKSPACE_IDLE_MS || 1_800_000);
 const configuredMaxAsync = Number(process.env.MAX_ASYNC || 2);
-const maxAsync = Number.isInteger(configuredMaxAsync) && configuredMaxAsync >= 1 && configuredMaxAsync <= 16 ? configuredMaxAsync : 2;
 const binary = process.env.LIGHTRAG_SERVER_BIN || '/opt/apollo-rag/lightrag/.venv/bin/lightrag-server';
 const storage = process.env.LIGHTRAG_STORAGE_DIR || '/opt/apollo-rag/shared/lightrag/storage';
 const input = process.env.LIGHTRAG_INPUT_DIR || '/opt/apollo-rag/shared/lightrag/input';
 const promptRoot = process.env.LIGHTRAG_PROMPT_DIR || `${storage}/prompts`;
 const promptSample = process.env.LIGHTRAG_PROMPT_SAMPLE || `${process.cwd()}/prompts/samples/entity_type_prompt.sample.yml`;
+const settingsPath = process.env.LIGHTRAG_RUNTIME_SETTINGS || `${storage}/runtime-settings.json`;
+const adminToken = process.env.LIGHTRAG_API_KEY || '';
+let maxAsync = validMaxAsync(configuredMaxAsync) ? configuredMaxAsync : 2;
+try {
+  const saved = JSON.parse(await readFile(settingsPath, 'utf8'));
+  if (validMaxAsync(saved.maxAsync)) maxAsync = saved.maxAsync;
+} catch (error) {
+  if (error?.code !== 'ENOENT') console.warn(`[LightRAG gateway] ignored invalid runtime settings: ${error.message}`);
+}
 const instances = new Map();
 let nextPort = Number(process.env.LIGHTRAG_WORKSPACE_PORT_START || 9800);
 let launchQueue = Promise.resolve();
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function validMaxAsync(value) {
+  return Number.isInteger(value) && value >= 1 && value <= 16;
+}
+
+function authorized(req) {
+  const supplied = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+  if (!adminToken || !supplied) return false;
+  const expectedBytes = Buffer.from(adminToken);
+  const suppliedBytes = Buffer.from(supplied);
+  return expectedBytes.length === suppliedBytes.length && timingSafeEqual(expectedBytes, suppliedBytes);
+}
+
+async function runtimeSettings(req, res) {
+  if (!authorized(req)) { res.writeHead(401); return res.end('Unauthorized'); }
+  if (req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ maxAsync, activeWorkspaces: instances.size }));
+  }
+  if (req.method !== 'PUT') { res.writeHead(405); return res.end('Method not allowed'); }
+  let body = '';
+  for await (const chunk of req) {
+    body += chunk;
+    if (body.length > 1_024) { res.writeHead(413); return res.end('Payload too large'); }
+  }
+  let value;
+  try { value = JSON.parse(body).maxAsync; } catch { /* validated below */ }
+  if (!validMaxAsync(value)) { res.writeHead(400); return res.end('maxAsync must be an integer from 1 to 16'); }
+  await mkdir(dirname(settingsPath), { recursive: true });
+  await writeFile(`${settingsPath}.tmp`, `${JSON.stringify({ maxAsync: value }, null, 2)}\n`, { mode: 0o600 });
+  await rename(`${settingsPath}.tmp`, settingsPath);
+  maxAsync = value;
+  res.writeHead(200, { 'Content-Type': 'application/json' });
+  return res.end(JSON.stringify({ maxAsync, activeWorkspaces: instances.size }));
+}
 
 async function ready(instance) {
   const deadline = Date.now() + 240_000;
@@ -140,6 +185,10 @@ function proxy(req, res, instance, path) {
 }
 
 const server = createServer(async (req, res) => {
+  if (req.url === '/admin/settings') {
+    try { return await runtimeSettings(req, res); }
+    catch (error) { res.writeHead(500); return res.end(error.message); }
+  }
   if (req.url === '/llm/v1/chat/completions') return handleAnthropicChat(req, res);
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });

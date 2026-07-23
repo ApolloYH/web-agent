@@ -235,6 +235,30 @@ export async function getApolloStatus(): Promise<RuntimeStatus> {
   return response.json();
 }
 
+export type LightRagRuntimeSettings = { maxAsync: number; activeWorkspaces: number };
+
+export async function getLightRagRuntimeSettings(): Promise<LightRagRuntimeSettings> {
+  const response = await fetch('/apollo-api/rag-runtime-settings');
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error ?? `读取 LightRAG 配置失败 ${response.status}`);
+  }
+  return response.json();
+}
+
+export async function saveLightRagRuntimeSettings(maxAsync: number): Promise<LightRagRuntimeSettings> {
+  const response = await fetch('/apollo-api/rag-runtime-settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ maxAsync }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.error ?? `保存 LightRAG 配置失败 ${response.status}`);
+  }
+  return response.json();
+}
+
 export async function getApolloConfig(): Promise<{ path: string; config: string }> {
   const response = await fetch('/apollo-api/config');
   if (!response.ok) throw new Error(`读取 Apollo 配置失败 ${response.status}`);

@@ -46,6 +46,20 @@ export function lightRagConfigured(services: ExternalRagServices): boolean {
   return Boolean(services.lightRagBaseUrlTemplate && services.lightRagApiKey);
 }
 
+export type LightRagRuntimeSettings = { maxAsync: number; activeWorkspaces: number };
+
+export async function getLightRagRuntimeSettings(services: ExternalRagServices): Promise<LightRagRuntimeSettings> {
+  return engineJson<LightRagRuntimeSettings>(lightRagAdminUrl(services), { headers: lightRagAdminHeaders(services.lightRagApiKey!) }, services);
+}
+
+export async function updateLightRagRuntimeSettings(maxAsync: number, services: ExternalRagServices): Promise<LightRagRuntimeSettings> {
+  return engineJson<LightRagRuntimeSettings>(lightRagAdminUrl(services), {
+    method: 'PUT',
+    headers: lightRagAdminHeaders(services.lightRagApiKey!),
+    body: JSON.stringify({ maxAsync }),
+  }, services);
+}
+
 export async function createWeKnoraKnowledgeBase(
   name: string,
   description: string,
@@ -422,6 +436,17 @@ function completedProgress(status: ExternalEngineStatus): ExternalEngineProgress
   return status === 'ready'
     ? { stage: 'completed', current: 1, total: 1, percent: 100 }
     : { stage: status, current: null, total: null, percent: null };
+}
+
+function lightRagAdminUrl(services: ExternalRagServices): string {
+  const template = services.lightRagBaseUrlTemplate || '';
+  const marker = template.indexOf('{collectionId}');
+  if (marker < 0) throw new Error('LIGHTRAG_BASE_URL_TEMPLATE 必须包含 {collectionId}');
+  return engineUrl(template.slice(0, marker).replace(/\/$/, ''), '/admin/settings');
+}
+
+function lightRagAdminHeaders(apiKey: string): Record<string, string> {
+  return { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' };
 }
 
 function lightRagUrl(services: ExternalRagServices, collectionId: string, path: string): string {
