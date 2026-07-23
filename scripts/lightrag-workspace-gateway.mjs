@@ -7,6 +7,8 @@ const host = '127.0.0.1';
 const port = Number(process.env.LIGHTRAG_GATEWAY_PORT || 9700);
 const maxInstances = Number(process.env.LIGHTRAG_MAX_WORKSPACES || 3);
 const idleMs = Number(process.env.LIGHTRAG_WORKSPACE_IDLE_MS || 1_800_000);
+const configuredMaxAsync = Number(process.env.MAX_ASYNC || 2);
+const maxAsync = Number.isInteger(configuredMaxAsync) && configuredMaxAsync >= 1 && configuredMaxAsync <= 16 ? configuredMaxAsync : 2;
 const binary = process.env.LIGHTRAG_SERVER_BIN || '/opt/apollo-rag/lightrag/.venv/bin/lightrag-server';
 const storage = process.env.LIGHTRAG_STORAGE_DIR || '/opt/apollo-rag/shared/lightrag/storage';
 const input = process.env.LIGHTRAG_INPUT_DIR || '/opt/apollo-rag/shared/lightrag/input';
@@ -105,7 +107,7 @@ async function workspaceInstance(workspace, config) {
       if (profile) { childEnv.PROMPT_DIR = promptRoot; childEnv.ENTITY_TYPE_PROMPT_FILE = profile; }
       const child = spawn(binary, [
         '--host', host, '--port', String(childPort), '--workspace', workspace,
-        '--working-dir', storage, '--input-dir', input, '--workers', '1', '--max-async', '2',
+        '--working-dir', storage, '--input-dir', input, '--workers', '1', '--max-async', String(maxAsync),
       ], { env: childEnv, stdio: 'inherit' });
       instance = { workspace, signature, port: childPort, process: child, active: 0, lastUsed: Date.now(), exited: false };
       child.once('exit', () => { instance.exited = true; if (instances.get(workspace) === instance) instances.delete(workspace); });

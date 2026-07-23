@@ -37,7 +37,7 @@ import { appendFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 const args = process.argv.slice(2);
 const value = (name) => args[args.indexOf(name) + 1];
-appendFileSync(process.env.SPAWN_LOG, value('--workspace') + '\\n');
+appendFileSync(process.env.SPAWN_LOG, JSON.stringify({ workspace: value('--workspace'), maxAsync: value('--max-async') }) + '\\n');
 const server = createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ status: 'ok', path: req.url }));
@@ -57,6 +57,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => server.cl
       LIGHTRAG_INPUT_DIR: join(directory, 'input'),
       LIGHTRAG_PROMPT_DIR: join(directory, 'prompts'),
       SPAWN_LOG: spawnLog,
+      MAX_ASYNC: '4',
     },
     stdio: 'ignore',
   });
@@ -68,7 +69,8 @@ for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => server.cl
     ]);
     assert.deepEqual(responses.map((response) => response.status), [200, 200]);
     await Promise.all(responses.map((response) => response.arrayBuffer()));
-    assert.equal((await readFile(spawnLog, 'utf8')).trim().split('\n').length, 1);
+    const launches = (await readFile(spawnLog, 'utf8')).trim().split('\n').map(JSON.parse);
+    assert.deepEqual(launches, [{ workspace: 'same', maxAsync: '4' }]);
   } finally {
     const exited = new Promise((resolve) => gateway.once('exit', resolve));
     gateway.kill('SIGTERM');
