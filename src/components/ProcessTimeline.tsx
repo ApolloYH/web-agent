@@ -103,7 +103,7 @@ function ActivityIcon({ active }: { active: boolean }) {
 function isImportantStep(step: ProcessStep): boolean {
   if (step.kind === 'approval' || step.kind === 'question' || step.kind === 'goal' || step.kind === 'workflow') return true;
   if (step.kind === 'task' || step.fileChange || step.tone === 'error' || step.tone === 'warning') return true;
-  if (step.kind === 'thought') return Boolean(step.pending || step.detail?.trim());
+  if (step.kind === 'thought') return true;
   return step.kind === 'tool_run';
 }
 
