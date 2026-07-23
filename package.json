@@ -16,7 +16,8 @@
     "test": "pnpm build:server && node --test server-dist/server/*.test.js scripts/*.test.mjs",
     "test:concurrency": "pnpm build:server && node --test server-dist/server/concurrency.test.js",
     "start": "node server-dist/server/production.js",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "check:open-design": "node scripts/check-open-design-upstream.mjs"
   },
   "engines": {
     "node": ">=20.19.0"

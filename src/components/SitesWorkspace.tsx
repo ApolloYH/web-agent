@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import ResizeDivider from '@/components/ResizeDivider';
-import { getPublishedSites, type PublishedSite } from '@/lib/sites';
+import { getPublishedSites, type PublishedSite, type SiteElementSelection } from '@/lib/sites';
 
 const CHAT_WIDTH = { default: 400, min: 320, max: 640 };
 
@@ -10,12 +10,16 @@ export default function SitesWorkspace({
   onNewConversation,
   onOpenConversation,
   onSiteChange,
+  elementSelection,
+  onElementSelectionChange,
 }: {
   chat: ReactNode;
   refreshKey: number;
   onNewConversation: () => void;
   onOpenConversation: (id: string) => void;
   onSiteChange: (site: PublishedSite | null) => void;
+  elementSelection: SiteElementSelection | null;
+  onElementSelectionChange: (selection: SiteElementSelection | null) => void;
 }) {
   const [sites, setSites] = useState<PublishedSite[]>([]);
   const [selectedSlug, setSelectedSlug] = useState('');
@@ -25,6 +29,8 @@ export default function SitesWorkspace({
   const [notice, setNotice] = useState('');
   const [chatWidth, setChatWidth] = useState(CHAT_WIDTH.default);
   const [resizing, setResizing] = useState(false);
+  const [pickingElement, setPickingElement] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const newSiteAfterRef = useRef(0);
 
   useEffect(() => {
@@ -55,6 +61,35 @@ export default function SitesWorkspace({
 
   const selectedSite = sites.find((site) => site.slug === selectedSlug) ?? null;
   useEffect(() => { onSiteChange(selectedSite); }, [onSiteChange, selectedSite]);
+  useEffect(() => {
+    setPickingElement(false);
+    onElementSelectionChange(null);
+  }, [onElementSelectionChange, selectedSlug]);
+
+  useEffect(() => {
+    const receiveSelection = (event: MessageEvent) => {
+      if (event.source !== iframeRef.current?.contentWindow || !event.data || typeof event.data !== 'object') return;
+      if (event.data.type === 'apollo:inspector-ready' && pickingElement) {
+        iframeRef.current.contentWindow?.postMessage({ type: 'od:comment-mode', enabled: true, mode: 'picker' }, '*');
+        return;
+      }
+      if (event.data.type === 'apollo:picker-cancelled') return setPickingElement(false);
+      if (!pickingElement) return;
+      const selection = normalizeSelection(event.data);
+      if (!selection) return;
+      setPickingElement(false);
+      onElementSelectionChange(selection);
+    };
+    window.addEventListener('message', receiveSelection);
+    return () => window.removeEventListener('message', receiveSelection);
+  }, [onElementSelectionChange, pickingElement]);
+
+  const toggleElementPicker = () => {
+    const enabled = !pickingElement;
+    setPickingElement(enabled);
+    if (enabled) onElementSelectionChange(null);
+    iframeRef.current?.contentWindow?.postMessage({ type: 'od:comment-mode', enabled, mode: 'picker' }, '*');
+  };
 
   const startNew = () => {
     newSiteAfterRef.current = Date.now();
@@ -174,9 +209,21 @@ export default function SitesWorkspace({
         />
 
         <section className="flex h-[52dvh] min-h-[360px] min-w-0 flex-1 flex-col bg-[#f7f7f8] lg:h-auto lg:min-h-0" aria-label="站点实时预览">
+          <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-b border-black/[0.06] bg-white px-3">
+            <div className="min-w-0 truncate text-[10px] text-[#777]" aria-live="polite">
+              {elementSelection ? <><span className="text-[#333]">已选择</span><code className="ml-2 text-[#2563eb]">{elementSelection.label}</code><span className="ml-2">{elementSelection.text}</span></> : pickingElement ? '将鼠标移到预览中并点击元素，Esc 取消' : '可直接操作预览，或选择元素后告诉 Apollo 怎么修改'}
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {elementSelection && <button type="button" onClick={() => onElementSelectionChange(null)} className="h-7 cursor-pointer px-2 text-[10px] text-[#777] hover:text-[#222] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#171717]">清除</button>}
+              <button type="button" disabled={!selectedSite} aria-pressed={pickingElement} onClick={toggleElementPicker} className={`h-7 cursor-pointer rounded-md border px-2.5 text-[10px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#2563eb] disabled:cursor-not-allowed disabled:opacity-35 ${pickingElement ? 'border-[#2563eb] bg-[#2563eb] text-white' : 'border-black/[0.1] bg-white text-[#333] hover:bg-[#f2f2f2]'}`}>
+                {pickingElement ? '取消选择' : elementSelection ? '重新选择' : '选择元素'}
+              </button>
+            </div>
+          </div>
           <div className="relative min-h-0 flex-1 overflow-hidden p-3">
             {selectedSite ? (
               <iframe
+                ref={iframeRef}
                 key={`${selectedSite.slug}:${selectedSite.publishedAt}`}
                 src={selectedSite.url}
                 title={`${selectedSite.name} 可交互预览`}
@@ -195,6 +242,29 @@ export default function SitesWorkspace({
       </div>
     </div>
   );
+}
+
+
+function normalizeSelection(value: unknown): SiteElementSelection | null {
+  if (!value || typeof value !== 'object') return null;
+  const data = value as Record<string, unknown>;
+  if (data.type !== 'od:comment-target') return null;
+  const string = (key: string, max: number) => typeof data[key] === 'string' ? data[key].slice(0, max) : '';
+  const position = data.position && typeof data.position === 'object' ? data.position as Record<string, unknown> : {};
+  const number = (key: string) => typeof position[key] === 'number' && Number.isFinite(position[key]) ? position[key] : 0;
+  const rawStyle = data.style && typeof data.style === 'object' ? data.style as Record<string, unknown> : {};
+  const style = Object.fromEntries(Object.entries(rawStyle).slice(0, 20).flatMap(([key, item]) => typeof item === 'string' ? [[key.slice(0, 50), item.slice(0, 300)]] : []));
+  const selector = string('selector', 600);
+  if (!selector) return null;
+  return {
+    elementId: string('elementId', 700) || `dom:${selector}`,
+    selector,
+    label: string('label', 200),
+    text: string('text', 500),
+    htmlHint: string('htmlHint', 1500),
+    position: { x: number('x'), y: number('y'), width: number('width'), height: number('height') },
+    style,
+  };
 }
 
 function PreviewIcon() {

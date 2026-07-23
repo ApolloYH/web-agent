@@ -3,6 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { ToolDefinition } from '@apolloyh/apollo-agent';
+import { injectSiteInspector } from './site-inspector.js';
 
 const SITE_EXTENSIONS = new Set(['.html', '.css', '.js', '.mjs', '.json', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.woff', '.woff2', '.txt', '.xml', '.webmanifest']);
 const MAX_SITE_FILES = 200;
@@ -159,7 +160,8 @@ export async function servePublishedSite(req: IncomingMessage, res: ServerRespon
     res.writeHead(404).end('Not found');
     return true;
   }
-  const bytes = await fs.readFile(confined);
+  let bytes = await fs.readFile(confined);
+  if (path.extname(confined).toLowerCase() === '.html') bytes = Buffer.from(injectSiteInspector(bytes.toString('utf8')));
   res.writeHead(200, {
     'Content-Type': siteMime(path.extname(confined).toLowerCase()),
     'Content-Length': bytes.length,

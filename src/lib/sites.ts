@@ -25,3 +25,13 @@ export async function republishSite(site: PublishedSite): Promise<PublishedSite>
   if (!response.ok) throw new Error(payload.error ?? `部署失败 ${response.status}`);
   return payload.site;
 }
+
+export interface SiteElementSelection {
+  elementId: string;
+  selector: string;
+  label: string;
+  text: string;
+  htmlHint: string;
+  position: { x: number; y: number; width: number; height: number };
+  style: Record<string, string>;
+}
