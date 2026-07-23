@@ -122,10 +122,10 @@ function ProcessStepRow({
   }
 
   const autoFold = step.kind === 'thought' || step.kind === 'tool_run' || step.kind === 'task';
-  const [open, setOpen] = useState(autoFold && streaming);
+  const [open, setOpen] = useState(step.kind === 'thought' || (autoFold && streaming));
   useEffect(() => {
-    if (autoFold) setOpen(streaming);
-  }, [autoFold, streaming]);
+    if (autoFold && step.kind !== 'thought') setOpen(streaming);
+  }, [autoFold, step.kind, streaming]);
   const detail = step.kind === 'thought'
     ? step.detail?.replace(/\n(?:\s*\n)+/g, '\n')
     : step.detail;

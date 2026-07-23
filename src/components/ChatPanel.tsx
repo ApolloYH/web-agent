@@ -79,13 +79,20 @@ export default function ChatPanel({
   const [activityOpen, setActivityOpen] = useState(false);
   const autoOpenedActivityRef = useRef<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const autoScrollRef = useRef(true);
+  const firstMessageIdRef = useRef<string | undefined>(undefined);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const commandMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useLayoutEffect(() => {
     const container = scrollRef.current;
-    if (container) container.scrollTop = container.scrollHeight;
+    const firstMessageId = messages[0]?.id;
+    if (firstMessageIdRef.current !== firstMessageId) {
+      firstMessageIdRef.current = firstMessageId;
+      autoScrollRef.current = true;
+    }
+    if (container && autoScrollRef.current) container.scrollTop = container.scrollHeight;
   }, [messages, streaming]);
 
   useEffect(() => {
@@ -125,6 +132,7 @@ export default function ChatPanel({
   const send = (text: string) => {
     const trimmed = text.trim();
     if ((!trimmed && !files.length) || streaming) return;
+    autoScrollRef.current = true;
     const prompt = trimmed || '请处理我上传的文件';
     const definition = availableCommands.find((item) => item.command === prompt.split(/\s+/, 1)[0]);
     if (definition && 'control' in definition && definition.control) onCommand(prompt);
@@ -155,6 +163,10 @@ export default function ChatPanel({
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
         <div
         ref={scrollRef}
+        onScroll={(event) => {
+          const container = event.currentTarget;
+          autoScrollRef.current = container.scrollHeight - container.scrollTop - container.clientHeight < 64;
+        }}
         className={`flex-1 overflow-y-auto px-4 pt-6 md:px-6 ${embedded ? 'pb-8' : 'pb-40 md:pb-44'}`}
         aria-live="polite"
         aria-relevant="additions text"

@@ -146,7 +146,7 @@ test('RAG uploads, queries and exposes the LightRAG graph', async () => {
     if (request.method === 'DELETE' && /\/light\/[^/]+\/documents\/delete_document$/.test(url.pathname)) return response.end(JSON.stringify({ status: 'deletion_started' }));
     if (request.method === 'GET' && /\/light\/[^/]+\/documents\/track_status\/lr-track-1$/.test(url.pathname)) return response.end(JSON.stringify({ documents: [{ id: 'lr-doc-1', status: 'processed' }] }));
     if (request.method === 'POST' && /\/light\/[^/]+\/documents\/reprocess_failed$/.test(url.pathname)) return response.end(JSON.stringify({ status: 'reprocessing_started' }));
-    if (request.method === 'POST' && /\/light\/[^/]+\/query\/data$/.test(url.pathname)) return response.end(JSON.stringify({ status: 'success', data: { chunks: [{ chunk_id: 'lr-chunk-1', file_path: 'rules.txt', content: 'LightRAG：审批关系来自制度图谱。' }], relationships: [] } }));
+    if (request.method === 'POST' && /\/light\/[^/]+\/query\/data$/.test(url.pathname)) return response.end(JSON.stringify({ status: 'success', data: { chunks: [{ chunk_id: 'lr-chunk-1', file_path: 'rules.txt', content: 'LightRAG：审批关系来自制度图谱。' }], entities: [{ entity_name: '审批', entity_type: '流程', description: '作业前置条件', file_path: 'rules.txt', reference_id: 'ref-entity' }], relationships: [{ src_id: '作业', tgt_id: '审批', description: '作业前必须完成审批', keywords: '前置条件', weight: 0.9, file_path: 'rules.txt', reference_id: 'ref-relation' }] }, metadata: { keywords: { high_level: ['审批制度'], low_level: ['作业', '审批'] } } }));
     if (request.method === 'GET' && /\/light\/[^/]+\/graph\/label\/popular$/.test(url.pathname)) return response.end(JSON.stringify(['审批']));
     if (request.method === 'GET' && /\/light\/[^/]+\/graphs$/.test(url.pathname)) return response.end(JSON.stringify({ nodes: [{ id: '审批', labels: ['PROCESS'], properties: { description: '作业前置条件' } }, { id: '作业', labels: ['ACTIVITY'], properties: {} }], edges: [{ id: 'edge-1', source: '作业', target: '审批', type: 'REQUIRES', properties: {} }] }));
     response.statusCode = 404;
@@ -199,6 +199,8 @@ test('RAG uploads, queries and exposes the LightRAG graph', async () => {
 
     const result = await searchRagDetailed(database, 'user-a', '作业审批责任', collection.id, 6, services);
     assert.deepEqual(new Set(result.hits.map((hit) => hit.engine)), new Set(['weknora', 'lightrag']));
+    assert.deepEqual(result.graphContexts[0]?.keywords, { highLevel: ['审批制度'], lowLevel: ['作业', '审批'] });
+    assert.deepEqual(result.graphContexts[0]?.relationships[0], { source: '作业', target: '审批', description: '作业前必须完成审批', keywords: '前置条件', weight: 0.9, documentName: 'rules.txt', referenceId: 'ref-relation' });
     await searchRagDetailed(database, 'user-a', '你好', collection.id, 6, services);
     assert.throws(() => updateRagCollection(database, 'user-a', collection.id, { chunkSize: 800 }), /已有文档/);
     assert.equal(updateRagCollection(database, 'user-a', collection.id, { finalCount: 3 }).finalCount, 3);
@@ -240,12 +242,12 @@ test('RAG uploads, queries and exposes the LightRAG graph', async () => {
       skip_context_enrichment: true,
     });
     assert.deepEqual(JSON.parse(requests.find((item) => item.path.endsWith('/query/data'))!.body), {
-      query: '作业审批责任', mode: 'mix', hl_keywords: ['作业审批责任'], ll_keywords: ['作业审批责任'], top_k: 9, chunk_top_k: 9, enable_rerank: false,
+      query: '作业审批责任', mode: 'mix', top_k: 9, chunk_top_k: 9, enable_rerank: false,
       max_entity_tokens: 3000, max_relation_tokens: 4000, max_total_tokens: 16000,
     });
     const shortQuery = requests.filter((item) => item.path.endsWith('/query/data')).map((item) => JSON.parse(item.body) as { query: string }).find((item) => item.query.startsWith('你好'));
     assert.equal(shortQuery?.query, '你好？');
-    assert.equal(requests.find((item) => item.path.endsWith('/graphs'))!.search, '?label=%E5%AE%A1%E6%89%B9&max_depth=3&max_nodes=60');
+    assert.equal(requests.find((item) => item.path.endsWith('/graphs'))!.search, '?label=%E5%AE%A1%E6%89%B9&max_depth=3&max_nodes=500');
   } finally {
     database.close();
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

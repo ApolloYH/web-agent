@@ -16,6 +16,12 @@ export type ExternalEngineHit = {
   score?: number;
 };
 
+export type LightRagSearchContext = {
+  keywords: { highLevel: string[]; lowLevel: string[] };
+  entities: Array<{ name: string; type: string; description: string; documentName: string; referenceId: string }>;
+  relationships: Array<{ source: string; target: string; description: string; keywords: string; weight?: number; documentName: string; referenceId: string }>;
+};
+
 export type ExternalEngineStatus = 'unconfigured' | 'pending' | 'ready' | 'failed';
 
 export type ExternalEngineProgress = {
@@ -366,24 +372,23 @@ export async function searchLightRag(
   mode: 'local' | 'global' | 'hybrid' | 'mix',
   tokenBudget: { entity: number; relation: number; total: number },
   services: ExternalRagServices,
-): Promise<ExternalEngineHit[]> {
+): Promise<{ hits: ExternalEngineHit[]; context: LightRagSearchContext }> {
   const lightRagQuery = [...query].length < 3 ? `${query}？` : query;
   const response = await engineJson<{
     status?: string;
     message?: string;
     data?: {
       entities?: Array<{ entity_name?: string; entity_type?: string; description?: string; file_path?: string; reference_id?: string }>;
-      relationships?: Array<{ src_id?: string; tgt_id?: string; description?: string; file_path?: string; reference_id?: string; weight?: number }>;
+      relationships?: Array<{ src_id?: string; tgt_id?: string; description?: string; keywords?: string; file_path?: string; reference_id?: string; weight?: number }>;
       chunks?: Array<{ content?: string; file_path?: string; chunk_id?: string; reference_id?: string }>;
     };
+    metadata?: { keywords?: { high_level?: string[]; low_level?: string[] } };
   }>(lightRagUrl(services, collectionId, '/query/data'), {
     method: 'POST',
     headers: lightRagHeaders(services.lightRagApiKey!, collectionId),
     body: JSON.stringify({
       query: lightRagQuery,
       mode,
-      hl_keywords: [lightRagQuery],
-      ll_keywords: [lightRagQuery],
       top_k: limit,
       chunk_top_k: limit,
       enable_rerank: false,
@@ -413,7 +418,24 @@ export async function searchLightRag(
     position: hits.length,
     content: `实体：${entity.entity_name || '未知实体'}${entity.entity_type ? `（${entity.entity_type}）` : ''}\n${entity.description}`,
   });
-  return hits.slice(0, Math.max(limit * 3, limit));
+  return {
+    hits: hits.slice(0, Math.max(limit * 3, limit)),
+    context: {
+      keywords: {
+        highLevel: response.metadata?.keywords?.high_level || [],
+        lowLevel: response.metadata?.keywords?.low_level || [],
+      },
+      entities: (response.data.entities || []).filter((item) => item.entity_name).map((item) => ({
+        name: item.entity_name!, type: item.entity_type || '', description: item.description || '',
+        documentName: item.file_path || 'LightRAG 图谱', referenceId: item.reference_id || '',
+      })),
+      relationships: (response.data.relationships || []).filter((item) => item.src_id || item.tgt_id).map((item) => ({
+        source: item.src_id || '未知实体', target: item.tgt_id || '未知实体', description: item.description || '',
+        keywords: item.keywords || '', weight: item.weight, documentName: item.file_path || 'LightRAG 图谱',
+        referenceId: item.reference_id || '',
+      })),
+    },
+  };
 }
 
 export async function getLightRagGraph(collectionId: string, label: string, depth: number, services: ExternalRagServices): Promise<LightRagGraph> {
@@ -425,7 +447,7 @@ export async function getLightRagGraph(collectionId: string, label: string, dept
   const selected = label.trim() || labels[0] || '';
   if (!selected) return { label: '', labels, nodes: [], edges: [] };
   const graph = await engineJson<Pick<LightRagGraph, 'nodes' | 'edges'>>(
-    lightRagUrl(services, collectionId, `/graphs?label=${encodeURIComponent(selected)}&max_depth=${depth}&max_nodes=60`),
+    lightRagUrl(services, collectionId, `/graphs?label=${encodeURIComponent(selected)}&max_depth=${depth}&max_nodes=500`),
     { headers: lightRagHeaders(services.lightRagApiKey!, collectionId, false) },
     services,
   );
