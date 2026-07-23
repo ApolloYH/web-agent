@@ -23,7 +23,7 @@ export function ProcessSummary({
       className="mb-3 flex cursor-pointer items-center gap-1.5 py-1 text-[12px] text-[#666] transition-colors hover:text-[#1f1f1f] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717]"
       aria-label={`${status}，打开活动面板`}
     >
-      <ActivityIcon active={active} />
+      <SpinnerGlyph />
       <span className="font-medium">{status}</span>
       <span className="text-[#999]">
         {visibleSteps.length} 个步骤{!active && duration > 0 ? ` · ${duration.toFixed(1)}s` : ''}
@@ -69,11 +69,10 @@ function processMeta(steps: ProcessStep[], streaming: boolean) {
     step.pending && (step.kind === 'approval' || step.kind === 'question'),
   );
   const active = streaming || waitingForResponse;
-  const hasError = steps.some((step) => step.tone === 'error');
   return {
     active,
     duration: steps.reduce((total, step) => total + (step.durationSec ?? 0), 0),
-    status: waitingForResponse ? '等待操作' : streaming ? '正在执行' : hasError ? '执行异常' : '已执行',
+    status: waitingForResponse ? '等待操作' : streaming ? '正在执行' : '已执行',
   };
 }
 

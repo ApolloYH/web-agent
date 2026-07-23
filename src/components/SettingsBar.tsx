@@ -83,12 +83,17 @@ function BrowserConnection({ status, onRefresh }: { status: BrowserConnectionSta
 
 function WorkspaceLocation({ label, onToggle }: { label: string; onToggle: () => void }) {
   return (
-    <div className="flex min-w-0 items-center gap-2 text-[#555]" title={`Agent 工作目录：${label}`}>
-      <button type="button" onClick={onToggle} className="icon-button inline-flex size-7" aria-label={`切换工作目录，当前：${label}`} title="切换远端/本地目录">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" aria-hidden="true"><path d="M3.5 6.5h6l2 2h9v9.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V6.5Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" /></svg>
-      </button>
+    <button
+      type="button"
+      onClick={onToggle}
+      className="flex h-9 min-w-0 cursor-pointer items-center gap-2 rounded-lg px-2 text-[#555] transition-colors hover:bg-black/[0.04] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#171717]"
+      aria-label={`切换工作目录，当前：${label}`}
+      title={`Agent 工作目录：${label}`}
+    >
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" className="shrink-0" aria-hidden="true"><path d="M3.5 6.5h6l2 2h9v9.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V6.5Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" /></svg>
       <span className="max-w-40 truncate text-[12px] font-medium text-[#303030]">{label}</span>
-    </div>
+      <svg viewBox="0 0 16 16" width="12" height="12" fill="none" className="shrink-0 text-[#999]" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+    </button>
   );
 }
 
