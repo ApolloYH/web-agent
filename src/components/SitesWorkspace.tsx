@@ -185,7 +185,20 @@ export default function SitesWorkspace({
             </label>
           )}
         </div>
-        <button type="button" disabled={!available} onClick={startNew} className="h-8 cursor-pointer rounded-full bg-[#171717] px-3 text-[11px] font-medium text-white transition-colors hover:bg-[#343434] disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717] sm:px-4"><span className="sm:hidden">新建</span><span className="hidden sm:inline">新建站点</span></button>
+        <div className="ml-2 flex shrink-0 items-center gap-1.5">
+          {(elementSelection || pickingElement) && (
+            <div className="hidden min-w-0 items-center gap-1 lg:flex">
+              <div className="max-w-56 truncate text-[10px] text-[#777]" aria-live="polite" title={elementSelection?.text || elementSelection?.label}>
+                {elementSelection ? <><span>已选择</span><code className="ml-1.5 text-[#2563eb]">{elementSelection.label}</code></> : '在预览中点击元素，Esc 取消'}
+              </div>
+              {elementSelection && <button type="button" onClick={() => onElementSelectionChange(null)} className="flex size-7 cursor-pointer items-center justify-center rounded-md text-[16px] leading-none text-[#999] hover:bg-[#f3f3f3] hover:text-[#333] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#171717]" aria-label="清除所选元素">×</button>}
+            </div>
+          )}
+          <button type="button" disabled={!selectedSite} aria-pressed={pickingElement} onClick={toggleElementPicker} className={`h-8 cursor-pointer rounded-lg px-2.5 text-[10px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#2563eb] disabled:cursor-not-allowed disabled:opacity-35 ${pickingElement ? 'bg-[#eaf2ff] text-[#1d4ed8]' : 'text-[#444] hover:bg-[#f3f3f3]'}`}>
+            {pickingElement ? '取消选择' : elementSelection ? '重新选择' : '选择元素'}
+          </button>
+          <button type="button" disabled={!available} onClick={startNew} className="h-8 cursor-pointer rounded-full bg-[#171717] px-3 text-[11px] font-medium text-white transition-colors hover:bg-[#343434] disabled:cursor-not-allowed disabled:opacity-35 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717] sm:px-4"><span className="sm:hidden">新建</span><span className="hidden sm:inline">新建站点</span></button>
+        </div>
       </header>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
@@ -209,17 +222,6 @@ export default function SitesWorkspace({
         />
 
         <section className="flex h-[52dvh] min-h-[360px] min-w-0 flex-1 flex-col bg-[#f7f7f8] lg:h-auto lg:min-h-0" aria-label="站点实时预览">
-          <div className="flex h-10 shrink-0 items-center justify-between gap-3 border-b border-black/[0.06] bg-white px-3">
-            <div className="min-w-0 truncate text-[10px] text-[#777]" aria-live="polite">
-              {elementSelection ? <><span className="text-[#333]">已选择</span><code className="ml-2 text-[#2563eb]">{elementSelection.label}</code><span className="ml-2">{elementSelection.text}</span></> : pickingElement ? '将鼠标移到预览中并点击元素，Esc 取消' : '可直接操作预览，或选择元素后告诉 Apollo 怎么修改'}
-            </div>
-            <div className="flex shrink-0 items-center gap-1.5">
-              {elementSelection && <button type="button" onClick={() => onElementSelectionChange(null)} className="h-7 cursor-pointer px-2 text-[10px] text-[#777] hover:text-[#222] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#171717]">清除</button>}
-              <button type="button" disabled={!selectedSite} aria-pressed={pickingElement} onClick={toggleElementPicker} className={`h-7 cursor-pointer rounded-md border px-2.5 text-[10px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#2563eb] disabled:cursor-not-allowed disabled:opacity-35 ${pickingElement ? 'border-[#2563eb] bg-[#2563eb] text-white' : 'border-black/[0.1] bg-white text-[#333] hover:bg-[#f2f2f2]'}`}>
-                {pickingElement ? '取消选择' : elementSelection ? '重新选择' : '选择元素'}
-              </button>
-            </div>
-          </div>
           <div className="relative min-h-0 flex-1 overflow-hidden p-3">
             {selectedSite ? (
               <iframe

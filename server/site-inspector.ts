@@ -25,6 +25,8 @@ const BRIDGE = String.raw`<script ${MARKER}>
     return (element.tagName.toLowerCase() + id + classes).slice(0, 160);
   };
   const selector = (element) => {
+    const odId = element.getAttribute('data-od-id');
+    if (odId && document.querySelectorAll('[data-od-id="' + CSS.escape(odId) + '"]').length === 1) return '[data-od-id="' + CSS.escape(odId) + '"]';
     if (element.id && document.querySelectorAll('#' + CSS.escape(element.id)).length === 1) return '#' + CSS.escape(element.id);
     const parts = [];
     for (let node = element; node && node !== document.documentElement; node = node.parentElement) {
@@ -62,7 +64,7 @@ const BRIDGE = String.raw`<script ${MARKER}>
     const computed = getComputedStyle(element);
     const result = {
       type: 'od:comment-target',
-      elementId: 'dom:' + selector(element),
+      elementId: element.getAttribute('data-od-id') || 'dom:' + selector(element),
       selector: selector(element),
       label: label(element),
       text: text(element),

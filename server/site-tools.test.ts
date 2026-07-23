@@ -41,6 +41,7 @@ test('site inspector is injected once into HTML', () => {
   const html = '<!doctype html><html><body><h1>Apollo</h1></body></html>';
   const injected = injectSiteInspector(html);
   assert.match(injected, /data-apollo-site-inspector/);
+  assert.match(injected, /getAttribute\('data-od-id'\)/);
   assert.ok(injected.indexOf('data-apollo-site-inspector') < injected.indexOf('</body>'));
   assert.equal(injectSiteInspector(injected), injected);
   assert.match(injectSiteInspector('<h1>fragment</h1>'), /<h1>fragment<\/h1><script data-apollo-site-inspector>/);
