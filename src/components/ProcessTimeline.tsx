@@ -23,8 +23,8 @@ export function ProcessSummary({
       className="mb-3 flex cursor-pointer items-center gap-1.5 py-1 text-[12px] text-[#666] transition-colors hover:text-[#1f1f1f] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717]"
       aria-label={`${status}，打开活动面板`}
     >
-      <SpinnerGlyph />
-      <span className="font-medium">{status}</span>
+      {active ? <SpinnerGlyph /> : <ActivityIcon active={false} />}
+      <span className={`font-medium ${active ? 'text-blue-500 motion-safe:animate-pulse' : ''}`}>{status}</span>
       <span className="text-[#999]">
         {visibleSteps.length} 个步骤{!active && duration > 0 ? ` · ${duration.toFixed(1)}s` : ''}
       </span>
@@ -72,7 +72,7 @@ function processMeta(steps: ProcessStep[], streaming: boolean) {
   return {
     active,
     duration: steps.reduce((total, step) => total + (step.durationSec ?? 0), 0),
-    status: waitingForResponse ? '等待操作' : streaming ? '正在执行' : '已执行',
+    status: waitingForResponse ? '等待操作' : streaming ? '正在思考' : '已完成',
   };
 }
 
@@ -169,7 +169,7 @@ function ProcessStepRow({
 
 function StatusGlyph({ step }: { step: ProcessStep }) {
   if (step.pending) return <SpinnerGlyph />;
-  if (step.kind === 'thought') return <span className="w-3 shrink-0 text-[11px] leading-none text-blue-500 motion-safe:animate-pulse">●</span>;
+  if (step.kind === 'thought') return <span className="w-3 shrink-0 text-[11px] leading-none text-blue-500">●</span>;
   const color = step.tone === 'error'
     ? 'process-tone-error'
     : step.tone === 'warning'
@@ -187,7 +187,7 @@ function SpinnerGlyph() {
     const timer = window.setInterval(() => setFrame((value) => (value + 1) % frames.length), 140);
     return () => window.clearInterval(timer);
   }, [frames.length]);
-  return <span className="inline-flex h-[18px] w-3 shrink-0 items-center justify-center text-[12px] leading-none text-blue-500">{frames[frame]}</span>;
+  return <span className="inline-flex h-[18px] w-3 shrink-0 items-center justify-center text-[12px] leading-none text-blue-500 motion-safe:animate-pulse">{frames[frame]}</span>;
 }
 
 function FileDiff({ change }: { change: FileChange }) {
