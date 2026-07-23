@@ -142,7 +142,7 @@ function ProcessStepRow({
         aria-expanded={open}
       >
         <StatusGlyph step={step} />
-        <span className={`min-w-0 flex-1 font-medium ${toneClass(step.tone)}`}>{title}</span>
+        <span className={`min-w-0 flex-1 font-medium ${step.kind === 'thought' ? 'text-blue-500' : toneClass(step.tone)}`}>{title}</span>
         {step.risk && step.risk !== 'low' && (
           <span className="rounded bg-[#fff4cc] px-1.5 text-[10px] uppercase text-[#735700]">{step.risk}</span>
         )}
@@ -170,6 +170,7 @@ function ProcessStepRow({
 
 function StatusGlyph({ step }: { step: ProcessStep }) {
   if (step.pending) return <SpinnerGlyph />;
+  if (step.kind === 'thought') return <span className="w-3 shrink-0 text-[11px] leading-none text-blue-500 motion-safe:animate-pulse">●</span>;
   const color = step.tone === 'error'
     ? 'process-tone-error'
     : step.tone === 'warning'
