@@ -196,6 +196,12 @@ summary:focus-visible {
 .prose-chat .hljs-addition { color: #d9f2df; background: #225c2b; }
 .prose-chat .hljs-deletion { color: #f8dddd; background: #7a2936; }
 
+.process-status-marquee { animation: process-status-marquee 1.12s ease-in-out infinite; }
+@keyframes process-status-marquee {
+  0%, 55%, 100% { opacity: 0.35; }
+  25% { opacity: 1; }
+}
+
 .process-tone-info { color: var(--palette-blue); }
 .process-tone-success { color: #267d3e; }
 .process-tone-warning { color: #806000; }

@@ -24,7 +24,7 @@ export function ProcessSummary({
       aria-label={`${status}，打开活动面板`}
     >
       {active ? <SpinnerGlyph /> : <ActivityIcon active={false} />}
-      <span className={`font-medium ${active ? 'text-blue-500 motion-safe:animate-pulse' : ''}`}>{status}</span>
+      <StatusText status={status} animated={status === '正在思考'} />
       <span className="text-[#999]">
         {visibleSteps.length} 个步骤{!active && duration > 0 ? ` · ${duration.toFixed(1)}s` : ''}
       </span>
@@ -50,7 +50,7 @@ export default function ProcessTimeline({
     <div className="px-5 py-5">
       <div className="flex items-center gap-2 text-[12px]" role="status" aria-live="polite">
         <ActivityIcon active={active} />
-        <span className="font-medium text-[#303030]">{status}</span>
+        <StatusText status={status} animated={status === '正在思考'} />
         <span className="text-[#888]">
           {visibleSteps.length} 个步骤{!active && duration > 0 ? ` · ${duration.toFixed(1)}s` : ''}
         </span>
@@ -74,6 +74,19 @@ function processMeta(steps: ProcessStep[], streaming: boolean) {
     duration: steps.reduce((total, step) => total + (step.durationSec ?? 0), 0),
     status: waitingForResponse ? '等待操作' : streaming ? '正在思考' : '已完成',
   };
+}
+
+function StatusText({ status, animated }: { status: string; animated: boolean }) {
+  if (!animated) return <span className="font-medium text-[#303030]">{status}</span>;
+  return (
+    <span className="inline-flex font-medium text-blue-500" aria-label={status}>
+      {Array.from(status, (character, index) => (
+        <span key={index} aria-hidden="true" className="process-status-marquee" style={{ animationDelay: `${index * 140}ms` }}>
+          {character}
+        </span>
+      ))}
+    </span>
+  );
 }
 
 function ActivityIcon({ active }: { active: boolean }) {
