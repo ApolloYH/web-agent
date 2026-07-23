@@ -44,13 +44,12 @@ export default function ProcessTimeline({
 }) {
   const visibleSteps = steps.filter(isImportantStep);
   if (!visibleSteps.length) return null;
-  const { active, duration, status } = processMeta(visibleSteps, streaming);
+  const { active, duration } = processMeta(visibleSteps, streaming);
 
   return (
     <div className="px-5 py-5">
       <div className="flex items-center gap-2 text-[12px]" role="status" aria-live="polite">
         <ActivityIcon active={active} />
-        <StatusText status={status} animated={status === '正在思考'} />
         <span className="text-[#888]">
           {visibleSteps.length} 个步骤{!active && duration > 0 ? ` · ${duration.toFixed(1)}s` : ''}
         </span>
