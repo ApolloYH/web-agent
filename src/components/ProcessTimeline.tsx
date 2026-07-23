@@ -2,6 +2,37 @@ import { useEffect, useState } from 'react';
 import type { FileChange, ProcessStep } from '@/types';
 import MarkdownView from './MarkdownView';
 
+export const hasProcessActivity = (steps: ProcessStep[]) => steps.some(isImportantStep);
+
+export function ProcessSummary({
+  steps,
+  streaming,
+  onOpen,
+}: {
+  steps: ProcessStep[];
+  streaming: boolean;
+  onOpen: () => void;
+}) {
+  const visibleSteps = steps.filter(isImportantStep);
+  if (!visibleSteps.length) return null;
+  const { active, duration, status } = processMeta(visibleSteps, streaming);
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="mb-3 flex cursor-pointer items-center gap-1.5 py-1 text-[12px] text-[#666] transition-colors hover:text-[#1f1f1f] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#171717]"
+      aria-label={`${status}，打开活动面板`}
+    >
+      <ActivityIcon active={active} />
+      <span className="font-medium">{status}</span>
+      <span className="text-[#999]">
+        {visibleSteps.length} 个步骤{!active && duration > 0 ? ` · ${duration.toFixed(1)}s` : ''}
+      </span>
+      <span aria-hidden="true" className="text-[#999]">›</span>
+    </button>
+  );
+}
+
 export default function ProcessTimeline({
   steps,
   streaming,
@@ -12,37 +43,48 @@ export default function ProcessTimeline({
   onRespond?: (stepId: string, answer: string) => Promise<void>;
 }) {
   const visibleSteps = steps.filter(isImportantStep);
-  const waitingForResponse = visibleSteps.some((step) =>
-    step.pending && (step.kind === 'approval' || step.kind === 'question'),
-  );
-  const active = streaming || waitingForResponse;
-  const hasError = visibleSteps.some((step) => step.tone === 'error');
-  const [open, setOpen] = useState(active);
-  useEffect(() => setOpen(active), [active]);
   if (!visibleSteps.length) return null;
+  const { active, duration, status } = processMeta(visibleSteps, streaming);
 
-  const duration = visibleSteps.reduce((total, step) => total + (step.durationSec ?? 0), 0);
-  const status = waitingForResponse ? '等待操作' : streaming ? '正在执行' : hasError ? '执行异常' : '执行完成';
   return (
-    <details
-      open={open}
-      onToggle={(event) => setOpen(event.currentTarget.open)}
-      className="group mb-4 overflow-hidden rounded-xl border border-black/[0.07] bg-[#f7f7f7]"
-    >
-      <summary className="flex list-none items-center gap-2.5 px-3.5 py-2.5 text-[11px] text-[#555] hover:bg-black/[0.025] [&::-webkit-details-marker]:hidden">
-        <span className={`size-2 shrink-0 rounded-full ${active ? 'animate-pulse bg-[#d99a19]' : hasError ? 'bg-[#c83c3c]' : 'bg-[#2f8a4b]'}`} />
+    <div className="px-5 py-5">
+      <div className="flex items-center gap-2 text-[12px]" role="status" aria-live="polite">
+        <ActivityIcon active={active} />
         <span className="font-medium text-[#303030]">{status}</span>
-        <span className="min-w-0 flex-1 truncate">
+        <span className="text-[#888]">
           {visibleSteps.length} 个步骤{!active && duration > 0 ? ` · ${duration.toFixed(1)}s` : ''}
         </span>
-        <span aria-hidden="true" className="text-[14px] text-[#888] transition-transform group-open:rotate-90 motion-reduce:transform-none">›</span>
-      </summary>
-      <div className="space-y-1 border-t border-black/[0.06] bg-white px-2 py-2">
+      </div>
+      <div className="mt-5 space-y-2">
         {visibleSteps.map((step) => (
           <ProcessStepRow key={step.id} step={step} streaming={streaming} onRespond={onRespond} />
         ))}
       </div>
-    </details>
+    </div>
+  );
+}
+
+function processMeta(steps: ProcessStep[], streaming: boolean) {
+  const waitingForResponse = steps.some((step) =>
+    step.pending && (step.kind === 'approval' || step.kind === 'question'),
+  );
+  const active = streaming || waitingForResponse;
+  const hasError = steps.some((step) => step.tone === 'error');
+  return {
+    active,
+    duration: steps.reduce((total, step) => total + (step.durationSec ?? 0), 0),
+    status: waitingForResponse ? '等待操作' : streaming ? '正在执行' : hasError ? '执行异常' : '已执行',
+  };
+}
+
+function ActivityIcon({ active }: { active: boolean }) {
+  return (
+    <span className="relative flex size-4 shrink-0 items-center justify-center text-[#777]" aria-hidden="true">
+      <svg viewBox="0 0 16 16" width="14" height="14" fill="none">
+        <path d="M3 3.5h4M3 8h7M3 12.5h10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+      </svg>
+      {active && <span className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full bg-[#777] motion-safe:animate-pulse" />}
+    </span>
   );
 }
 

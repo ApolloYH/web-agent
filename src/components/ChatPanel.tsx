@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Artifact, ChatMessage } from '@/types';
 import MarkdownView from './MarkdownView';
-import ProcessTimeline from './ProcessTimeline';
+import ProcessTimeline, { hasProcessActivity, ProcessSummary } from './ProcessTimeline';
 import { ArtifactBody } from './ArtifactPanel';
 import type { ApolloPermissionMode } from '@/lib/apolloAgent';
 
@@ -75,6 +75,9 @@ export default function ChatPanel({
   const [files, setFiles] = useState<File[]>([]);
   const [selectedCommand, setSelectedCommand] = useState(0);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [activityMessageId, setActivityMessageId] = useState<string | null>(null);
+  const [activityOpen, setActivityOpen] = useState(false);
+  const autoOpenedActivityRef = useRef<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const commandMenuRef = useRef<HTMLDivElement>(null);
@@ -91,6 +94,18 @@ export default function ChatPanel({
     textarea.style.height = 'auto';
     textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
   }, [input]);
+
+  const latestActivityMessage = [...messages].reverse().find((message) =>
+    message.role === 'assistant' && message.steps && hasProcessActivity(message.steps),
+  );
+  const activityMessage = messages.find((message) => message.id === activityMessageId) ?? latestActivityMessage;
+
+  useEffect(() => {
+    if (!latestActivityMessage?.streaming || autoOpenedActivityRef.current === latestActivityMessage.id) return;
+    autoOpenedActivityRef.current = latestActivityMessage.id;
+    setActivityMessageId(latestActivityMessage.id);
+    setActivityOpen(true);
+  }, [latestActivityMessage?.id, latestActivityMessage?.streaming]);
 
   const availableCommands = surface === 'assistant' ? slashCommands : slashCommands.filter((item) => item.command === '/clear' || !('control' in item && item.control));
   const commandToken = input.trimStart().split(/\s/, 1)[0];
@@ -136,8 +151,9 @@ export default function ChatPanel({
   };
 
   return (
-    <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col bg-white text-[#0d0d0d]">
-      <div
+    <div className="relative flex h-full min-h-0 min-w-0 flex-1 bg-white text-[#0d0d0d]">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        <div
         ref={scrollRef}
         className={`flex-1 overflow-y-auto px-4 pt-6 md:px-6 ${embedded ? 'pb-8' : 'pb-40 md:pb-44'}`}
         aria-live="polite"
@@ -178,10 +194,13 @@ export default function ChatPanel({
                 {message.role === 'assistant' ? (
                   <div className="min-w-0 text-[13px] leading-5 text-[#0d0d0d]">
                     {message.steps && message.steps.length > 0 && (
-                      <ProcessTimeline
+                      <ProcessSummary
                         steps={message.steps}
                         streaming={Boolean(message.streaming)}
-                        onRespond={(stepId, answer) => onRespond(message.id, stepId, answer)}
+                        onOpen={() => {
+                          setActivityMessageId(message.id);
+                          setActivityOpen(true);
+                        }}
                       />
                     )}
 
@@ -355,6 +374,41 @@ export default function ChatPanel({
           </div>
         </div>
       </div>
+      </div>
+
+      {activityOpen && activityMessage?.steps && (
+        <>
+          <button
+            type="button"
+            aria-label="关闭活动面板"
+            onClick={() => setActivityOpen(false)}
+            className={`absolute inset-0 z-20 cursor-default bg-black/[0.06] ${embedded ? '' : 'xl:hidden'}`}
+          />
+          <aside
+            className={`app-panel-motion z-30 flex min-h-0 w-[min(370px,100%)] shrink-0 flex-col border-l border-black/[0.07] bg-white ${embedded ? 'absolute inset-y-0 right-0 shadow-[-16px_0_40px_rgba(0,0,0,0.10)]' : 'absolute inset-y-0 right-0 shadow-[-16px_0_40px_rgba(0,0,0,0.10)] xl:static xl:shadow-none'}`}
+            aria-label="活动"
+          >
+            <header className="flex h-12 shrink-0 items-center justify-between border-b border-black/[0.07] px-5">
+              <h2 className="text-[13px] font-semibold text-[#262626]">活动</h2>
+              <button
+                type="button"
+                onClick={() => setActivityOpen(false)}
+                className="flex size-8 cursor-pointer items-center justify-center rounded-md text-[#777] transition-colors hover:bg-black/[0.04] hover:text-[#222] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#171717]"
+                aria-label="关闭活动面板"
+              >
+                <CloseIcon />
+              </button>
+            </header>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <ProcessTimeline
+                steps={activityMessage.steps}
+                streaming={Boolean(activityMessage.streaming)}
+                onRespond={(stepId, answer) => onRespond(activityMessage.id, stepId, answer)}
+              />
+            </div>
+          </aside>
+        </>
+      )}
     </div>
   );
 }
@@ -365,6 +419,10 @@ function MessageCopyButton({ copied, onClick }: { copied: boolean; onClick: () =
       <CopyIcon /> {copied ? '已复制' : '复制'}
     </button>
   );
+}
+
+function CloseIcon() {
+  return <svg viewBox="0 0 24 24" width="17" height="17" fill="none" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></svg>;
 }
 
 function CopyIcon() {
