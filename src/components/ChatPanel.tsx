@@ -231,9 +231,9 @@ export default function ChatPanel({
             role="status"
             aria-live="polite"
             aria-atomic="true"
-            className="app-state-motion mx-auto mb-2 flex max-w-3xl items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50/70 px-3 py-2 text-[11px] font-medium text-emerald-950"
+            className="app-state-motion mx-auto mb-2 flex max-w-3xl items-center gap-2 px-1 py-1 text-[11px] font-medium text-[#555]"
           >
-            <span className="size-2 shrink-0 rounded-full bg-emerald-500 shadow-[0_0_0_4px_rgba(34,197,94,0.12)] motion-safe:animate-pulse" aria-hidden="true" />
+            <span className="size-1.5 shrink-0 rounded-full bg-[#777] motion-safe:animate-pulse" aria-hidden="true" />
             <span>{streamingStatus}</span>
           </div>
         )}

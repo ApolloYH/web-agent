@@ -103,7 +103,7 @@ export default function AppSidebar({
         </button>
 
         <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
-          {(['最近', '已归档'] as const).map((group) => {
+          {open && (['最近', '已归档'] as const).map((group) => {
             const items = conversations.filter((conversation) => conversation.group === group);
             if (!items.length && group === '已归档') return null;
             return (
