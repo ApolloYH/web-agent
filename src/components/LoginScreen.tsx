@@ -65,12 +65,12 @@ export default function LoginScreen({ hasUsers, registrationEnabled, onAuthentic
         </a>
         <div className="flex items-center gap-2 sm:gap-5">
           <a href="/docs/" className="hidden rounded-lg px-2 py-2 text-[11px] font-medium text-[#545454] hover:text-black focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#151515] sm:block">使用文档</a>
-          <a href={githubUrl} target="_blank" rel="noreferrer" aria-label="在 GitHub 上为 Apollo 点亮 Star（在新窗口打开）" className="inline-flex items-center gap-2 rounded-full border border-black/15 bg-white/60 px-3 py-2 text-[10px] font-semibold hover:border-black/30 hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#151515] sm:px-4">
+          <a href={githubUrl} target="_blank" rel="noreferrer" aria-label="在 GitHub 上为 Apollo 点亮 Star（在新窗口打开）" className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-black/15 bg-white/60 px-5 text-[11px] font-semibold hover:border-black/30 hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#151515]">
             <svg aria-hidden="true" viewBox="0 0 24 24" className="size-4 fill-current"><path d="M12 .7a11.5 11.5 0 0 0-3.64 22.4c.58.1.79-.25.79-.56v-2.23c-3.22.7-3.9-1.37-3.9-1.37-.52-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.29-5.27-1.29-5.27-5.68 0-1.25.45-2.28 1.19-3.08-.12-.29-.52-1.46.11-3.04 0 0 .97-.31 3.16 1.18a10.9 10.9 0 0 1 5.76 0c2.2-1.49 3.16-1.18 3.16-1.18.63 1.58.23 2.75.11 3.04.74.8 1.19 1.83 1.19 3.08 0 4.4-2.71 5.38-5.29 5.67.42.36.79 1.07.79 2.16v3.2c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z" /></svg>
             <span className="hidden sm:inline">GitHub</span> Star
             <svg aria-hidden="true" viewBox="0 0 24 24" className="size-3.5 fill-none stroke-current stroke-[1.8]"><path d="m12 3 2.75 5.57 6.15.9-4.45 4.33 1.05 6.12L12 17.03l-5.5 2.89 1.05-6.12L3.1 9.47l6.15-.9L12 3Z" /></svg>
           </a>
-          <a href="#access" className="hidden rounded-full bg-[#171717] px-4 py-2.5 text-[10px] font-semibold text-white hover:bg-[#343434] sm:block focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#151515] sm:px-5">进入 Apollo</a>
+          <a href="#access" className="hidden h-11 items-center justify-center rounded-full bg-[#171717] px-5 text-[11px] font-semibold text-white hover:bg-[#343434] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#151515] sm:inline-flex">进入 Apollo</a>
         </div>
       </nav>
 
@@ -81,14 +81,9 @@ export default function LoginScreen({ hasUsers, registrationEnabled, onAuthentic
           <h1 className="landing-hero-title mx-auto max-w-[920px] font-semibold text-[#121212]"><span className="block">把复杂工作，</span><span className="block">交给会行动的 AI。</span></h1>
           <p className="mx-auto mt-8 max-w-[720px] text-[16px] leading-8 text-[#565656] sm:text-[18px]">Apollo 把对话、文件、知识图谱、网站制作和浏览器操作放进同一个工作区。你只需说明目标，它负责理解资料、调用工具并交付可继续编辑的结果。</p>
           <div className="mt-9 flex flex-wrap justify-center gap-3">
-            <a href="#access" className="group inline-flex items-center gap-3 rounded-full bg-[#171717] px-6 py-3.5 text-[11px] font-semibold text-white hover:-translate-y-0.5 hover:bg-[#303030] focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-[#151515]">开始使用 <span aria-hidden="true" className="transition-transform group-hover:translate-x-1">→</span></a>
-            <a href="/docs/" className="inline-flex items-center gap-3 rounded-full border border-black/15 bg-white/50 px-6 py-3.5 text-[11px] font-semibold hover:-translate-y-0.5 hover:border-black/30 hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-[#151515]">阅读完整文档 <span aria-hidden="true">↗</span></a>
+            <a href="#access" className="group inline-flex h-11 items-center justify-center gap-3 rounded-full bg-[#171717] px-5 text-[11px] font-semibold text-white hover:-translate-y-0.5 hover:bg-[#303030] focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-[#151515]">开始使用 <span aria-hidden="true" className="transition-transform group-hover:translate-x-1">→</span></a>
+            <a href="/docs/" className="inline-flex h-11 items-center justify-center gap-3 rounded-full border border-black/15 bg-white/50 px-5 text-[11px] font-semibold hover:-translate-y-0.5 hover:border-black/30 hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-[#151515]">阅读完整文档 <span aria-hidden="true">↗</span></a>
           </div>
-          <dl className="mx-auto mt-12 grid max-w-[560px] grid-cols-3 border-y border-black/10 py-5">
-            <div><dt className="text-[9px] uppercase tracking-[0.14em] text-[#848484]">工作入口</dt><dd className="mt-1 text-[15px] font-semibold">一个工作区</dd></div>
-            <div className="border-x border-black/10 px-5"><dt className="text-[9px] uppercase tracking-[0.14em] text-[#848484]">知识检索</dt><dd className="mt-1 text-[15px] font-semibold">双路 RAG</dd></div>
-            <div className="pl-5"><dt className="text-[9px] uppercase tracking-[0.14em] text-[#848484]">代码许可</dt><dd className="mt-1 text-[15px] font-semibold">AGPL-3.0</dd></div>
-          </dl>
         </div>
 
         <div aria-label="Apollo 工作区界面示意图" role="img" className="landing-product-wrap relative mt-16 w-full max-w-[1180px] sm:mt-20">
@@ -114,7 +109,6 @@ export default function LoginScreen({ hasUsers, registrationEnabled, onAuthentic
               <div className="hidden border-l border-black/10 bg-[#fcfcfb] p-4 sm:block"><div className="flex items-center justify-between text-[8px] font-semibold"><span>活动</span><span className="text-[#8b8b8b]">3 项</span></div><div className="mt-5 border-l border-black/10 pl-3"><div className="relative mb-5"><span className="landing-activity-dot absolute -left-[15px] top-1 size-1.5 rounded-full bg-[#4d89e8]" /><b className="text-[8px]">读取资料</b><p className="mt-1 text-[7px] leading-4 text-[#858585]">12 个文件已建立索引</p></div><div className="relative mb-5"><span className="landing-activity-dot absolute -left-[15px] top-1 size-1.5 rounded-full bg-[#9c71d0]" /><b className="text-[8px]">检索知识图谱</b><p className="mt-1 text-[7px] leading-4 text-[#858585]">发现 28 个实体关系</p></div><div className="relative"><span className="landing-activity-dot absolute -left-[15px] top-1 size-1.5 rounded-full bg-[#5eaa77]" /><b className="text-[8px]">生成文档</b><p className="mt-1 text-[7px] leading-4 text-[#858585]">结果已保存到工作区</p></div></div></div>
             </div>
           </div>
-          <div className="absolute -bottom-5 -left-2 hidden rounded-full border border-black/10 bg-[#f8f8f4] px-4 py-2 text-[9px] font-medium shadow-sm sm:block">任务过程可见 · 重要操作可审批</div>
         </div>
       </section>
 
