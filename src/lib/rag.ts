@@ -151,9 +151,9 @@ export async function getRagCollectionStats(collectionId: string): Promise<RagCo
   return request<RagCollectionStats>(`/apollo-api/rag/${encodeURIComponent(collectionId)}/stats`);
 }
 
-export async function getRagGraph(collectionId: string, label = ''): Promise<RagGraph> {
+export async function getRagGraph(collectionId: string, label = '', signal?: AbortSignal): Promise<RagGraph> {
   return request<RagGraph>(`/apollo-api/rag/${encodeURIComponent(collectionId)}/graph${label ? `?label=${encodeURIComponent(label)}` : ''}`, {
-    signal: AbortSignal.timeout(180_000),
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(180_000)]) : AbortSignal.timeout(180_000),
   });
 }
 

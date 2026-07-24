@@ -350,17 +350,21 @@ function GraphPanel({ collection, documents }: { collection: RagCollection; docu
   const [slow, setSlow] = useState(false);
   const [error, setError] = useState('');
   const loadVersion = useRef(0);
+  const requestRef = useRef<AbortController | null>(null);
   const load = async (label = '') => {
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
     const version = ++loadVersion.current;
     setLoading(true); setSlow(false); setError('');
     const timer = window.setTimeout(() => { if (version === loadVersion.current) setSlow(true); }, 8_000);
     try {
-      const next = await getRagGraph(collection.id, label);
+      const next = await getRagGraph(collection.id, label, controller.signal);
       if (version !== loadVersion.current) return;
       setGraph(next);
       setActiveNode(next.nodes.find((item) => item.id === next.label) ?? next.nodes[0] ?? null);
     } catch (reason) {
-      if (version === loadVersion.current) {
+      if (version === loadVersion.current && !controller.signal.aborted) {
         const message = messageOf(reason);
         setError(/timed out|timeout/i.test(message) ? '知识图谱启动超时，请重试。' : message);
       }
@@ -372,7 +376,13 @@ function GraphPanel({ collection, documents }: { collection: RagCollection; docu
   const graphVersion = documents.map((item) => item.lightRagStatus).join(',');
   const graphPending = documents.some((item) => item.lightRagStatus === 'pending');
   const graphFailed = documents.some((item) => item.lightRagStatus === 'failed');
-  useEffect(() => { void load(); }, [collection.id, graphVersion]);
+  useEffect(() => {
+    void load();
+    return () => {
+      loadVersion.current += 1;
+      requestRef.current?.abort();
+    };
+  }, [collection.id, graphVersion]);
   const degrees = useMemo(() => {
     const result = new Map<string, number>();
     for (const edge of graph?.edges ?? []) {

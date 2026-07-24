@@ -3,7 +3,7 @@ import { createOfficeEditor, type OfficeEditorInstance } from '@agentbridges-ai/
 import MarkdownView from './MarkdownView';
 import WordView from './WordView';
 import { appendDocxText, extractDocxText, replaceDocxText } from '@/lib/docxText';
-import { downloadFile, saveDocument, type OpenDocument } from '@/lib/documentFiles';
+import { downloadFile, readTextPreview, saveDocument, TEXT_PREVIEW_BYTES, type OpenDocument } from '@/lib/documentFiles';
 
 export interface DocumentWorkspaceHandle {
   execute(action: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
@@ -37,6 +37,7 @@ const DocumentWorkspace = forwardRef<DocumentWorkspaceHandle, Props>(function Do
   const [error, setError] = useState('');
   const [editorRevision, setEditorRevision] = useState(0);
   const [editingText, setEditingText] = useState(false);
+  const textPreviewTruncated = (document.kind === 'markdown' || document.kind === 'json') && document.file.size > TEXT_PREVIEW_BYTES;
 
   const updateStatus = useCallback((next: SaveStatus) => {
     statusRef.current = next;
@@ -49,10 +50,10 @@ const DocumentWorkspace = forwardRef<DocumentWorkspaceHandle, Props>(function Do
     if (document.kind !== 'markdown' && document.kind !== 'json') return;
     let cancelled = false;
     setTextReady(false);
-    void document.file.text().then((value) => {
+    void readTextPreview(document.file).then(({ content }) => {
       if (cancelled) return;
-      textRef.current = value;
-      setText(value);
+      textRef.current = content;
+      setText(content);
       setTextReady(true);
       updateStatus('ready');
       setError('');
@@ -194,6 +195,9 @@ const DocumentWorkspace = forwardRef<DocumentWorkspaceHandle, Props>(function Do
           }
           throw new Error('PDF 当前支持预览、文本读取和全文搜索，不能执行编辑');
         }
+        if (textPreviewTruncated && action !== 'get_context' && action !== 'search_text') {
+          throw new Error('文件较大，当前为只读预览；请下载后使用专业编辑器修改');
+        }
         if (action === 'get_context') {
           const content = await currentDocumentText();
           return {
@@ -202,8 +206,10 @@ const DocumentWorkspace = forwardRef<DocumentWorkspaceHandle, Props>(function Do
             kind: documentRef.current.kind,
             source: documentRef.current.source,
             content: content.slice(0, 40_000),
-            totalCharacters: content.length,
-            truncated: content.length > 40_000,
+            totalCharacters: textPreviewTruncated ? null : content.length,
+            previewCharacters: content.length,
+            totalBytes: documentRef.current.file.size,
+            truncated: textPreviewTruncated || content.length > 40_000,
           };
         }
 
@@ -217,6 +223,7 @@ const DocumentWorkspace = forwardRef<DocumentWorkspaceHandle, Props>(function Do
             query,
             totalCharacters: content.length,
             matches: searchText(content, query, Math.min(Math.max(requestedLimit, 1), 20)),
+            extractionTruncated: textPreviewTruncated,
           };
         }
 
@@ -274,10 +281,10 @@ const DocumentWorkspace = forwardRef<DocumentWorkspaceHandle, Props>(function Do
         return { ok: false, error: message };
       }
     },
-  }), [currentDocumentText, currentWordFile, persist, saveText, updateStatus]);
+  }), [currentDocumentText, currentWordFile, persist, saveText, textPreviewTruncated, updateStatus]);
 
-  const jsonError = document.kind === 'json' && textReady ? validateJson(text) : '';
-  const editableText = document.kind === 'markdown' || document.kind === 'json';
+  const jsonError = document.kind === 'json' && textReady && !textPreviewTruncated ? validateJson(text) : '';
+  const editableText = (document.kind === 'markdown' || document.kind === 'json') && !textPreviewTruncated;
   const readOnlyPreview = document.kind === 'pdf' || document.kind === 'image';
   const handleWordError = useCallback((message: string) => {
     setError(message);
@@ -299,7 +306,7 @@ const DocumentWorkspace = forwardRef<DocumentWorkspaceHandle, Props>(function Do
             <EditIcon />{editingText ? '完成' : '编辑'}
           </button>
         )}
-        {document.kind === 'json' && (
+        {document.kind === 'json' && !textPreviewTruncated && (
           <button type="button" disabled={Boolean(jsonError)} onClick={() => changeText(JSON.stringify(JSON.parse(text), null, 2))} className="hidden rounded-lg px-2.5 py-1.5 text-[11px] text-[#555] hover:bg-[#f2f2f2] disabled:text-[#bbb] sm:block">格式化</button>
         )}
         <button type="button" onClick={onOpenChat} className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[11px] text-[#555] hover:bg-[#f2f2f2]" aria-label="打开关于此文件的问答"><ChatIcon />问答</button>
@@ -340,6 +347,13 @@ const DocumentWorkspace = forwardRef<DocumentWorkspaceHandle, Props>(function Do
                   className="h-full min-h-0 w-full resize-none border-0 bg-white px-7 py-8 font-mono text-[13px] leading-6 text-[#202020] outline-none sm:px-12 sm:py-10 lg:px-[8%]"
                 />
               </label>
+            ) : textPreviewTruncated ? (
+              <div className="flex h-full min-h-0 flex-col">
+                <p className="shrink-0 bg-amber-50 px-5 py-2.5 text-[11px] text-amber-900" role="status">
+                  文件共 {(document.file.size / 1024 / 1024).toFixed(1)} MB，仅显示前 {TEXT_PREVIEW_BYTES / 1024} KB，并已切换为只读预览。
+                </p>
+                <pre className="min-h-0 flex-1 overflow-auto bg-white px-7 py-8 font-mono text-[13px] leading-6 text-[#202020] sm:px-12 sm:py-10 lg:px-[8%]"><code>{text}</code></pre>
+              </div>
             ) : document.kind === 'markdown' ? (
               <MarkdownView content={text} className="prose-chat h-full overflow-auto px-7 py-8 text-[14px] leading-6 text-[#202020] sm:px-14 sm:py-12 lg:px-[8%]" />
             ) : (

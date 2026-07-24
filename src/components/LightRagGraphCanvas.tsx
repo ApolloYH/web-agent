@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { SigmaContainer, useLoadGraph, useRegisterEvents, useSigma } from '@react-sigma/core';
 import { MultiDirectedGraph } from 'graphology';
+import type Graph from 'graphology';
 import forceAtlas2 from 'graphology-layout-forceatlas2';
+import type Sigma from 'sigma';
 import type { RagGraph } from '@/lib/rag';
 import { graphEntityType, graphPaletteForType } from '@/lib/graphPalette';
 import '@react-sigma/core/lib/style.css';
@@ -42,13 +44,34 @@ function buildGraph(data: RagGraph) {
       size: 0.9,
     });
   });
-  if (graph.order > 1) {
-    forceAtlas2.assign(graph, {
-      iterations: graph.order > 600 ? 35 : graph.order > 250 ? 60 : 100,
-      settings: { ...forceAtlas2.inferSettings(graph), barnesHutOptimize: graph.order > 150, gravity: 1.2 },
-    });
-  }
   return graph;
+}
+
+const layoutFrames = new WeakMap<Graph, number>();
+
+function stopLayout(graph: Graph) {
+  const frame = layoutFrames.get(graph);
+  if (frame !== undefined) cancelAnimationFrame(frame);
+  layoutFrames.delete(graph);
+}
+
+function runForceLayout(graph: Graph, sigma: Sigma, iterations: number) {
+  stopLayout(graph);
+  if (graph.order < 2) return;
+  const settings = { ...forceAtlas2.inferSettings(graph), barnesHutOptimize: graph.order > 150, gravity: 1.2 };
+  let remaining = iterations;
+  const step = () => {
+    forceAtlas2.assign(graph, { iterations: 1, settings });
+    sigma.refresh();
+    remaining -= 1;
+    if (remaining > 0) layoutFrames.set(graph, requestAnimationFrame(step));
+    else layoutFrames.delete(graph);
+  };
+  layoutFrames.set(graph, requestAnimationFrame(step));
+}
+
+function layoutIterations(nodes: number) {
+  return nodes > 600 ? 25 : nodes > 250 ? 40 : 65;
 }
 
 function GraphController({ data, activeId, onNodeSelect }: { data: RagGraph; activeId: string; onNodeSelect: (id: string) => void }) {
@@ -59,13 +82,17 @@ function GraphController({ data, activeId, onNodeSelect }: { data: RagGraph; act
 
   useEffect(() => {
     loadGraph(buildGraph(data));
-    requestAnimationFrame(() => sigma.getCamera().animatedReset({ duration: 450 }));
+    const graph = sigma.getGraph();
+    sigma.getCamera().animatedReset({ duration: 450 });
+    runForceLayout(graph, sigma, layoutIterations(graph.order));
+    return () => stopLayout(graph);
   }, [data, loadGraph, sigma]);
 
   useEffect(() => {
     registerEvents({
       clickNode: ({ node }) => onNodeSelect(node),
       downNode: ({ node }) => {
+        stopLayout(sigma.getGraph());
         setDraggedNode(node);
         sigma.getGraph().setNodeAttribute(node, 'highlighted', true);
       },
@@ -98,6 +125,7 @@ function GraphControls() {
   const applyLayout = (layout: string) => {
     const graph = sigma.getGraph();
     if (layout === 'circular') {
+      stopLayout(graph);
       const count = Math.max(1, graph.order);
       let index = 0;
       graph.forEachNode((node) => {
@@ -105,13 +133,10 @@ function GraphControls() {
         graph.mergeNodeAttributes(node, { x: Math.cos(angle), y: Math.sin(angle) });
         index += 1;
       });
+      sigma.refresh();
     } else {
-      forceAtlas2.assign(graph, {
-        iterations: graph.order > 600 ? 30 : graph.order > 250 ? 50 : 80,
-        settings: { ...forceAtlas2.inferSettings(graph), barnesHutOptimize: graph.order > 150, gravity: 1.2 },
-      });
+      runForceLayout(graph, sigma, layoutIterations(graph.order));
     }
-    sigma.refresh();
     sigma.getCamera().animatedReset({ duration: 400 });
   };
   return <div className="absolute bottom-3 left-3 z-10 flex items-center gap-1 rounded-lg border border-black/10 bg-white/90 p-1 shadow-sm backdrop-blur">

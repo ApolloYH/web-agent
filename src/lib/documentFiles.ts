@@ -5,6 +5,13 @@ export type EditableDocumentKind = 'word' | 'markdown' | 'json';
 export type DocumentKind = EditableDocumentKind | 'pdf' | 'image';
 export type DocumentSource = 'server' | 'local' | 'temporary';
 
+export const TEXT_PREVIEW_BYTES = 512 * 1024;
+
+export async function readTextPreview(file: Blob, maxBytes = TEXT_PREVIEW_BYTES): Promise<{ content: string; truncated: boolean }> {
+  const truncated = file.size > maxBytes;
+  return { content: await (truncated ? file.slice(0, maxBytes) : file).text(), truncated };
+}
+
 export interface WritableFileHandle {
   kind: 'file';
   name: string;
