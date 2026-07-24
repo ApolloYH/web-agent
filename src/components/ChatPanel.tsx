@@ -52,6 +52,8 @@ export default function ChatPanel({
   emptyDescription,
   placeholder = '给 Apollo 发消息',
   streamingStatus,
+  references = [],
+  onRemoveReference,
 }: {
   messages: ChatMessage[];
   streaming: boolean;
@@ -70,6 +72,8 @@ export default function ChatPanel({
   emptyDescription?: string;
   placeholder?: string;
   streamingStatus?: string;
+  references?: Array<{ id: string; label: string }>;
+  onRemoveReference?: (id: string) => void;
 }) {
   const [input, setInput] = useState('');
   const [files, setFiles] = useState<File[]>([]);
@@ -108,11 +112,11 @@ export default function ChatPanel({
   const activityMessage = messages.find((message) => message.id === activityMessageId) ?? latestActivityMessage;
 
   useEffect(() => {
-    if (!latestActivityMessage?.streaming || autoOpenedActivityRef.current === latestActivityMessage.id) return;
+    if (embedded || !latestActivityMessage?.streaming || autoOpenedActivityRef.current === latestActivityMessage.id) return;
     autoOpenedActivityRef.current = latestActivityMessage.id;
     setActivityMessageId(latestActivityMessage.id);
     setActivityOpen(true);
-  }, [latestActivityMessage?.id, latestActivityMessage?.streaming]);
+  }, [embedded, latestActivityMessage?.id, latestActivityMessage?.streaming]);
 
   const availableCommands = surface === 'assistant' ? slashCommands : slashCommands.filter((item) => item.command === '/clear' || !('control' in item && item.control));
   const commandToken = input.trimStart().split(/\s/, 1)[0];
@@ -205,7 +209,13 @@ export default function ChatPanel({
               >
                 {message.role === 'assistant' ? (
                   <div className="min-w-0 text-[13px] leading-5 text-[#0d0d0d]">
-                    {message.steps && message.steps.length > 0 && (
+                    {message.steps && message.steps.length > 0 && (embedded ? (
+                      <ProcessTimeline
+                        steps={message.steps}
+                        streaming={Boolean(message.streaming)}
+                        onRespond={(stepId, answer) => onRespond(message.id, stepId, answer)}
+                      />
+                    ) : (
                       <ProcessSummary
                         steps={message.steps}
                         streaming={Boolean(message.streaming)}
@@ -214,7 +224,7 @@ export default function ChatPanel({
                           setActivityOpen(true);
                         }}
                       />
-                    )}
+                    ))}
 
                     {message.content ? (
                       <div className="chat-message [&_.prose-chat]:h-auto [&_.prose-chat]:overflow-visible [&_.prose-chat]:p-0">
@@ -269,6 +279,16 @@ export default function ChatPanel({
           </div>
         )}
         <div className={`${embedded ? '' : 'pointer-events-auto'} relative mx-auto max-w-3xl rounded-[19px] border border-[#e5e5e5] bg-white p-2.5 shadow-[0_2px_12px_rgba(0,0,0,0.07)] transition-colors focus-within:border-[#b8b8b8]`}>
+          {references.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-1.5 px-1" aria-label="已引用网页元素">
+              {references.map((reference) => (
+                <span key={reference.id} className="app-state-motion inline-flex max-w-[220px] items-center gap-1.5 rounded-lg bg-blue-50 px-2 py-1 text-[10px] text-blue-700">
+                  <span className="truncate">{reference.label || reference.id}</span>
+                  {onRemoveReference && <button type="button" aria-label={`移除网页元素 ${reference.label || reference.id}`} onClick={() => onRemoveReference(reference.id)} className="text-blue-400 hover:text-blue-800">×</button>}
+                </span>
+              ))}
+            </div>
+          )}
           {files.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-1.5 px-1">
               {files.map((file, index) => (
@@ -388,7 +408,7 @@ export default function ChatPanel({
       </div>
       </div>
 
-      {activityOpen && activityMessage?.steps && (
+      {!embedded && activityOpen && activityMessage?.steps && (
         <>
           <button
             type="button"

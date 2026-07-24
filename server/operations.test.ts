@@ -105,7 +105,7 @@ test('health checks database and disk instead of returning a static flag', async
   }
 });
 
-test('regular users cannot read or replace agent runtime configuration', async () => {
+test('account security and admin user controls enforce permissions', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'apollo-authz-'));
   await fs.mkdir(path.join(root, 'config'), { recursive: true });
   await fs.mkdir(path.join(root, 'entry-skills'), { recursive: true });
@@ -125,6 +125,7 @@ test('regular users cannot read or replace agent runtime configuration', async (
   assert.ok(address && typeof address !== 'string');
   const base = `http://127.0.0.1:${address.port}`;
   try {
+    const cookies = new Map<string, string>();
     for (const username of ['admin', 'member']) {
       const response = await fetch(`${base}/apollo-api/auth/register`, {
         method: 'POST',
@@ -132,19 +133,57 @@ test('regular users cannot read or replace agent runtime configuration', async (
         body: JSON.stringify({ username, password: 'secure-password', inviteCode: 'test-invite' }),
       });
       assert.equal(response.status, 200);
-      if (username === 'member') {
-        const cookie = response.headers.get('set-cookie')?.split(';', 1)[0];
-        assert.ok(cookie);
-        const getConfig = await fetch(`${base}/apollo-api/config`, { headers: { Cookie: cookie } });
-        assert.equal(getConfig.status, 403);
-        const saveConfig = await fetch(`${base}/apollo-api/config`, {
-          method: 'POST',
-          headers: { Cookie: cookie, 'Content-Type': 'application/json', Origin: base },
-          body: JSON.stringify({ config: '{}' }),
-        });
-        assert.equal(saveConfig.status, 403);
-      }
+      const cookie = response.headers.get('set-cookie')?.split(';', 1)[0];
+      assert.ok(cookie);
+      cookies.set(username, cookie);
     }
+    const adminCookie = cookies.get('admin')!;
+    const memberCookie = cookies.get('member')!;
+    assert.equal((await fetch(`${base}/apollo-api/config`, { headers: { Cookie: memberCookie } })).status, 403);
+    assert.equal((await fetch(`${base}/apollo-api/admin`, { headers: { Cookie: memberCookie } })).status, 403);
+    const account = await fetch(`${base}/apollo-api/account`, { headers: { Cookie: memberCookie } });
+    assert.equal(account.status, 200);
+    assert.equal((await account.json() as { profile: { username: string } }).profile.username, 'member');
+
+    const password = await fetch(`${base}/apollo-api/account/password`, {
+      method: 'PUT', headers: { Cookie: memberCookie, 'Content-Type': 'application/json', Origin: base },
+      body: JSON.stringify({ currentPassword: 'secure-password', newPassword: 'new-secure-password' }),
+    });
+    assert.equal(password.status, 200);
+    const oldLogin = await fetch(`${base}/apollo-api/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base },
+      body: JSON.stringify({ username: 'member', password: 'secure-password' }),
+    });
+    assert.equal(oldLogin.status, 400);
+
+    const overview = await fetch(`${base}/apollo-api/admin`, { headers: { Cookie: adminCookie } });
+    const overviewBody = await overview.json() as { users: Array<{ id: string; username: string }>; stats: { totalUsers: number } };
+    assert.equal(overview.status, 200);
+    assert.equal(overviewBody.stats.totalUsers, 2);
+    const memberId = overviewBody.users.find((user) => user.username === 'member')!.id;
+    const adminId = overviewBody.users.find((user) => user.username === 'admin')!.id;
+    const promoted = await fetch(`${base}/apollo-api/admin/users/${memberId}`, {
+      method: 'PATCH', headers: { Cookie: adminCookie, 'Content-Type': 'application/json', Origin: base },
+      body: JSON.stringify({ admin: true }),
+    });
+    assert.equal((await promoted.json() as { user: { isAdmin: number } }).user.isAdmin, 1);
+    const disabled = await fetch(`${base}/apollo-api/admin/users/${memberId}`, {
+      method: 'PATCH', headers: { Cookie: adminCookie, 'Content-Type': 'application/json', Origin: base },
+      body: JSON.stringify({ admin: false, disabled: true }),
+    });
+    assert.equal(disabled.status, 200);
+    assert.equal((await fetch(`${base}/apollo-api/account`, { headers: { Cookie: memberCookie } })).status, 401);
+    const blockedLogin = await fetch(`${base}/apollo-api/auth/login`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base },
+      body: JSON.stringify({ username: 'member', password: 'new-secure-password' }),
+    });
+    assert.equal(blockedLogin.status, 400);
+    assert.match((await blockedLogin.json() as { error: string }).error, /已停用/);
+    const selfDisable = await fetch(`${base}/apollo-api/admin/users/${adminId}`, {
+      method: 'PATCH', headers: { Cookie: adminCookie, 'Content-Type': 'application/json', Origin: base },
+      body: JSON.stringify({ disabled: true }),
+    });
+    assert.equal(selfDisable.status, 400);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await middleware.close();

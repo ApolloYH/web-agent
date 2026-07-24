@@ -600,6 +600,99 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
     const userArtifactRoot = path.join(userWorkspaceRoot, 'artifacts');
     const apiPath = req.url.split('?', 1)[0]!;
 
+    if (apiPath === '/apollo-api/account') {
+      if (req.method !== 'GET') return jsonError(res, 405, 'Method not allowed');
+      const row = database.prepare(`
+        SELECT users.created_at AS "createdAt",
+          (SELECT COUNT(*) FROM conversations WHERE id LIKE users.id || ':%') AS "conversationCount",
+          (SELECT COUNT(*) FROM agent_runs WHERE user_id = users.id) AS "runCount",
+          (SELECT COUNT(*) FROM agent_runs WHERE user_id = users.id AND status = 'succeeded') AS "successfulRuns",
+          (SELECT COUNT(*) FROM agent_runs WHERE user_id = users.id AND status = 'failed') AS "failedRuns",
+          (SELECT MAX(started_at) FROM agent_runs WHERE user_id = users.id) AS "lastActiveAt",
+          (SELECT COUNT(*) FROM auth_sessions WHERE user_id = users.id AND expires_at > ?) AS "sessionCount"
+        FROM users WHERE id = ?
+      `).get(new Date().toISOString(), user.id) as Record<string, unknown>;
+      return json(res, 200, {
+        profile: {
+          ...user,
+          ...row,
+          storageUsedBytes: await workspaceUsageBytes(userWorkspaceRoot),
+          storageQuotaBytes: userStorageQuotaBytes,
+        },
+      });
+    }
+
+    if (apiPath === '/apollo-api/account/password') {
+      if (req.method !== 'PUT') return jsonError(res, 405, 'Method not allowed');
+      try {
+        const body = JSON.parse(await readBody(req, 1_024)) as { currentPassword?: unknown; newPassword?: unknown };
+        if (typeof body.currentPassword !== 'string' || typeof body.newPassword !== 'string') throw new Error('请填写当前密码和新密码');
+        if (body.newPassword.length < 8 || body.newPassword.length > 128) throw new Error('新密码长度需为 8–128 位');
+        const row = database.prepare('SELECT password_hash AS "passwordHash" FROM users WHERE id = ?').get(user.id) as { passwordHash: string };
+        if (!await verifyPassword(body.currentPassword, row.passwordHash)) throw new Error('当前密码不正确');
+        database.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(await passwordHash(body.newPassword), user.id);
+        const token = cookieValue(req, 'apollo_session');
+        database.prepare('DELETE FROM auth_sessions WHERE user_id = ? AND token_hash != ?').run(user.id, token ? hashToken(token) : '');
+        return json(res, 200, { ok: true });
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    if (apiPath === '/apollo-api/admin') {
+      if (!user.admin) return jsonError(res, 403, '只有管理员可以访问管理后台');
+      if (req.method !== 'GET') return jsonError(res, 405, 'Method not allowed');
+      const users = database.prepare(`
+        SELECT users.id, users.username, users.is_admin AS "isAdmin", users.is_disabled AS "isDisabled", users.created_at AS "createdAt",
+          (SELECT COUNT(*) FROM conversations WHERE id LIKE users.id || ':%') AS "conversationCount",
+          (SELECT COUNT(*) FROM agent_runs WHERE user_id = users.id) AS "runCount",
+          (SELECT COUNT(*) FROM agent_runs WHERE user_id = users.id AND status = 'failed') AS "failedRuns",
+          (SELECT MAX(started_at) FROM agent_runs WHERE user_id = users.id) AS "lastActiveAt"
+        FROM users ORDER BY users.created_at DESC
+      `).all();
+      const since = new Date(Date.now() - 24 * 60 * 60_000).toISOString();
+      const stats = database.prepare(`
+        SELECT COUNT(*) AS "totalUsers",
+          SUM(CASE WHEN is_disabled = 0 THEN 1 ELSE 0 END) AS "enabledUsers"
+        FROM users
+      `).get() as Record<string, unknown>;
+      const runs = database.prepare(`
+        SELECT SUM(CASE WHEN started_at >= ? THEN 1 ELSE 0 END) AS "runs24h",
+          SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS "runningRuns"
+        FROM agent_runs
+      `).get(since) as Record<string, unknown>;
+      return json(res, 200, { stats: { ...stats, ...runs }, users, registrationEnabled: Boolean(registrationInvite) });
+    }
+
+    const managedUser = apiPath.match(/^\/apollo-api\/admin\/users\/([^/]+)$/);
+    if (managedUser) {
+      if (!user.admin) return jsonError(res, 403, '只有管理员可以管理用户');
+      if (req.method !== 'PATCH') return jsonError(res, 405, 'Method not allowed');
+      try {
+        const targetId = decodeURIComponent(managedUser[1]!);
+        const body = JSON.parse(await readBody(req, 1_024)) as { admin?: unknown; disabled?: unknown };
+        if (body.admin !== undefined && typeof body.admin !== 'boolean') throw new Error('管理员状态无效');
+        if (body.disabled !== undefined && typeof body.disabled !== 'boolean') throw new Error('账号状态无效');
+        if (body.admin === undefined && body.disabled === undefined) throw new Error('没有需要更新的内容');
+        const target = database.prepare('SELECT id FROM users WHERE id = ?').get(targetId);
+        if (!target) throw new Error('用户不存在');
+        if (targetId === user.id && (body.admin === false || body.disabled === true)) throw new Error('不能停用自己或移除自己的管理员权限');
+        database.prepare(`UPDATE users SET is_admin = COALESCE(?, is_admin), is_disabled = COALESCE(?, is_disabled) WHERE id = ?`)
+          .run(body.admin === undefined ? null : body.admin ? 1 : 0, body.disabled === undefined ? null : body.disabled ? 1 : 0, targetId);
+        if (body.disabled) {
+          database.prepare('DELETE FROM auth_sessions WHERE user_id = ?').run(targetId);
+          for (const run of runs.values()) if (run.userId === targetId) run.runtime?.cancelCurrentTurn();
+          const targetContext = userContexts.get(targetId);
+          userContexts.delete(targetId);
+          if (targetContext) void closeUserEngines(targetContext);
+        }
+        const updated = database.prepare('SELECT id, username, is_admin AS "isAdmin", is_disabled AS "isDisabled", created_at AS "createdAt" FROM users WHERE id = ?').get(targetId);
+        return json(res, 200, { user: updated });
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
+    }
+
     if (apiPath === '/apollo-api/rag-runtime-settings') {
       if (!user.admin) return jsonError(res, 403, '只有管理员可以管理知识引擎配置');
       try {
@@ -1785,12 +1878,13 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, database: D
         await fs.cp(path.join(workspaceRoot, 'artifacts'), path.join(userRoot, 'artifacts'), { recursive: true, force: false }).catch(() => undefined);
       }
     } else {
-      const row = database.prepare('SELECT id, username, password_hash AS "passwordHash" FROM users WHERE username = ?').get(username) as { id: string; username: string; passwordHash: string } | undefined;
+      const row = database.prepare('SELECT id, username, password_hash AS "passwordHash", is_disabled AS "isDisabled" FROM users WHERE username = ?').get(username) as { id: string; username: string; passwordHash: string; isDisabled: number } | undefined;
       if (!row) {
         await derivePassword(body.password, Buffer.alloc(16), 64);
         throw new Error('用户名或密码错误');
       }
       if (!await verifyPassword(body.password, row.passwordHash)) throw new Error('用户名或密码错误');
+      if (row.isDisabled === 1) throw new Error('账号已停用，请联系管理员');
       user = { id: row.id, username: row.username, admin: isAdmin(database, row.id) };
     }
     const token = randomBytes(32).toString('base64url');
@@ -1808,7 +1902,7 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, database: D
 function authenticatedUser(req: IncomingMessage, database: DatabaseSync): AuthUser | null {
   const token = cookieValue(req, 'apollo_session');
   if (!token) return null;
-  const user = database.prepare(`SELECT users.id, users.username, users.is_admin AS "isAdmin" FROM auth_sessions JOIN users ON users.id = auth_sessions.user_id WHERE auth_sessions.token_hash = ? AND auth_sessions.expires_at > ?`).get(hashToken(token), new Date().toISOString()) as { id: string; username: string; isAdmin: number } | undefined;
+  const user = database.prepare(`SELECT users.id, users.username, users.is_admin AS "isAdmin" FROM auth_sessions JOIN users ON users.id = auth_sessions.user_id WHERE auth_sessions.token_hash = ? AND auth_sessions.expires_at > ? AND users.is_disabled = 0`).get(hashToken(token), new Date().toISOString()) as { id: string; username: string; isAdmin: number } | undefined;
   return user ? { id: user.id, username: user.username, admin: user.isAdmin === 1 } : null;
 }
 
@@ -1908,6 +2002,7 @@ function openConversationDatabase(databasePath: string): DatabaseSync {
       username TEXT NOT NULL UNIQUE COLLATE NOCASE,
       password_hash TEXT NOT NULL,
       is_admin INTEGER NOT NULL DEFAULT 0,
+      is_disabled INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -1943,6 +2038,7 @@ function openConversationDatabase(databasePath: string): DatabaseSync {
 function migrateExplicitAdmin(database: DatabaseSync): void {
   const columns = database.prepare('PRAGMA table_info(users)').all() as Array<{ name: string }>;
   if (!columns.some((column) => column.name === 'is_admin')) database.exec('ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0');
+  if (!columns.some((column) => column.name === 'is_disabled')) database.exec('ALTER TABLE users ADD COLUMN is_disabled INTEGER NOT NULL DEFAULT 0');
   if (database.prepare("SELECT value FROM app_meta WHERE key = 'explicit_admin_migrated'").get()) return;
   const existing = database.prepare('SELECT id FROM users ORDER BY created_at').all() as Array<{ id: string }>;
   if (existing.length === 1) database.prepare('UPDATE users SET is_admin = 1 WHERE id = ?').run(existing[0]!.id);

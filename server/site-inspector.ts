@@ -104,7 +104,8 @@ const BRIDGE = String.raw`<script ${MARKER}>
     event.preventDefault();
     event.stopImmediatePropagation();
     parent.postMessage(snapshot(clicked, raw), '*');
-    setEnabled(false);
+    target = clicked;
+    draw();
   }, true);
   addEventListener('keydown', (event) => {
     if (enabled && event.key === 'Escape') {

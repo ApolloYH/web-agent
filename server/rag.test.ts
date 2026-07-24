@@ -132,7 +132,8 @@ test('RAG uploads, queries and exposes the LightRAG graph', async () => {
     const chunks: Buffer[] = [];
     request.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
     await new Promise<void>((resolve) => request.on('end', resolve));
-    requests.push({ method: request.method || '', path: url.pathname, search: url.search, body: Buffer.concat(chunks).toString('utf8'), workspace: String(request.headers['lightrag-workspace'] || ''), lightRagConfig: String(request.headers['x-apollo-lightrag-config'] || '') });
+    const body = Buffer.concat(chunks).toString('utf8');
+    requests.push({ method: request.method || '', path: url.pathname, search: url.search, body, workspace: String(request.headers['lightrag-workspace'] || ''), lightRagConfig: String(request.headers['x-apollo-lightrag-config'] || '') });
     response.setHeader('Content-Type', 'application/json');
     if (request.method === 'POST' && url.pathname === '/api/v1/knowledge-bases') return response.end(JSON.stringify({ success: true, data: { id: 'wk-kb-1' } }));
     if (request.method === 'POST' && url.pathname === '/api/v1/knowledge-bases/wk-kb-1/knowledge/manual') return response.end(JSON.stringify({ success: true, data: { id: 'wk-manual-1', parse_status: 'processing' } }));
@@ -146,7 +147,14 @@ test('RAG uploads, queries and exposes the LightRAG graph', async () => {
     if (request.method === 'DELETE' && /\/light\/[^/]+\/documents\/delete_document$/.test(url.pathname)) return response.end(JSON.stringify({ status: 'deletion_started' }));
     if (request.method === 'GET' && /\/light\/[^/]+\/documents\/track_status\/lr-track-1$/.test(url.pathname)) return response.end(JSON.stringify({ documents: [{ id: 'lr-doc-1', status: 'processed' }] }));
     if (request.method === 'POST' && /\/light\/[^/]+\/documents\/reprocess_failed$/.test(url.pathname)) return response.end(JSON.stringify({ status: 'reprocessing_started' }));
-    if (request.method === 'POST' && /\/light\/[^/]+\/query\/data$/.test(url.pathname)) return response.end(JSON.stringify({ status: 'success', data: { chunks: [{ chunk_id: 'lr-chunk-1', file_path: 'rules.txt', content: 'LightRAG：审批关系来自制度图谱。' }], entities: [{ entity_name: '审批', entity_type: '流程', description: '作业前置条件', file_path: 'rules.txt', reference_id: 'ref-entity' }], relationships: [{ src_id: '作业', tgt_id: '审批', description: '作业前必须完成审批', keywords: '前置条件', weight: 0.9, file_path: 'rules.txt', reference_id: 'ref-relation' }] }, metadata: { keywords: { high_level: ['审批制度'], low_level: ['作业', '审批'] } } }));
+    if (request.method === 'POST' && /\/light\/[^/]+\/query\/data$/.test(url.pathname)) {
+      const query = JSON.parse(body) as { query?: string; hl_keywords?: string[] };
+      if (query.query === '作业审批责任' && !query.hl_keywords) {
+        response.statusCode = 500;
+        return response.end(JSON.stringify({ message: 'Internal server error (error_id: test)' }));
+      }
+      return response.end(JSON.stringify({ status: 'success', data: { chunks: [{ chunk_id: 'lr-chunk-1', file_path: 'rules.txt', content: 'LightRAG：审批关系来自制度图谱。' }], entities: [{ entity_name: '审批', entity_type: '流程', description: '作业前置条件', file_path: 'rules.txt', reference_id: 'ref-entity' }], relationships: [{ src_id: '作业', tgt_id: '审批', description: '作业前必须完成审批', keywords: '前置条件', weight: 0.9, file_path: 'rules.txt', reference_id: 'ref-relation' }] }, metadata: { keywords: { high_level: ['审批制度'], low_level: ['作业', '审批'] } } }));
+    }
     if (request.method === 'GET' && /\/light\/[^/]+\/graph\/label\/popular$/.test(url.pathname)) return response.end(JSON.stringify(['审批']));
     if (request.method === 'GET' && /\/light\/[^/]+\/graphs$/.test(url.pathname)) return response.end(JSON.stringify({ nodes: [{ id: '审批', labels: ['PROCESS'], properties: { description: '作业前置条件' } }, { id: '作业', labels: ['ACTIVITY'], properties: {} }], edges: [{ id: 'edge-1', source: '作业', target: '审批', type: 'REQUIRES', properties: {} }] }));
     response.statusCode = 404;
@@ -243,6 +251,15 @@ test('RAG uploads, queries and exposes the LightRAG graph', async () => {
     });
     assert.deepEqual(JSON.parse(requests.find((item) => item.path.endsWith('/query/data'))!.body), {
       query: '作业审批责任', mode: 'mix', top_k: 9, chunk_top_k: 9, enable_rerank: false,
+      max_entity_tokens: 3000, max_relation_tokens: 4000, max_total_tokens: 16000,
+    });
+    assert.deepEqual(JSON.parse(requests.find((item) => {
+      if (!item.path.endsWith('/query/data')) return false;
+      const body = JSON.parse(item.body) as { hl_keywords?: string[] };
+      return Boolean(body.hl_keywords);
+    })!.body), {
+      query: '作业审批责任', mode: 'mix', top_k: 9, chunk_top_k: 9, enable_rerank: false,
+      hl_keywords: ['作业审批责任'], ll_keywords: ['作业审批责任'],
       max_entity_tokens: 3000, max_relation_tokens: 4000, max_total_tokens: 16000,
     });
     const shortQuery = requests.filter((item) => item.path.endsWith('/query/data')).map((item) => JSON.parse(item.body) as { query: string }).find((item) => item.query.startsWith('你好'));

@@ -16,6 +16,7 @@ import {
 } from '@/lib/apolloAgent';
 import type { ApolloMemory, ApolloPermissionMode, ImChannelSettings, WeixinLoginState } from '@/lib/apolloAgent';
 import type { BrowserConnectionStatus } from '@/lib/browserExtension';
+import { AccountOverview, AdminPanel } from './AccountPanels';
 
 export default function SettingsBar({
   workspaceLabel,
@@ -31,7 +32,8 @@ export default function SettingsBar({
   );
 }
 
-export function UserCenterDialog({ username, admin, permissionMode, browserStatus, onRefreshBrowser, onClose, onLogout }: {
+export function UserCenterDialog({ userId, username, admin, permissionMode, browserStatus, onRefreshBrowser, onClose, onLogout }: {
+  userId: string;
   username: string;
   admin: boolean;
   permissionMode: ApolloPermissionMode;
@@ -40,45 +42,35 @@ export function UserCenterDialog({ username, admin, permissionMode, browserStatu
   onClose: () => void;
   onLogout: () => void;
 }) {
+  const [section, setSection] = useState<'account' | 'apollo' | 'admin'>('account');
   useEffect(() => {
     const close = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
     window.addEventListener('keydown', close);
     return () => window.removeEventListener('keydown', close);
   }, [onClose]);
+  const sections: Array<{ value: 'account' | 'apollo' | 'admin'; label: string; description: string }> = [
+    { value: 'account', label: '账号概览', description: '个人资料与安全' },
+    { value: 'apollo', label: 'Apollo 设置', description: '连接、记忆与高级配置' },
+    ...(admin ? [{ value: 'admin' as const, label: '管理后台', description: '用户与运行状态' }] : []),
+  ];
   return (
-    <div className="app-overlay-motion fixed inset-0 z-[70] flex items-center justify-center bg-black/25 p-4" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section role="dialog" aria-modal="true" aria-labelledby="user-center-title" className="app-dialog-motion flex max-h-[min(760px,calc(100dvh-2rem))] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-black/[0.08] bg-white shadow-[0_28px_90px_rgba(0,0,0,0.2)]">
-        <header className="flex items-center justify-between border-b border-black/[0.06] px-5 py-4">
-          <div><h2 id="user-center-title" className="text-[16px] font-semibold text-gray-900">用户中心</h2><p className="mt-0.5 text-[10px] text-gray-400">账号、连接与 Apollo 通用设置</p></div>
-          <button autoFocus type="button" onClick={onClose} aria-label="关闭用户中心" className="flex size-8 items-center justify-center rounded-lg text-xl text-gray-400 hover:bg-gray-100 hover:text-gray-700">×</button>
+    <div className="app-overlay-motion fixed inset-0 z-[70] flex items-center justify-center bg-black/25 p-2 sm:p-4" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section role="dialog" aria-modal="true" aria-labelledby="user-center-title" className="app-dialog-motion flex h-[min(780px,calc(100dvh-1rem))] w-full max-w-5xl flex-col overflow-hidden border border-black/[0.1] bg-white shadow-[0_28px_90px_rgba(0,0,0,0.2)] sm:h-[min(780px,calc(100dvh-2rem))]">
+        <header className="flex h-14 shrink-0 items-center justify-between border-b border-black/[0.07] px-4 sm:px-5">
+          <div className="flex min-w-0 items-center gap-3"><span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[#ededed] text-[11px] font-semibold text-[#555]">{username.slice(0, 1).toUpperCase()}</span><div className="min-w-0"><h2 id="user-center-title" className="truncate text-[13px] font-semibold text-[#171717]">{username}</h2><p className="mt-0.5 text-[9px] text-[#888]">{admin ? '管理员账号' : '个人账号'}</p></div></div>
+          <button autoFocus type="button" onClick={onClose} aria-label="关闭用户中心" className="flex size-8 cursor-pointer items-center justify-center text-xl text-[#888] transition-colors hover:bg-[#f2f2f2] hover:text-[#222] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#171717]">×</button>
         </header>
-        <div className="min-h-0 overflow-y-auto p-5">
-          <div className="mb-4 flex items-center gap-3 rounded-xl border border-black/[0.07] p-3">
-            <span className="flex size-10 items-center justify-center rounded-full bg-gray-100 text-[14px] font-semibold text-gray-600">{username.slice(0, 1).toUpperCase()}</span>
-            <div className="min-w-0 flex-1"><p className="truncate text-[12px] font-semibold text-gray-800">{username}</p><p className="mt-0.5 text-[10px] text-gray-400">{admin ? '管理员' : '成员'}</p></div>
-            <button type="button" onClick={onLogout} className="rounded-lg px-3 py-2 text-[11px] text-red-600 hover:bg-red-50">退出登录</button>
+        <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
+          <nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-black/[0.07] bg-[#fafafa] p-2 sm:w-48 sm:flex-col sm:overflow-visible sm:border-b-0 sm:border-r sm:p-3" aria-label="用户中心导航">
+            {sections.map(({ value, label, description }) => <button key={value} type="button" onClick={() => setSection(value)} aria-current={section === value ? 'page' : undefined} className={`min-w-fit cursor-pointer px-3 py-2 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#171717] sm:w-full ${section === value ? 'bg-[#eaeaea] text-[#171717]' : 'text-[#666] hover:bg-[#f0f0f0] hover:text-[#222]'}`}><span className="block text-[10px] font-medium">{label}</span><span className="mt-0.5 hidden text-[8px] text-[#999] sm:block">{description}</span></button>)}
+          </nav>
+          <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
+            <div key={section} className="app-state-motion mx-auto max-w-3xl">
+              {section === 'account' ? <AccountOverview username={username} admin={admin} browserStatus={browserStatus} onRefreshBrowser={onRefreshBrowser} onLogout={onLogout} /> : section === 'admin' && admin ? <AdminPanel currentUserId={userId} /> : <ApolloPanel permissionMode={permissionMode} canManageConfig={admin} />}
+            </div>
           </div>
-          <BrowserConnection status={browserStatus} onRefresh={onRefreshBrowser} />
-          <ApolloPanel permissionMode={permissionMode} canManageConfig={admin} />
         </div>
       </section>
-    </div>
-  );
-}
-
-function BrowserConnection({ status, onRefresh }: { status: BrowserConnectionStatus; onRefresh: () => void }) {
-  return (
-    <div className="mb-3 flex items-center justify-between gap-3 rounded-xl bg-gray-50 px-3 py-2 text-[11px]">
-      <div className="min-w-0">
-        <div className="flex items-center gap-1.5 font-medium text-gray-700">
-          <span className={`h-1.5 w-1.5 rounded-full ${status.connected ? 'bg-emerald-500' : 'bg-gray-300'}`} />
-          浏览器扩展{status.connected ? '已连接' : '未连接'}
-        </div>
-        <p className="mt-0.5 truncate text-[10px] text-gray-400" title={status.tab?.url ?? status.error}>
-          {status.tab?.title || status.error || (status.connected ? '点击扩展图标选择目标标签页' : '安装扩展后可操作当前 Chrome')}
-        </p>
-      </div>
-      <button type="button" onClick={onRefresh} className="shrink-0 rounded-lg px-2 py-1 text-gray-500 hover:bg-white hover:text-gray-900">检测</button>
     </div>
   );
 }

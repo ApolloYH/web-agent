@@ -374,7 +374,7 @@ export async function searchLightRag(
   services: ExternalRagServices,
 ): Promise<{ hits: ExternalEngineHit[]; context: LightRagSearchContext }> {
   const lightRagQuery = [...query].length < 3 ? `${query}？` : query;
-  const response = await engineJson<{
+  type QueryResponse = {
     status?: string;
     message?: string;
     data?: {
@@ -383,7 +383,8 @@ export async function searchLightRag(
       chunks?: Array<{ content?: string; file_path?: string; chunk_id?: string; reference_id?: string }>;
     };
     metadata?: { keywords?: { high_level?: string[]; low_level?: string[] } };
-  }>(lightRagUrl(services, collectionId, '/query/data'), {
+  };
+  const request = (fallbackKeywords = false) => engineJson<QueryResponse>(lightRagUrl(services, collectionId, '/query/data'), {
     method: 'POST',
     headers: lightRagHeaders(services.lightRagApiKey!, collectionId),
     body: JSON.stringify({
@@ -392,11 +393,19 @@ export async function searchLightRag(
       top_k: limit,
       chunk_top_k: limit,
       enable_rerank: false,
+      ...(fallbackKeywords ? { hl_keywords: [lightRagQuery], ll_keywords: [lightRagQuery] } : {}),
       ...(tokenBudget.entity ? { max_entity_tokens: tokenBudget.entity } : {}),
       ...(tokenBudget.relation ? { max_relation_tokens: tokenBudget.relation } : {}),
       ...(tokenBudget.total ? { max_total_tokens: tokenBudget.total } : {}),
     }),
   }, services);
+  let response: QueryResponse;
+  try {
+    response = await request();
+  } catch (error) {
+    if (!(error instanceof Error) || !/internal server error/i.test(error.message)) throw error;
+    response = await request(true);
+  }
   if (response.status !== 'success' || !response.data) throw new Error(response.message || 'LightRAG 图谱检索失败');
   const hits: ExternalEngineHit[] = [];
   for (const chunk of response.data.chunks || []) if (chunk.content) hits.push({
