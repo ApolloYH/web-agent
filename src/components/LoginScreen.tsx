@@ -76,9 +76,9 @@ export default function LoginScreen({ hasUsers, registrationEnabled, onAuthentic
       <section id="top" className="landing-hero relative mx-auto flex max-w-[1280px] flex-col items-center px-5 pb-20 pt-20 text-center sm:px-8 sm:pt-28 lg:px-12 lg:pb-28 lg:pt-32">
         <div aria-hidden="true" className="landing-orb landing-orb-a" /><div aria-hidden="true" className="landing-orb landing-orb-b" />
         <div className="landing-hero-copy relative z-10 mx-auto max-w-[920px]">
-          <div className="mb-7 flex items-center justify-center gap-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-[#676767]"><span className="h-px w-8 bg-[#676767]" />Open-source AI workspace</div>
-          <h1 className="landing-hero-title mx-auto max-w-[920px] font-semibold text-[#121212]"><span className="block">把复杂工作，</span><span className="block">交给会行动的 AI。</span></h1>
-          <p className="mx-auto mt-8 max-w-[720px] text-[16px] leading-8 text-[#565656] sm:text-[18px]">Apollo 把对话、文件、知识图谱、网站制作和浏览器操作放进同一个工作区。你只需说明目标，它负责理解资料、调用工具并交付可继续编辑的结果。</p>
+          <div className="mb-7 flex items-center justify-center gap-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-[#676767]"><span className="h-px w-8 bg-[#676767]" />Open-source Web Agent</div>
+          <h1 className="landing-hero-title mx-auto max-w-[920px] font-semibold text-[#121212]"><span className="block">住在 Web 上，</span><span className="block">替你真正行动。</span></h1>
+          <p className="mx-auto mt-8 max-w-[720px] text-[16px] leading-8 text-[#565656] sm:text-[18px]">Apollo 是住在互联网上的 Web Agent。它能进入真实网页，理解页面与资料，完成读取、点击、填写、创建与发布，让目标直接变成可继续使用的结果。</p>
           <div className="mt-9 flex flex-wrap justify-center gap-3">
             <a href="#access" className="group inline-flex h-11 items-center justify-center gap-3 rounded-full bg-[#171717] px-5 text-[11px] font-semibold text-white hover:-translate-y-0.5 hover:bg-[#303030] focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-[#151515]">开始使用 <span aria-hidden="true" className="transition-transform group-hover:translate-x-1">→</span></a>
             <a href="/docs/" className="inline-flex h-11 items-center justify-center gap-3 rounded-full border border-black/15 bg-white/50 px-5 text-[11px] font-semibold hover:-translate-y-0.5 hover:border-black/30 hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-[#151515]">阅读完整文档 <span aria-hidden="true">↗</span></a>
