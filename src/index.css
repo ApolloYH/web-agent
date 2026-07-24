@@ -221,25 +221,15 @@ select {
   0%, 100% { transform: translateY(0) rotateX(0.4deg) rotateY(-0.5deg); }
   50% { transform: translateY(-9px) rotateX(-0.4deg) rotateY(0.5deg); }
 }
-.landing-product::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(105deg, transparent 38%, rgba(255,255,255,0.48) 48%, transparent 58%);
-  transform: translateX(-120%);
-  animation: landing-sheen 7s 1.5s ease-in-out infinite;
-}
-@keyframes landing-sheen { 0%, 72% { transform: translateX(-120%); } 92%, 100% { transform: translateX(120%); } }
-.landing-rag-node { animation: landing-rag-pulse 2.4s ease-in-out infinite; }
-.landing-rag-node:nth-child(2) { animation-delay: -0.8s; }
-.landing-rag-node:nth-child(3) { animation-delay: -1.6s; }
-@keyframes landing-rag-pulse { 50% { transform: translateY(-3px) scale(1.18); filter: saturate(1.3); } }
+.landing-browser-live { animation: landing-live-pulse 2.4s ease-in-out infinite; }
+@keyframes landing-live-pulse { 50% { opacity: 0.42; box-shadow: 0 0 0 4px rgba(49, 95, 186, 0.08); } }
+.landing-agent-cursor { animation: landing-cursor-hover 2.8s ease-in-out infinite; }
+@keyframes landing-cursor-hover { 50% { transform: translate3d(3px, -3px, 0); } }
+.landing-selection { animation: landing-selection-focus 3s ease-in-out infinite; }
+@keyframes landing-selection-focus { 50% { border-color: rgba(49, 95, 186, 0.58); } }
 .landing-activity-dot { animation: landing-activity-pulse 2.6s ease-out infinite; }
 .landing-activity-dot:nth-child(1) { animation-delay: -0.9s; }
 @keyframes landing-activity-pulse { 50% { box-shadow: 0 0 0 5px rgba(91, 141, 239, 0.12); } }
-.landing-send { animation: landing-send-pulse 2.2s ease-in-out infinite; }
-@keyframes landing-send-pulse { 50% { transform: translateY(-2px); box-shadow: 0 5px 14px rgba(0,0,0,.24); } }
 
 .landing-marquee { overflow: hidden; mask-image: linear-gradient(90deg, transparent, #000 7%, #000 93%, transparent); }
 .landing-marquee-track {
