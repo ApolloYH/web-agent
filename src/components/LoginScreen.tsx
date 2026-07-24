@@ -87,59 +87,59 @@ export default function LoginScreen({ hasUsers, registrationEnabled, onAuthentic
 
         <div aria-label="Apollo Web Agent 正在浏览并编辑网页的界面示意图" role="img" className="landing-product-wrap relative mt-16 w-full max-w-[1180px] sm:mt-20">
           <div className="absolute -inset-12 -z-10 opacity-60 [background-image:radial-gradient(circle_at_center,rgba(73,101,150,.16),transparent_64%)]" />
-          <div className="landing-product overflow-hidden rounded-[22px] border border-[#ded0bc] bg-[#17120e] p-1.5 shadow-[0_46px_110px_rgba(62,43,25,0.2)] sm:p-2">
-            <div className="flex h-11 items-center border-b border-[#3a2e23] px-3 text-[#b9a993] sm:px-4">
-              <div className="flex gap-1.5"><span className="size-2 rounded-full bg-[#8d7457]" /><span className="size-2 rounded-full bg-[#6f5943]" /><span className="size-2 rounded-full bg-[#4c3d2e]" /></div>
-              <div className="mx-auto flex h-7 w-[48%] max-w-[380px] items-center justify-center gap-2 rounded-lg border border-[#3a2e23] bg-[#251e18] text-[7px] tracking-[0.08em] sm:text-[8px]"><svg aria-hidden="true" viewBox="0 0 20 20" className="size-2.5 fill-none stroke-current stroke-[1.5]"><rect x="5" y="8" width="10" height="8" rx="2" /><path d="M7.5 8V6a2.5 2.5 0 0 1 5 0v2" /></svg>apollo.local / live-browser</div>
-              <div className="flex items-center gap-1.5 text-[7px] font-medium uppercase tracking-[0.12em]"><span className="landing-browser-live size-1.5 rounded-full bg-[#86b69a]" /><span className="hidden sm:inline">Live</span></div>
+          <div className="landing-product overflow-hidden rounded-[22px] border border-black/[0.08] bg-[#f9f9f9] p-1.5 shadow-[0_46px_110px_rgba(0,0,0,0.16)] sm:p-2">
+            <div className="flex h-11 items-center border-b border-black/[0.07] px-3 text-[#777] sm:px-4">
+              <div className="flex gap-1.5"><span className="size-2 rounded-full bg-[#b8b8b8]" /><span className="size-2 rounded-full bg-[#cccccc]" /><span className="size-2 rounded-full bg-[#dddddd]" /></div>
+              <div className="mx-auto flex h-7 w-[48%] max-w-[380px] items-center justify-center gap-2 rounded-lg border border-black/[0.07] bg-[#f4f4f4] text-[7px] tracking-[0.08em] sm:text-[8px]"><svg aria-hidden="true" viewBox="0 0 20 20" className="size-2.5 fill-none stroke-current stroke-[1.5]"><rect x="5" y="8" width="10" height="8" rx="2" /><path d="M7.5 8V6a2.5 2.5 0 0 1 5 0v2" /></svg>apollo.local / live-browser</div>
+              <div className="flex items-center gap-1.5 text-[7px] font-medium uppercase tracking-[0.12em]"><span className="landing-browser-live size-1.5 rounded-full bg-[#0d0d0d]" /><span className="hidden sm:inline">Live</span></div>
             </div>
 
             <div className="grid min-h-[430px] grid-cols-[52px_minmax(0,1fr)] text-left sm:min-h-[520px] sm:grid-cols-[62px_minmax(0,1fr)] lg:grid-cols-[62px_minmax(0,1fr)_248px]">
-              <aside className="flex flex-col items-center border-r border-[#3a2e23] bg-[#17120e] py-4 text-[#ad9d87]">
-                <img src="/apollo-avatar.jpg" alt="" className="size-7 rounded-full object-cover ring-1 ring-[#594937] sm:size-8" />
+              <aside className="flex flex-col items-center border-r border-black/[0.07] bg-[#f9f9f9] py-4 text-[#777]">
+                <img src="/apollo-avatar.jpg" alt="" className="size-7 rounded-full object-cover ring-1 ring-black/10 sm:size-8" />
                 <div className="mt-7 flex flex-col gap-2">
-                  <span className="flex size-8 items-center justify-center rounded-lg bg-white text-[#17120e] shadow-[0_5px_18px_rgba(0,0,0,.18)] sm:size-9"><svg aria-hidden="true" viewBox="0 0 24 24" className="size-4 fill-none stroke-current stroke-[1.6]"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4A2.5 2.5 0 0 1 3 13.5v-8Z" /></svg></span>
+                  <span className="flex size-8 items-center justify-center rounded-lg bg-[#ececec] text-[#202123] shadow-[0_5px_18px_rgba(0,0,0,.18)] sm:size-9"><svg aria-hidden="true" viewBox="0 0 24 24" className="size-4 fill-none stroke-current stroke-[1.6]"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4A2.5 2.5 0 0 1 3 13.5v-8Z" /></svg></span>
                   <span className="flex size-8 items-center justify-center rounded-lg sm:size-9"><svg aria-hidden="true" viewBox="0 0 24 24" className="size-4 fill-none stroke-current stroke-[1.6]"><circle cx="12" cy="12" r="8.5" /><path d="m9.5 14.5 1.4-4.2 4.1-1.5-1.4 4.2-4.1 1.5Z" /></svg></span>
                   <span className="flex size-8 items-center justify-center rounded-lg sm:size-9"><svg aria-hidden="true" viewBox="0 0 24 24" className="size-4 fill-none stroke-current stroke-[1.6]"><path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" /></svg></span>
                   <span className="flex size-8 items-center justify-center rounded-lg sm:size-9"><svg aria-hidden="true" viewBox="0 0 24 24" className="size-4 fill-none stroke-current stroke-[1.6]"><path d="M4 18.5V8l8-4.5L20 8v10.5M8 20v-7h8v7" /></svg></span>
                 </div>
-                <span className="mt-auto flex size-8 items-center justify-center rounded-full border border-[#3a2e23] text-[8px] sm:size-9">AY</span>
+                <span className="mt-auto flex size-8 items-center justify-center rounded-full border border-black/[0.07] text-[8px] sm:size-9">AY</span>
               </aside>
 
-              <div className="flex min-w-0 flex-col bg-[#f7efe2] p-3 sm:p-5 lg:p-6">
+              <div className="flex min-w-0 flex-col bg-white p-3 sm:p-5 lg:p-6">
                 <header className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2 text-[7px] font-semibold uppercase tracking-[0.18em] text-[#9a7f60]"><span className="h-px w-5 bg-[#b19a7c]" />Current run</div>
-                    <h3 className="mt-2 truncate text-[12px] font-semibold tracking-[-0.02em] text-[#21170f] sm:text-[15px]">重构品牌首页，并发布预览</h3>
+                    <div className="flex items-center gap-2 text-[7px] font-semibold uppercase tracking-[0.18em] text-[#8e8ea0]"><span className="h-px w-5 bg-[#d7d7d7]" />Current run</div>
+                    <h3 className="mt-2 truncate text-[12px] font-semibold tracking-[-0.02em] text-[#0d0d0d] sm:text-[15px]">重构品牌首页，并发布预览</h3>
                   </div>
-                  <span className="hidden shrink-0 items-center gap-1.5 rounded-full border border-[#ded0bc] bg-[#fffaf2] px-3 py-1.5 text-[7px] font-medium text-[#6f5b46] sm:flex"><span className="size-1.5 rounded-full bg-[#5d9172]" />浏览器已连接</span>
+                  <span className="hidden shrink-0 items-center gap-1.5 rounded-full border border-black/[0.08] bg-white px-3 py-1.5 text-[7px] font-medium text-[#555] sm:flex"><span className="size-1.5 rounded-full bg-[#777]" />浏览器已连接</span>
                 </header>
 
-                <div className="mt-4 overflow-hidden rounded-[14px] border border-[#ded0bc] bg-white shadow-[0_18px_45px_rgba(76,54,32,.1)] sm:mt-5 sm:rounded-[17px]">
-                  <div className="flex h-9 items-center gap-2 border-b border-[#e2d5c3] bg-[#efe3d2] px-3 sm:h-10">
-                    <div className="flex gap-1"><span className="size-1.5 rounded-full bg-[#a89073]" /><span className="size-1.5 rounded-full bg-[#c8b69e]" /></div>
-                    <div className="mx-auto flex h-5 w-[58%] items-center justify-center rounded-md border border-[#e2d5c3] bg-white/80 text-[6px] text-[#806e5b] sm:h-6 sm:text-[7px]">aster.studio / home</div>
-                    <svg aria-hidden="true" viewBox="0 0 24 24" className="size-3 fill-none stroke-[#806e5b] stroke-[1.6]"><path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v5h5" /></svg>
+                <div className="mt-4 overflow-hidden rounded-[14px] border border-black/[0.08] bg-white shadow-[0_18px_45px_rgba(0,0,0,.08)] sm:mt-5 sm:rounded-[17px]">
+                  <div className="flex h-9 items-center gap-2 border-b border-black/[0.07] bg-[#f4f4f4] px-3 sm:h-10">
+                    <div className="flex gap-1"><span className="size-1.5 rounded-full bg-[#c7c7c7]" /><span className="size-1.5 rounded-full bg-[#d7d7d7]" /></div>
+                    <div className="mx-auto flex h-5 w-[58%] items-center justify-center rounded-md border border-black/[0.07] bg-white/80 text-[6px] text-[#777] sm:h-6 sm:text-[7px]">aster.studio / home</div>
+                    <svg aria-hidden="true" viewBox="0 0 24 24" className="size-3 fill-none stroke-[#777] stroke-[1.6]"><path d="M4 12a8 8 0 1 0 2.3-5.6M4 4v5h5" /></svg>
                   </div>
 
-                  <div className="relative min-h-[285px] overflow-hidden bg-[#fffaf2] p-4 sm:min-h-[340px] sm:p-6">
-                    <div className="flex items-center justify-between border-b border-[#ded0bc] pb-3 text-[6px] font-semibold uppercase tracking-[0.15em] text-[#5d4a39] sm:text-[7px]"><span>Aster / Independent Studio</span><span>Work&nbsp;&nbsp; About&nbsp;&nbsp; Contact</span></div>
+                  <div className="relative min-h-[285px] overflow-hidden bg-white p-4 sm:min-h-[340px] sm:p-6">
+                    <div className="flex items-center justify-between border-b border-black/[0.08] pb-3 text-[6px] font-semibold uppercase tracking-[0.15em] text-[#555] sm:text-[7px]"><span>Aster / Independent Studio</span><span>Work&nbsp;&nbsp; About&nbsp;&nbsp; Contact</span></div>
                     <div className="grid gap-5 pt-6 sm:grid-cols-[1.05fr_.95fr] sm:gap-7 sm:pt-8">
                       <div>
-                        <p className="text-[6px] font-semibold uppercase tracking-[0.2em] text-[#967c5d] sm:text-[7px]">Digital objects · 2026</p>
-                        <p className="mt-3 max-w-[340px] font-serif text-[24px] leading-[0.95] tracking-[-0.045em] text-[#21170f] sm:mt-4 sm:text-[38px] lg:text-[46px]">Ideas shaped<br />for the web.</p>
-                        <p className="mt-4 max-w-[260px] text-[7px] leading-4 text-[#78644f] sm:text-[8px]">把品牌、内容与交互编排成真正可以访问、操作和持续生长的网站。</p>
-                        <div className="relative mt-5 inline-flex h-7 items-center rounded-full bg-[#21170f] px-4 text-[7px] font-semibold text-white sm:h-8 sm:px-5">
+                        <p className="text-[6px] font-semibold uppercase tracking-[0.2em] text-[#8f8f8f] sm:text-[7px]">Digital objects · 2026</p>
+                        <p className="mt-3 max-w-[340px] font-serif text-[24px] leading-[0.95] tracking-[-0.045em] text-[#0d0d0d] sm:mt-4 sm:text-[38px] lg:text-[46px]">Ideas shaped<br />for the web.</p>
+                        <p className="mt-4 max-w-[260px] text-[7px] leading-4 text-[#777] sm:text-[8px]">把品牌、内容与交互编排成真正可以访问、操作和持续生长的网站。</p>
+                        <div className="relative mt-5 inline-flex h-7 items-center rounded-full bg-[#0d0d0d] px-4 text-[7px] font-semibold text-white sm:h-8 sm:px-5">
                           View selected work
                           <span className="landing-agent-cursor absolute -right-3 -top-3 rounded-md bg-[#315fba] px-1.5 py-1 text-[6px] font-semibold text-white shadow-md">Apollo</span>
                         </div>
                       </div>
-                      <div className="relative hidden min-h-[190px] overflow-hidden rounded-[10px] bg-[#ddc9aa] sm:block">
+                      <div className="relative hidden min-h-[190px] overflow-hidden rounded-[10px] bg-[#ececec] sm:block">
                         <div className="absolute inset-0 [background-image:linear-gradient(rgba(255,255,255,.42)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.42)_1px,transparent_1px)] [background-size:34px_34px]" />
-                        <div className="absolute inset-x-5 bottom-5 top-5 border border-[#cdbda8] bg-[#241a12] p-4 text-white">
-                          <span className="text-[6px] uppercase tracking-[0.18em] text-[#ad9d87]">Selected project 01</span>
+                        <div className="absolute inset-x-5 bottom-5 top-5 border border-black/10 bg-[#202123] p-4 text-white">
+                          <span className="text-[6px] uppercase tracking-[0.18em] text-[#777]">Selected project 01</span>
                           <p className="absolute bottom-4 left-4 font-serif text-[22px] leading-none">Web<br />native.</p>
-                          <div className="absolute right-4 top-4 size-8 rounded-full border border-[#756550]" />
+                          <div className="absolute right-4 top-4 size-8 rounded-full border border-white/25" />
                         </div>
                       </div>
                     </div>
@@ -147,17 +147,17 @@ export default function LoginScreen({ hasUsers, registrationEnabled, onAuthentic
                   </div>
                 </div>
 
-                <div className="mt-3 flex items-center gap-2 text-[7px] text-[#7c6852] sm:mt-4"><span className="landing-browser-live size-1.5 rounded-full bg-[#315fba]" /><span>正在检查页面结构与交互状态</span><span className="ml-auto hidden font-mono text-[#a88f72] sm:inline">18 nodes · 6.4s</span></div>
+                <div className="mt-3 flex items-center gap-2 text-[7px] text-[#777] sm:mt-4"><span className="landing-browser-live size-1.5 rounded-full bg-[#315fba]" /><span>正在检查页面结构与交互状态</span><span className="ml-auto hidden font-mono text-[#8f8f8f] sm:inline">18 nodes · 6.4s</span></div>
               </div>
 
-              <aside className="hidden flex-col border-l border-[#ded0bc] bg-[#fbf3e7] p-5 lg:flex">
-                <div className="flex items-center justify-between"><div><p className="text-[7px] font-semibold uppercase tracking-[0.18em] text-[#a18767]">Apollo agent</p><p className="mt-1.5 text-[11px] font-semibold tracking-[-0.02em]">网页执行记录</p></div><span className="flex size-7 items-center justify-center rounded-full border border-[#ded0bc] bg-white"><span className="landing-browser-live size-1.5 rounded-full bg-[#5d9172]" /></span></div>
-                <div className="mt-7 space-y-5 border-l border-[#ded0bc] pl-4">
-                  <div className="relative"><span className="absolute -left-[19px] top-1 size-2 rounded-full border-2 border-[#fbf3e7] bg-[#33261b]" /><p className="text-[8px] font-semibold">读取页面</p><p className="mt-1 text-[7px] leading-4 text-[#8a7359]">识别导航、版式与 18 个可操作节点</p></div>
-                  <div className="relative"><span className="absolute -left-[19px] top-1 size-2 rounded-full border-2 border-[#fbf3e7] bg-[#33261b]" /><p className="text-[8px] font-semibold">选择元素</p><p className="mt-1 text-[7px] leading-4 text-[#8a7359]">已定位首屏主行动按钮</p></div>
-                  <div className="relative"><span className="landing-activity-dot absolute -left-[19px] top-1 size-2 rounded-full border-2 border-[#fbf3e7] bg-[#315fba]" /><p className="text-[8px] font-semibold text-[#315fba]">正在优化交互</p><p className="mt-1 text-[7px] leading-4 text-[#8a7359]">调整文案、间距与悬停反馈</p></div>
+              <aside className="hidden flex-col border-l border-black/[0.08] bg-white p-5 lg:flex">
+                <div className="flex items-center justify-between"><div><p className="text-[7px] font-semibold uppercase tracking-[0.18em] text-[#8e8ea0]">Apollo agent</p><p className="mt-1.5 text-[11px] font-semibold tracking-[-0.02em]">网页执行记录</p></div><span className="flex size-7 items-center justify-center rounded-full border border-black/[0.08] bg-white"><span className="landing-browser-live size-1.5 rounded-full bg-[#777]" /></span></div>
+                <div className="mt-7 space-y-5 border-l border-black/[0.08] pl-4">
+                  <div className="relative"><span className="absolute -left-[19px] top-1 size-2 rounded-full border-2 border-white bg-[#202123]" /><p className="text-[8px] font-semibold">读取页面</p><p className="mt-1 text-[7px] leading-4 text-[#777]">识别导航、版式与 18 个可操作节点</p></div>
+                  <div className="relative"><span className="absolute -left-[19px] top-1 size-2 rounded-full border-2 border-white bg-[#202123]" /><p className="text-[8px] font-semibold">选择元素</p><p className="mt-1 text-[7px] leading-4 text-[#777]">已定位首屏主行动按钮</p></div>
+                  <div className="relative"><span className="landing-activity-dot absolute -left-[19px] top-1 size-2 rounded-full border-2 border-white bg-[#315fba]" /><p className="text-[8px] font-semibold text-[#315fba]">正在优化交互</p><p className="mt-1 text-[7px] leading-4 text-[#777]">调整文案、间距与悬停反馈</p></div>
                 </div>
-                <div className="mt-auto rounded-[12px] bg-[#21170f] p-4 text-white shadow-[0_15px_35px_rgba(0,0,0,.15)]"><div className="flex items-center justify-between text-[7px] text-[#ad9d87]"><span>NEXT ACTION</span><span>03 / 04</span></div><p className="mt-3 text-[9px] font-medium leading-5">生成预览并等待你的确认</p><div className="mt-4 flex items-center gap-2"><span className="h-1 flex-1 overflow-hidden rounded-full bg-[#4a3a2b]"><span className="block h-full w-3/4 rounded-full bg-[#fffaf2]" /></span><span className="text-[7px] text-[#ad9d87]">75%</span></div></div>
+                <div className="mt-auto rounded-[12px] bg-[#0d0d0d] p-4 text-white shadow-[0_15px_35px_rgba(0,0,0,.15)]"><div className="flex items-center justify-between text-[7px] text-[#777]"><span>NEXT ACTION</span><span>03 / 04</span></div><p className="mt-3 text-[9px] font-medium leading-5">生成预览并等待你的确认</p><div className="mt-4 flex items-center gap-2"><span className="h-1 flex-1 overflow-hidden rounded-full bg-[#d7d7d7]"><span className="block h-full w-3/4 rounded-full bg-white" /></span><span className="text-[7px] text-[#777]">75%</span></div></div>
               </aside>
             </div>
           </div>
