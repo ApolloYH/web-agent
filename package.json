@@ -9,7 +9,7 @@
     "office:setup": "node scripts/setup-onlyoffice-runtime.mjs",
     "office:compress": "node scripts/precompress-assets.mjs",
     "rag:start": "node scripts/start-rag-engines.mjs",
-    "build": "tsc -b && vite build && node scripts/precompress-assets.mjs && pnpm build:server && pnpm build:extension",
+    "build": "pnpm --filter @apolloyh/apollo-agent build && tsc -b && vite build && node scripts/precompress-assets.mjs && pnpm build:server && pnpm build:extension",
     "build:server": "tsc -p tsconfig.server.json",
     "build:extension": "tsc -p browser-extension/tsconfig.json && vite build --config browser-extension/vite.config.ts --mode extension-content && vite build --config browser-extension/vite.config.ts --mode extension-background",
     "backup": "node scripts/backup-production.mjs",
