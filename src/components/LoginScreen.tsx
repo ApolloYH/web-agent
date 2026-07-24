@@ -35,7 +35,7 @@ export default function LoginScreen({ hasUsers, registrationEnabled, onAuthentic
       frame = 0;
       const max = document.documentElement.scrollHeight - window.innerHeight;
       root.style.setProperty('--landing-progress', String(max > 0 ? window.scrollY / max : 0));
-      root.style.setProperty('--landing-parallax', `${Math.min(window.scrollY * 0.09, 96)}px`);
+      root.style.setProperty('--landing-parallax', `${Math.min(window.scrollY * 0.04, 48)}px`);
     };
     const onScroll = () => {
       if (!frame) frame = window.requestAnimationFrame(updateScroll);
@@ -55,9 +55,9 @@ export default function LoginScreen({ hasUsers, registrationEnabled, onAuthentic
     finally { setLoading(false); }
   };
   return (
-    <main ref={landingRef} data-landing className="landing-page min-h-dvh overflow-x-clip bg-[#f4f3ee] text-[#151515] selection:bg-[#c7dcff]">
+    <main ref={landingRef} data-landing className="landing-page min-h-dvh overflow-x-clip bg-[#fafaf7] text-[#151515] selection:bg-[#c7dcff]">
       <div aria-hidden="true" className="landing-scroll-progress" />
-      <nav aria-label="主导航" className="landing-nav sticky top-0 z-30 mx-auto flex h-20 max-w-[1440px] items-center justify-between px-5 sm:px-8 lg:px-12">
+      <nav aria-label="主导航" className="landing-nav sticky top-4 z-30 mx-auto flex h-16 w-[calc(100%-32px)] max-w-[1280px] items-center justify-between px-4 sm:px-6">
         <a href="#top" className="flex items-center gap-3 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#151515]">
           <img src="/apollo-avatar.jpg" alt="Apollo" className="size-9 rounded-full object-cover ring-1 ring-black/10" />
           <span className="text-[18px] font-semibold tracking-[-0.03em]">Apollo</span>
@@ -74,24 +74,24 @@ export default function LoginScreen({ hasUsers, registrationEnabled, onAuthentic
         </div>
       </nav>
 
-      <section id="top" className="landing-hero relative mx-auto grid max-w-[1440px] gap-12 px-5 pb-12 pt-12 sm:px-8 sm:pt-20 lg:grid-cols-[0.86fr_1.14fr] lg:items-center lg:px-12 lg:pb-24 lg:pt-24">
+      <section id="top" className="landing-hero relative mx-auto flex max-w-[1280px] flex-col items-center px-5 pb-20 pt-20 text-center sm:px-8 sm:pt-28 lg:px-12 lg:pb-28 lg:pt-32">
         <div aria-hidden="true" className="landing-orb landing-orb-a" /><div aria-hidden="true" className="landing-orb landing-orb-b" />
-        <div className="landing-hero-copy relative z-10 max-w-[640px]">
-          <div className="mb-7 flex items-center gap-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-[#676767]"><span className="h-px w-8 bg-[#676767]" />Open-source AI workspace</div>
-          <h1 className="landing-hero-title max-w-[720px] text-[46px] font-semibold leading-[0.98] tracking-[-0.065em] text-[#121212] sm:text-[62px] lg:text-[68px]"><span className="block">把复杂工作，</span><span className="block">交给会行动的 AI。</span></h1>
-          <p className="mt-8 max-w-[570px] text-[16px] leading-8 text-[#565656] sm:text-[18px]">Apollo 把对话、文件、知识图谱、网站制作和浏览器操作放进同一个工作区。你只需说明目标，它负责理解资料、调用工具并交付可继续编辑的结果。</p>
-          <div className="mt-9 flex flex-wrap gap-3">
+        <div className="landing-hero-copy relative z-10 mx-auto max-w-[920px]">
+          <div className="mb-7 flex items-center justify-center gap-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-[#676767]"><span className="h-px w-8 bg-[#676767]" />Open-source AI workspace</div>
+          <h1 className="landing-hero-title mx-auto max-w-[920px] font-semibold text-[#121212]"><span className="block">把复杂工作，</span><span className="block">交给会行动的 AI。</span></h1>
+          <p className="mx-auto mt-8 max-w-[720px] text-[16px] leading-8 text-[#565656] sm:text-[18px]">Apollo 把对话、文件、知识图谱、网站制作和浏览器操作放进同一个工作区。你只需说明目标，它负责理解资料、调用工具并交付可继续编辑的结果。</p>
+          <div className="mt-9 flex flex-wrap justify-center gap-3">
             <a href="#access" className="group inline-flex items-center gap-3 rounded-full bg-[#171717] px-6 py-3.5 text-[11px] font-semibold text-white hover:-translate-y-0.5 hover:bg-[#303030] focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-[#151515]">开始使用 <span aria-hidden="true" className="transition-transform group-hover:translate-x-1">→</span></a>
             <a href="/docs/" className="inline-flex items-center gap-3 rounded-full border border-black/15 bg-white/50 px-6 py-3.5 text-[11px] font-semibold hover:-translate-y-0.5 hover:border-black/30 hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-[#151515]">阅读完整文档 <span aria-hidden="true">↗</span></a>
           </div>
-          <dl className="mt-12 grid max-w-[520px] grid-cols-3 border-y border-black/10 py-5">
+          <dl className="mx-auto mt-12 grid max-w-[560px] grid-cols-3 border-y border-black/10 py-5">
             <div><dt className="text-[9px] uppercase tracking-[0.14em] text-[#848484]">工作入口</dt><dd className="mt-1 text-[15px] font-semibold">一个工作区</dd></div>
             <div className="border-x border-black/10 px-5"><dt className="text-[9px] uppercase tracking-[0.14em] text-[#848484]">知识检索</dt><dd className="mt-1 text-[15px] font-semibold">双路 RAG</dd></div>
             <div className="pl-5"><dt className="text-[9px] uppercase tracking-[0.14em] text-[#848484]">代码许可</dt><dd className="mt-1 text-[15px] font-semibold">AGPL-3.0</dd></div>
           </dl>
         </div>
 
-        <div aria-label="Apollo 工作区界面示意图" role="img" className="landing-product-wrap relative lg:pl-6">
+        <div aria-label="Apollo 工作区界面示意图" role="img" className="landing-product-wrap relative mt-16 w-full max-w-[1180px] sm:mt-20">
           <div className="absolute -inset-10 -z-10 opacity-50 [background-image:radial-gradient(circle_at_center,rgba(90,125,181,.18),transparent_62%)]" />
           <div className="landing-product overflow-hidden rounded-[18px] border border-black/15 bg-white shadow-[0_40px_100px_rgba(35,39,47,0.17)]">
             <div className="flex h-11 items-center justify-between border-b border-black/10 bg-[#fbfbfb] px-4">
@@ -123,7 +123,7 @@ export default function LoginScreen({ hasUsers, registrationEnabled, onAuthentic
       </div>
 
       <section aria-labelledby="capabilities-title" className="landing-dark border-b border-black/10 bg-[#181818] text-white">
-        <div className="mx-auto max-w-[1440px] px-5 py-20 sm:px-8 lg:px-12 lg:py-28">
+        <div className="mx-auto max-w-[1280px] px-5 py-20 sm:px-8 lg:px-12 lg:py-28">
           <div className="grid gap-10 lg:grid-cols-[0.72fr_1.28fr]">
             <div data-reveal><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/45">One workspace, real outcomes</p><h2 id="capabilities-title" className="mt-5 max-w-[430px] text-[38px] font-semibold leading-[1.08] tracking-[-0.045em] sm:text-[48px]">不止回答问题，更把结果做出来。</h2><p className="mt-6 max-w-[430px] text-[13px] leading-7 text-white/55">每项能力都围绕同一个目标：减少工具切换，让资料、推理、执行和交付留在一条连续的工作流里。</p></div>
             <div className="grid border-l border-white/10 sm:grid-cols-2">
@@ -133,7 +133,7 @@ export default function LoginScreen({ hasUsers, registrationEnabled, onAuthentic
         </div>
       </section>
 
-      <section className="mx-auto max-w-[1440px] px-5 py-20 sm:px-8 lg:px-12 lg:py-28">
+      <section className="mx-auto max-w-[1280px] px-5 py-20 sm:px-8 lg:px-12 lg:py-28">
         <div data-reveal className="mb-12 flex flex-col justify-between gap-5 border-b border-black/10 pb-8 sm:flex-row sm:items-end"><div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#777]">Built for the whole journey</p><h2 className="mt-4 text-[36px] font-semibold tracking-[-0.05em] sm:text-[48px]">从一句话，到可交付成果。</h2></div><a href="/docs/" className="group text-[11px] font-semibold underline decoration-black/25 underline-offset-8 hover:decoration-black focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#151515]">查看全部使用指南 <span className="inline-block transition-transform group-hover:translate-x-1">→</span></a></div>
         <div className="grid gap-px overflow-hidden rounded-[14px] border border-black/10 bg-black/10 md:grid-cols-3">
           <article data-reveal className="landing-journey-card bg-[#e7eef9] p-7 sm:p-9"><span className="inline-flex rounded-full border border-[#7a9aca]/35 px-3 py-1 text-[8px] font-semibold uppercase tracking-[0.15em] text-[#45638c]">Knowledge</span><h3 className="mt-16 text-[24px] font-semibold tracking-[-0.04em]">让知识不只被找到，<br />还被理解。</h3><p className="mt-5 text-[11px] leading-6 text-[#52657f]">匹配段落与知识关系路径并行返回，适合研究、制度、产品和项目资料。</p><div aria-hidden="true" className="relative mt-12 h-28"><span className="absolute left-[8%] top-[44%] size-4 rounded-full bg-[#4f86db] ring-8 ring-[#4f86db]/10" /><span className="absolute left-[45%] top-[12%] size-3 rounded-full bg-[#8f68c8]" /><span className="absolute right-[8%] top-[52%] size-5 rounded-full bg-[#e0a147] ring-8 ring-[#e0a147]/10" /><span className="absolute bottom-[5%] left-[42%] size-3.5 rounded-full bg-[#55a875]" /><svg viewBox="0 0 300 100" preserveAspectRatio="none" className="absolute inset-0 size-full fill-none stroke-[#7894ba]/50 stroke-[1.2]"><path d="M38 54 138 18M38 54l98 40m2-76 130 45M136 94l132-31M138 18l-2 76" /></svg></div></article>
@@ -160,7 +160,7 @@ export default function LoginScreen({ hasUsers, registrationEnabled, onAuthentic
         </div>
       </section>
 
-      <footer className="border-t border-black/10 bg-white"><div className="mx-auto flex max-w-[1440px] flex-col justify-between gap-4 px-5 py-8 text-[9px] text-[#7c7c7c] sm:flex-row sm:items-center sm:px-8 lg:px-12"><span>© 2026 Apollo · Personal Super Agent</span><div className="flex gap-6"><a href="/docs/" className="hover:text-black">使用文档</a><a href={githubUrl} target="_blank" rel="noreferrer" className="hover:text-black">GitHub</a><a href="#top" className="hover:text-black">返回顶部 ↑</a></div></div></footer>
+      <footer className="border-t border-black/10 bg-white"><div className="mx-auto flex max-w-[1280px] flex-col justify-between gap-4 px-5 py-8 text-[9px] text-[#7c7c7c] sm:flex-row sm:items-center sm:px-8 lg:px-12"><span>© 2026 Apollo · Personal Super Agent</span><div className="flex gap-6"><a href="/docs/" className="hover:text-black">使用文档</a><a href={githubUrl} target="_blank" rel="noreferrer" className="hover:text-black">GitHub</a><a href="#top" className="hover:text-black">返回顶部 ↑</a></div></div></footer>
     </main>
   );
 }

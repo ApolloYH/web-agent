@@ -101,7 +101,25 @@ select {
   position: relative;
   isolation: isolate;
   scroll-behavior: smooth;
+  font-family: "SF Pro Text", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-size: 16px;
 }
+
+.landing-page :where(h1, h2, h3) {
+  font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  text-wrap: balance;
+}
+
+/* Keep the app's enlarged utility scale out of the public landing page. */
+#root .landing-page .text-\[9px\] { font-size: 11px; }
+#root .landing-page .text-\[10px\] { font-size: 12px; }
+#root .landing-page .text-\[11px\] { font-size: 14px; }
+#root .landing-page .text-\[12px\] { font-size: 15px; }
+#root .landing-page .text-\[13px\] { font-size: 16px; }
+#root .landing-page .text-\[14px\] { font-size: 17px; }
+#root .landing-page .text-\[16px\] { font-size: 18px; }
+#root .landing-page .text-\[22px\] { font-size: 28px; }
+#root .landing-page .text-\[24px\] { font-size: 30px; }
 
 .landing-page::before {
   content: '';
@@ -126,13 +144,21 @@ select {
 }
 
 .landing-nav {
-  background: color-mix(in srgb, #f4f3ee 82%, transparent);
-  backdrop-filter: blur(18px) saturate(1.4);
-  -webkit-backdrop-filter: blur(18px) saturate(1.4);
-  box-shadow: 0 1px rgba(0, 0, 0, 0.06);
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 18px;
+  background: color-mix(in srgb, #fafaf7 86%, transparent);
+  backdrop-filter: blur(20px) saturate(1.35);
+  -webkit-backdrop-filter: blur(20px) saturate(1.35);
+  box-shadow: 0 12px 38px rgba(28, 31, 36, 0.07);
 }
 
-.landing-hero { min-height: min(900px, calc(100dvh - 80px)); }
+.landing-hero { min-height: auto; }
+.landing-hero-title {
+  font-size: clamp(40px, 6.1vw, 78px);
+  line-height: 1.03;
+  letter-spacing: -0.052em;
+}
+.landing-hero-title span { white-space: nowrap; }
 .landing-hero-copy > * {
   opacity: 0;
   filter: blur(8px);
@@ -161,16 +187,16 @@ select {
 .landing-orb-a {
   width: 360px;
   height: 360px;
-  right: 31%;
-  top: 3%;
+  left: 9%;
+  top: 11%;
   background: radial-gradient(circle, rgba(125, 166, 229, 0.22), rgba(125, 166, 229, 0));
   animation: landing-orbit-a 11s ease-in-out infinite alternate;
 }
 .landing-orb-b {
   width: 260px;
   height: 260px;
-  right: -3%;
-  bottom: 2%;
+  right: 2%;
+  bottom: 12%;
   background: radial-gradient(circle, rgba(180, 131, 217, 0.17), rgba(180, 131, 217, 0));
   animation: landing-orbit-b 14s ease-in-out infinite alternate;
 }
