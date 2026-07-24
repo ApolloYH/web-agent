@@ -1,16 +1,53 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { authenticate } from '@/lib/auth';
 import type { AuthUser } from '@/lib/auth';
 
 const githubUrl = 'https://github.com/ApolloYH/web-agent';
 
 export default function LoginScreen({ hasUsers, registrationEnabled, onAuthenticated }: { hasUsers: boolean; registrationEnabled: boolean; onAuthenticated: (user: AuthUser) => void }) {
+  const landingRef = useRef<HTMLElement>(null);
   const [mode, setMode] = useState<'login' | 'register'>(!hasUsers && registrationEnabled ? 'register' : 'login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  useEffect(() => {
+    const root = landingRef.current;
+    if (!root) return;
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    root.classList.add('landing-ready');
+    const reveals = root.querySelectorAll<HTMLElement>('[data-reveal]');
+    if (reducedMotion) {
+      reveals.forEach((element) => element.classList.add('is-visible'));
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) return;
+        entry.target.classList.add('is-visible');
+        observer.unobserve(entry.target);
+      });
+    }, { threshold: 0.14, rootMargin: '0px 0px -8% 0px' });
+    reveals.forEach((element) => observer.observe(element));
+    let frame = 0;
+    const updateScroll = () => {
+      frame = 0;
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      root.style.setProperty('--landing-progress', String(max > 0 ? window.scrollY / max : 0));
+      root.style.setProperty('--landing-parallax', `${Math.min(window.scrollY * 0.09, 96)}px`);
+    };
+    const onScroll = () => {
+      if (!frame) frame = window.requestAnimationFrame(updateScroll);
+    };
+    updateScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('scroll', onScroll);
+      if (frame) window.cancelAnimationFrame(frame);
+    };
+  }, []);
   const submit = async (event: React.FormEvent) => {
     event.preventDefault(); setLoading(true); setError('');
     try { onAuthenticated(await authenticate(mode, username, password, inviteCode)); }
@@ -18,8 +55,9 @@ export default function LoginScreen({ hasUsers, registrationEnabled, onAuthentic
     finally { setLoading(false); }
   };
   return (
-    <main className="min-h-dvh overflow-x-hidden bg-[#f4f3ee] text-[#151515] selection:bg-[#c7dcff]">
-      <nav aria-label="主导航" className="relative z-20 mx-auto flex h-20 max-w-[1440px] items-center justify-between px-5 sm:px-8 lg:px-12">
+    <main ref={landingRef} data-landing className="landing-page min-h-dvh overflow-x-clip bg-[#f4f3ee] text-[#151515] selection:bg-[#c7dcff]">
+      <div aria-hidden="true" className="landing-scroll-progress" />
+      <nav aria-label="主导航" className="landing-nav sticky top-0 z-30 mx-auto flex h-20 max-w-[1440px] items-center justify-between px-5 sm:px-8 lg:px-12">
         <a href="#top" className="flex items-center gap-3 rounded-lg focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#151515]">
           <img src="/apollo-avatar.jpg" alt="Apollo" className="size-9 rounded-full object-cover ring-1 ring-black/10" />
           <span className="text-[18px] font-semibold tracking-[-0.03em]">Apollo</span>
@@ -36,10 +74,11 @@ export default function LoginScreen({ hasUsers, registrationEnabled, onAuthentic
         </div>
       </nav>
 
-      <section id="top" className="relative mx-auto grid max-w-[1440px] gap-12 px-5 pb-12 pt-12 sm:px-8 sm:pt-20 lg:grid-cols-[0.86fr_1.14fr] lg:items-center lg:px-12 lg:pb-24 lg:pt-24">
-        <div className="relative z-10 max-w-[640px]">
+      <section id="top" className="landing-hero relative mx-auto grid max-w-[1440px] gap-12 px-5 pb-12 pt-12 sm:px-8 sm:pt-20 lg:grid-cols-[0.86fr_1.14fr] lg:items-center lg:px-12 lg:pb-24 lg:pt-24">
+        <div aria-hidden="true" className="landing-orb landing-orb-a" /><div aria-hidden="true" className="landing-orb landing-orb-b" />
+        <div className="landing-hero-copy relative z-10 max-w-[640px]">
           <div className="mb-7 flex items-center gap-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-[#676767]"><span className="h-px w-8 bg-[#676767]" />Open-source AI workspace</div>
-          <h1 className="max-w-[720px] text-[46px] font-semibold leading-[0.98] tracking-[-0.065em] text-[#121212] sm:text-[62px] lg:text-[68px]"><span className="block">把复杂工作，</span><span className="block">交给会行动的 AI。</span></h1>
+          <h1 className="landing-hero-title max-w-[720px] text-[46px] font-semibold leading-[0.98] tracking-[-0.065em] text-[#121212] sm:text-[62px] lg:text-[68px]"><span className="block">把复杂工作，</span><span className="block">交给会行动的 AI。</span></h1>
           <p className="mt-8 max-w-[570px] text-[16px] leading-8 text-[#565656] sm:text-[18px]">Apollo 把对话、文件、知识图谱、网站制作和浏览器操作放进同一个工作区。你只需说明目标，它负责理解资料、调用工具并交付可继续编辑的结果。</p>
           <div className="mt-9 flex flex-wrap gap-3">
             <a href="#access" className="group inline-flex items-center gap-3 rounded-full bg-[#171717] px-6 py-3.5 text-[11px] font-semibold text-white hover:-translate-y-0.5 hover:bg-[#303030] focus-visible:outline-2 focus-visible:outline-offset-3 focus-visible:outline-[#151515]">开始使用 <span aria-hidden="true" className="transition-transform group-hover:translate-x-1">→</span></a>
@@ -52,9 +91,9 @@ export default function LoginScreen({ hasUsers, registrationEnabled, onAuthentic
           </dl>
         </div>
 
-        <div aria-label="Apollo 工作区界面示意图" role="img" className="relative lg:pl-6">
+        <div aria-label="Apollo 工作区界面示意图" role="img" className="landing-product-wrap relative lg:pl-6">
           <div className="absolute -inset-10 -z-10 opacity-50 [background-image:radial-gradient(circle_at_center,rgba(90,125,181,.18),transparent_62%)]" />
-          <div className="overflow-hidden rounded-[18px] border border-black/15 bg-white shadow-[0_40px_100px_rgba(35,39,47,0.17)]">
+          <div className="landing-product overflow-hidden rounded-[18px] border border-black/15 bg-white shadow-[0_40px_100px_rgba(35,39,47,0.17)]">
             <div className="flex h-11 items-center justify-between border-b border-black/10 bg-[#fbfbfb] px-4">
               <div className="flex gap-1.5"><span className="size-2.5 rounded-full bg-[#ff6b5f]" /><span className="size-2.5 rounded-full bg-[#f7bd45]" /><span className="size-2.5 rounded-full bg-[#55c66a]" /></div>
               <div className="rounded-md border border-black/10 bg-white px-12 py-1 text-[8px] text-[#888]">apollo / workspace</div>
@@ -69,40 +108,44 @@ export default function LoginScreen({ hasUsers, registrationEnabled, onAuthentic
               <div className="flex min-w-0 flex-col bg-white p-4 sm:p-6">
                 <div className="mb-7 flex items-center justify-between"><div><div className="text-[8px] text-[#8b8b8b]">新的任务</div><div className="mt-1 text-[11px] font-semibold">分析产品资料并生成发布方案</div></div><span className="rounded-full border border-black/10 px-2.5 py-1 text-[7px] text-[#6c6c6c]">Ask before actions</span></div>
                 <div className="ml-auto max-w-[82%] rounded-[14px_14px_4px_14px] bg-[#efefed] px-4 py-3 text-[9px] leading-5 text-[#444]">读取这批资料，梳理产品关系，并输出一份可发布的网站方案。</div>
-                <div className="mt-5 flex gap-3"><img src="/apollo-avatar.jpg" alt="" className="mt-0.5 size-6 rounded-full" /><div className="min-w-0 flex-1"><div className="text-[9px] font-semibold">Apollo</div><p className="mt-2 text-[9px] leading-5 text-[#555]">我会先建立资料索引，再结合实体关系和来源段落完成分析。</p><div className="mt-3 grid grid-cols-2 gap-2"><div className="rounded-lg border border-[#cbdcf8] bg-[#f4f8ff] p-2.5"><span className="text-[7px] font-semibold text-[#3d6fbf]">W E K N O R A</span><div className="mt-1.5 h-1 w-4/5 rounded bg-[#8eb2ea]/50" /><div className="mt-1 h-1 w-3/5 rounded bg-[#8eb2ea]/30" /></div><div className="rounded-lg border border-[#decff3] bg-[#faf7ff] p-2.5"><span className="text-[7px] font-semibold text-[#7a53b8]">L I G H T R A G</span><div className="mt-2 flex gap-2"><span className="size-2 rounded-full bg-[#5b8def]" /><span className="size-2 rounded-full bg-[#e2a760]" /><span className="size-2 rounded-full bg-[#7bb58d]" /></div></div></div><div className="mt-4 rounded-lg border border-black/10 p-3"><div className="flex items-center justify-between text-[8px]"><b>产品发布方案.md</b><span className="text-[#2f8c5f]">已生成</span></div><div className="mt-3 h-1.5 w-full rounded bg-black/[0.07]" /><div className="mt-1.5 h-1.5 w-4/5 rounded bg-black/[0.05]" /></div></div></div>
-                <div className="mt-auto flex h-11 items-center rounded-xl border border-black/15 px-4 text-[8px] text-[#999] shadow-sm">继续告诉 Apollo 你想完成什么… <span className="ml-auto flex size-6 items-center justify-center rounded-full bg-[#171717] text-white">↑</span></div>
+                <div className="mt-5 flex gap-3"><img src="/apollo-avatar.jpg" alt="" className="mt-0.5 size-6 rounded-full" /><div className="min-w-0 flex-1"><div className="text-[9px] font-semibold">Apollo</div><p className="mt-2 text-[9px] leading-5 text-[#555]">我会先建立资料索引，再结合实体关系和来源段落完成分析。</p><div className="mt-3 grid grid-cols-2 gap-2"><div className="rounded-lg border border-[#cbdcf8] bg-[#f4f8ff] p-2.5"><span className="text-[7px] font-semibold text-[#3d6fbf]">W E K N O R A</span><div className="mt-1.5 h-1 w-4/5 rounded bg-[#8eb2ea]/50" /><div className="mt-1 h-1 w-3/5 rounded bg-[#8eb2ea]/30" /></div><div className="rounded-lg border border-[#decff3] bg-[#faf7ff] p-2.5"><span className="text-[7px] font-semibold text-[#7a53b8]">L I G H T R A G</span><div className="mt-2 flex gap-2"><span className="landing-rag-node size-2 rounded-full bg-[#5b8def]" /><span className="landing-rag-node size-2 rounded-full bg-[#e2a760]" /><span className="landing-rag-node size-2 rounded-full bg-[#7bb58d]" /></div></div></div><div className="mt-4 rounded-lg border border-black/10 p-3"><div className="flex items-center justify-between text-[8px]"><b>产品发布方案.md</b><span className="text-[#2f8c5f]">已生成</span></div><div className="mt-3 h-1.5 w-full rounded bg-black/[0.07]" /><div className="mt-1.5 h-1.5 w-4/5 rounded bg-black/[0.05]" /></div></div></div>
+                <div className="mt-auto flex h-11 items-center rounded-xl border border-black/15 px-4 text-[8px] text-[#999] shadow-sm">继续告诉 Apollo 你想完成什么… <span className="landing-send ml-auto flex size-6 items-center justify-center rounded-full bg-[#171717] text-white">↑</span></div>
               </div>
-              <div className="hidden border-l border-black/10 bg-[#fcfcfb] p-4 sm:block"><div className="flex items-center justify-between text-[8px] font-semibold"><span>活动</span><span className="text-[#8b8b8b]">3 项</span></div><div className="mt-5 border-l border-black/10 pl-3"><div className="relative mb-5"><span className="absolute -left-[15px] top-1 size-1.5 rounded-full bg-[#4d89e8]" /><b className="text-[8px]">读取资料</b><p className="mt-1 text-[7px] leading-4 text-[#858585]">12 个文件已建立索引</p></div><div className="relative mb-5"><span className="absolute -left-[15px] top-1 size-1.5 rounded-full bg-[#9c71d0]" /><b className="text-[8px]">检索知识图谱</b><p className="mt-1 text-[7px] leading-4 text-[#858585]">发现 28 个实体关系</p></div><div className="relative"><span className="absolute -left-[15px] top-1 size-1.5 rounded-full bg-[#5eaa77]" /><b className="text-[8px]">生成文档</b><p className="mt-1 text-[7px] leading-4 text-[#858585]">结果已保存到工作区</p></div></div></div>
+              <div className="hidden border-l border-black/10 bg-[#fcfcfb] p-4 sm:block"><div className="flex items-center justify-between text-[8px] font-semibold"><span>活动</span><span className="text-[#8b8b8b]">3 项</span></div><div className="mt-5 border-l border-black/10 pl-3"><div className="relative mb-5"><span className="landing-activity-dot absolute -left-[15px] top-1 size-1.5 rounded-full bg-[#4d89e8]" /><b className="text-[8px]">读取资料</b><p className="mt-1 text-[7px] leading-4 text-[#858585]">12 个文件已建立索引</p></div><div className="relative mb-5"><span className="landing-activity-dot absolute -left-[15px] top-1 size-1.5 rounded-full bg-[#9c71d0]" /><b className="text-[8px]">检索知识图谱</b><p className="mt-1 text-[7px] leading-4 text-[#858585]">发现 28 个实体关系</p></div><div className="relative"><span className="landing-activity-dot absolute -left-[15px] top-1 size-1.5 rounded-full bg-[#5eaa77]" /><b className="text-[8px]">生成文档</b><p className="mt-1 text-[7px] leading-4 text-[#858585]">结果已保存到工作区</p></div></div></div>
             </div>
           </div>
           <div className="absolute -bottom-5 -left-2 hidden rounded-full border border-black/10 bg-[#f8f8f4] px-4 py-2 text-[9px] font-medium shadow-sm sm:block">任务过程可见 · 重要操作可审批</div>
         </div>
       </section>
 
-      <section aria-labelledby="capabilities-title" className="border-y border-black/10 bg-[#181818] text-white">
+      <div aria-hidden="true" className="landing-marquee border-y border-black/10 bg-white/45">
+        <div className="landing-marquee-track">{[0, 1].map((copy) => <div key={copy} className="flex shrink-0 items-center">{['对话协作', '文件理解', '双路 RAG', '知识图谱', '文档制作', '网站生成', '浏览器执行', '开源可控'].map((label) => <span key={`${copy}-${label}`} className="flex items-center gap-8 px-4 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#646464] sm:px-7">{label}<i className="size-1.5 rounded-full bg-[#77a7ef]" /></span>)}</div>)}</div>
+      </div>
+
+      <section aria-labelledby="capabilities-title" className="landing-dark border-b border-black/10 bg-[#181818] text-white">
         <div className="mx-auto max-w-[1440px] px-5 py-20 sm:px-8 lg:px-12 lg:py-28">
           <div className="grid gap-10 lg:grid-cols-[0.72fr_1.28fr]">
-            <div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/45">One workspace, real outcomes</p><h2 id="capabilities-title" className="mt-5 max-w-[430px] text-[38px] font-semibold leading-[1.08] tracking-[-0.045em] sm:text-[48px]">不止回答问题，更把结果做出来。</h2><p className="mt-6 max-w-[430px] text-[13px] leading-7 text-white/55">每项能力都围绕同一个目标：减少工具切换，让资料、推理、执行和交付留在一条连续的工作流里。</p></div>
+            <div data-reveal><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/45">One workspace, real outcomes</p><h2 id="capabilities-title" className="mt-5 max-w-[430px] text-[38px] font-semibold leading-[1.08] tracking-[-0.045em] sm:text-[48px]">不止回答问题，更把结果做出来。</h2><p className="mt-6 max-w-[430px] text-[13px] leading-7 text-white/55">每项能力都围绕同一个目标：减少工具切换，让资料、推理、执行和交付留在一条连续的工作流里。</p></div>
             <div className="grid border-l border-white/10 sm:grid-cols-2">
-              {[['01', '理解你的资料', '上传 Word、PDF、Markdown、图片或整个文件夹。Apollo 能阅读、检索并把结果写回工作区。'], ['02', '吃透知识脉络', 'WeKnora 文段召回与 LightRAG 知识图谱协同返回实体、关系、路径和原文依据。'], ['03', '直接制作与修改', '生成文档和网站，通过可视化预览继续编辑；选中多个网页元素后可直接对话修改。'], ['04', '在网页中行动', '使用隔离浏览器或连接自己的 Chrome 标签页，过程可见、随时停止，并受权限控制。']].map(([number, title, body]) => <article key={number} className="border-b border-r border-white/10 p-7 sm:p-9"><span className="text-[9px] tracking-[0.2em] text-white/35">{number}</span><h3 className="mt-12 text-[17px] font-medium tracking-[-0.025em]">{title}</h3><p className="mt-4 text-[11px] leading-6 text-white/50">{body}</p></article>)}
+              {[['01', '理解你的资料', '上传 Word、PDF、Markdown、图片或整个文件夹。Apollo 能阅读、检索并把结果写回工作区。'], ['02', '吃透知识脉络', 'WeKnora 文段召回与 LightRAG 知识图谱协同返回实体、关系、路径和原文依据。'], ['03', '直接制作与修改', '生成文档和网站，通过可视化预览继续编辑；选中多个网页元素后可直接对话修改。'], ['04', '在网页中行动', '使用隔离浏览器或连接自己的 Chrome 标签页，过程可见、随时停止，并受权限控制。']].map(([number, title, body]) => <article data-reveal key={number} className="landing-capability border-b border-r border-white/10 p-7 sm:p-9"><span className="text-[9px] tracking-[0.2em] text-white/35">{number}</span><h3 className="mt-12 text-[17px] font-medium tracking-[-0.025em]">{title}</h3><p className="mt-4 text-[11px] leading-6 text-white/50">{body}</p></article>)}
             </div>
           </div>
         </div>
       </section>
 
       <section className="mx-auto max-w-[1440px] px-5 py-20 sm:px-8 lg:px-12 lg:py-28">
-        <div className="mb-12 flex flex-col justify-between gap-5 border-b border-black/10 pb-8 sm:flex-row sm:items-end"><div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#777]">Built for the whole journey</p><h2 className="mt-4 text-[36px] font-semibold tracking-[-0.05em] sm:text-[48px]">从一句话，到可交付成果。</h2></div><a href="/docs/" className="group text-[11px] font-semibold underline decoration-black/25 underline-offset-8 hover:decoration-black focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#151515]">查看全部使用指南 <span className="inline-block transition-transform group-hover:translate-x-1">→</span></a></div>
+        <div data-reveal className="mb-12 flex flex-col justify-between gap-5 border-b border-black/10 pb-8 sm:flex-row sm:items-end"><div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#777]">Built for the whole journey</p><h2 className="mt-4 text-[36px] font-semibold tracking-[-0.05em] sm:text-[48px]">从一句话，到可交付成果。</h2></div><a href="/docs/" className="group text-[11px] font-semibold underline decoration-black/25 underline-offset-8 hover:decoration-black focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#151515]">查看全部使用指南 <span className="inline-block transition-transform group-hover:translate-x-1">→</span></a></div>
         <div className="grid gap-px overflow-hidden rounded-[14px] border border-black/10 bg-black/10 md:grid-cols-3">
-          <article className="bg-[#e7eef9] p-7 sm:p-9"><span className="inline-flex rounded-full border border-[#7a9aca]/35 px-3 py-1 text-[8px] font-semibold uppercase tracking-[0.15em] text-[#45638c]">Knowledge</span><h3 className="mt-16 text-[24px] font-semibold tracking-[-0.04em]">让知识不只被找到，<br />还被理解。</h3><p className="mt-5 text-[11px] leading-6 text-[#52657f]">匹配段落与知识关系路径并行返回，适合研究、制度、产品和项目资料。</p><div aria-hidden="true" className="relative mt-12 h-28"><span className="absolute left-[8%] top-[44%] size-4 rounded-full bg-[#4f86db] ring-8 ring-[#4f86db]/10" /><span className="absolute left-[45%] top-[12%] size-3 rounded-full bg-[#8f68c8]" /><span className="absolute right-[8%] top-[52%] size-5 rounded-full bg-[#e0a147] ring-8 ring-[#e0a147]/10" /><span className="absolute bottom-[5%] left-[42%] size-3.5 rounded-full bg-[#55a875]" /><svg viewBox="0 0 300 100" preserveAspectRatio="none" className="absolute inset-0 size-full fill-none stroke-[#7894ba]/50 stroke-[1.2]"><path d="M38 54 138 18M38 54l98 40m2-76 130 45M136 94l132-31M138 18l-2 76" /></svg></div></article>
-          <article className="bg-[#eee9f4] p-7 sm:p-9"><span className="inline-flex rounded-full border border-[#967bb5]/35 px-3 py-1 text-[8px] font-semibold uppercase tracking-[0.15em] text-[#73568f]">Create</span><h3 className="mt-16 text-[24px] font-semibold tracking-[-0.04em]">文档与网站，<br />都能边看边改。</h3><p className="mt-5 text-[11px] leading-6 text-[#6d6078]">真实预览、元素选择、多轮修改和结果下载，输出不是对话里的终点。</p><div className="mt-12 rounded-lg border border-[#8f79a7]/25 bg-white/55 p-3 shadow-sm"><div className="flex gap-1"><i className="size-1.5 rounded-full bg-[#d98b8b]" /><i className="size-1.5 rounded-full bg-[#ddb96a]" /><i className="size-1.5 rounded-full bg-[#79ac82]" /></div><div className="mt-3 grid grid-cols-[1fr_0.6fr] gap-2"><span className="h-14 rounded bg-[#dcd3e7]" /><span className="h-14 rounded border border-dashed border-[#80679a]/40 bg-white/60" /></div></div></article>
-          <article className="bg-[#ede9dd] p-7 sm:p-9"><span className="inline-flex rounded-full border border-[#9a8757]/35 px-3 py-1 text-[8px] font-semibold uppercase tracking-[0.15em] text-[#786942]">Act</span><h3 className="mt-16 text-[24px] font-semibold tracking-[-0.04em]">允许它行动，<br />但不交出控制权。</h3><p className="mt-5 text-[11px] leading-6 text-[#6f6855]">浏览器任务可见可停，敏感操作先审批，个人 Chrome 只连接你明确选择的页面。</p><div className="mt-12 flex items-center gap-3 rounded-lg border border-[#8d815f]/20 bg-white/50 p-3"><span className="flex size-8 items-center justify-center rounded-full bg-[#1e1e1e] text-[10px] text-white">✓</span><div><b className="block text-[9px]">等待操作确认</b><span className="text-[8px] text-[#887e63]">提交表单 · apollo.yh521.top</span></div></div></article>
+          <article data-reveal className="landing-journey-card bg-[#e7eef9] p-7 sm:p-9"><span className="inline-flex rounded-full border border-[#7a9aca]/35 px-3 py-1 text-[8px] font-semibold uppercase tracking-[0.15em] text-[#45638c]">Knowledge</span><h3 className="mt-16 text-[24px] font-semibold tracking-[-0.04em]">让知识不只被找到，<br />还被理解。</h3><p className="mt-5 text-[11px] leading-6 text-[#52657f]">匹配段落与知识关系路径并行返回，适合研究、制度、产品和项目资料。</p><div aria-hidden="true" className="relative mt-12 h-28"><span className="absolute left-[8%] top-[44%] size-4 rounded-full bg-[#4f86db] ring-8 ring-[#4f86db]/10" /><span className="absolute left-[45%] top-[12%] size-3 rounded-full bg-[#8f68c8]" /><span className="absolute right-[8%] top-[52%] size-5 rounded-full bg-[#e0a147] ring-8 ring-[#e0a147]/10" /><span className="absolute bottom-[5%] left-[42%] size-3.5 rounded-full bg-[#55a875]" /><svg viewBox="0 0 300 100" preserveAspectRatio="none" className="absolute inset-0 size-full fill-none stroke-[#7894ba]/50 stroke-[1.2]"><path d="M38 54 138 18M38 54l98 40m2-76 130 45M136 94l132-31M138 18l-2 76" /></svg></div></article>
+          <article data-reveal className="landing-journey-card bg-[#eee9f4] p-7 sm:p-9"><span className="inline-flex rounded-full border border-[#967bb5]/35 px-3 py-1 text-[8px] font-semibold uppercase tracking-[0.15em] text-[#73568f]">Create</span><h3 className="mt-16 text-[24px] font-semibold tracking-[-0.04em]">文档与网站，<br />都能边看边改。</h3><p className="mt-5 text-[11px] leading-6 text-[#6d6078]">真实预览、元素选择、多轮修改和结果下载，输出不是对话里的终点。</p><div className="mt-12 rounded-lg border border-[#8f79a7]/25 bg-white/55 p-3 shadow-sm"><div className="flex gap-1"><i className="size-1.5 rounded-full bg-[#d98b8b]" /><i className="size-1.5 rounded-full bg-[#ddb96a]" /><i className="size-1.5 rounded-full bg-[#79ac82]" /></div><div className="mt-3 grid grid-cols-[1fr_0.6fr] gap-2"><span className="h-14 rounded bg-[#dcd3e7]" /><span className="h-14 rounded border border-dashed border-[#80679a]/40 bg-white/60" /></div></div></article>
+          <article data-reveal className="landing-journey-card bg-[#ede9dd] p-7 sm:p-9"><span className="inline-flex rounded-full border border-[#9a8757]/35 px-3 py-1 text-[8px] font-semibold uppercase tracking-[0.15em] text-[#786942]">Act</span><h3 className="mt-16 text-[24px] font-semibold tracking-[-0.04em]">允许它行动，<br />但不交出控制权。</h3><p className="mt-5 text-[11px] leading-6 text-[#6f6855]">浏览器任务可见可停，敏感操作先审批，个人 Chrome 只连接你明确选择的页面。</p><div className="mt-12 flex items-center gap-3 rounded-lg border border-[#8d815f]/20 bg-white/50 p-3"><span className="flex size-8 items-center justify-center rounded-full bg-[#1e1e1e] text-[10px] text-white">✓</span><div><b className="block text-[9px]">等待操作确认</b><span className="text-[8px] text-[#887e63]">提交表单 · apollo.yh521.top</span></div></div></article>
         </div>
       </section>
 
       <section id="access" className="border-t border-black/10 bg-white">
         <div className="mx-auto grid max-w-[1200px] gap-12 px-5 py-20 sm:px-8 lg:grid-cols-[1fr_400px] lg:items-center lg:px-12 lg:py-28">
-          <div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#777]">Your next task starts here</p><h2 className="mt-5 max-w-[620px] text-[42px] font-semibold leading-[1.04] tracking-[-0.055em] sm:text-[58px]">少切换几个工具，<br />多完成一件事情。</h2><p className="mt-7 max-w-[530px] text-[13px] leading-7 text-[#676767]">登录后即可进入完整工作区。第一次使用？先读<a href="/docs/" className="mx-1 font-semibold text-[#1f5fae] underline decoration-[#1f5fae]/30 underline-offset-4 hover:decoration-[#1f5fae]">使用文档</a>，了解文件、知识库、站点和浏览器能力。</p><a href={githubUrl} target="_blank" rel="noreferrer" className="group mt-8 inline-flex items-center gap-3 text-[11px] font-semibold hover:text-[#555] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#151515]"><svg aria-hidden="true" viewBox="0 0 24 24" className="size-5 fill-current"><path d="M12 .7a11.5 11.5 0 0 0-3.64 22.4c.58.1.79-.25.79-.56v-2.23c-3.22.7-3.9-1.37-3.9-1.37-.52-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.29-5.27-1.29-5.27-5.68 0-1.25.45-2.28 1.19-3.08-.12-.29-.52-1.46.11-3.04 0 0 .97-.31 3.16 1.18a10.9 10.9 0 0 1 5.76 0c2.2-1.49 3.16-1.18 3.16-1.18.63 1.58.23 2.75.11 3.04.74.8 1.19 1.83 1.19 3.08 0 4.4-2.71 5.38-5.29 5.67.42.36.79 1.07.79 2.16v3.2c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z" /></svg>开源项目，欢迎点亮 Star <span className="transition-transform group-hover:translate-x-1">↗</span></a></div>
-          <form onSubmit={submit} className="rounded-[16px] border border-black/10 bg-[#f7f7f4] p-6 shadow-[0_24px_70px_rgba(0,0,0,0.08)] sm:p-8">
+          <div data-reveal><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#777]">Your next task starts here</p><h2 className="mt-5 max-w-[620px] text-[42px] font-semibold leading-[1.04] tracking-[-0.055em] sm:text-[58px]">少切换几个工具，<br />多完成一件事情。</h2><p className="mt-7 max-w-[530px] text-[13px] leading-7 text-[#676767]">登录后即可进入完整工作区。第一次使用？先读<a href="/docs/" className="mx-1 font-semibold text-[#1f5fae] underline decoration-[#1f5fae]/30 underline-offset-4 hover:decoration-[#1f5fae]">使用文档</a>，了解文件、知识库、站点和浏览器能力。</p><a href={githubUrl} target="_blank" rel="noreferrer" className="group mt-8 inline-flex items-center gap-3 text-[11px] font-semibold hover:text-[#555] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#151515]"><svg aria-hidden="true" viewBox="0 0 24 24" className="size-5 fill-current"><path d="M12 .7a11.5 11.5 0 0 0-3.64 22.4c.58.1.79-.25.79-.56v-2.23c-3.22.7-3.9-1.37-3.9-1.37-.52-1.34-1.29-1.7-1.29-1.7-1.05-.72.08-.71.08-.71 1.17.08 1.78 1.2 1.78 1.2 1.04 1.78 2.72 1.27 3.38.97.1-.75.4-1.27.74-1.56-2.57-.29-5.27-1.29-5.27-5.68 0-1.25.45-2.28 1.19-3.08-.12-.29-.52-1.46.11-3.04 0 0 .97-.31 3.16 1.18a10.9 10.9 0 0 1 5.76 0c2.2-1.49 3.16-1.18 3.16-1.18.63 1.58.23 2.75.11 3.04.74.8 1.19 1.83 1.19 3.08 0 4.4-2.71 5.38-5.29 5.67.42.36.79 1.07.79 2.16v3.2c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .7Z" /></svg>开源项目，欢迎点亮 Star <span className="transition-transform group-hover:translate-x-1">↗</span></a></div>
+          <form data-reveal onSubmit={submit} className="landing-access-card rounded-[16px] border border-black/10 bg-[#f7f7f4] p-6 shadow-[0_24px_70px_rgba(0,0,0,0.08)] sm:p-8">
             <div className="mb-7 flex items-center justify-between"><div><p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-[#858585]">Apollo workspace</p><h3 className="mt-2 text-[20px] font-semibold tracking-[-0.03em]">{mode === 'login' ? '欢迎回来' : '创建账号'}</h3></div><img src="/apollo-avatar.jpg" alt="" className="size-10 rounded-full object-cover" /></div>
             <div key={mode} className="app-state-motion space-y-3">
               <label className="block"><span className="mb-1.5 block text-[9px] font-medium text-[#686868]">用户名</span><input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" className="h-11 w-full rounded-[9px] border border-black/15 bg-white px-3.5 text-[11px] outline-none placeholder:text-[#aaa] focus:border-[#555] focus:ring-2 focus:ring-black/5" placeholder="输入用户名" /></label>
