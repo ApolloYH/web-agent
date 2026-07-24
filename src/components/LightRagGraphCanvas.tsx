@@ -3,6 +3,7 @@ import { SigmaContainer, useLoadGraph, useRegisterEvents, useSigma } from '@reac
 import { MultiDirectedGraph } from 'graphology';
 import forceAtlas2 from 'graphology-layout-forceatlas2';
 import type { RagGraph } from '@/lib/rag';
+import { graphEntityType, graphPaletteForType } from '@/lib/graphPalette';
 import '@react-sigma/core/lib/style.css';
 
 type Props = {
@@ -22,20 +23,23 @@ function buildGraph(data: RagGraph) {
   data.nodes.forEach((node, index) => {
     const angle = (index / count) * Math.PI * 2;
     const degree = degrees.get(node.id) ?? 0;
+    const palette = graphPaletteForType(graphEntityType(node));
     graph.addNode(node.id, {
       x: Math.cos(angle),
       y: Math.sin(angle),
       label: node.id,
       size: Math.min(16, 5 + Math.sqrt(degree) * 2.2),
-      color: node.id === data.label ? '#111111' : '#8b8b8b',
+      color: palette.node,
+      mutedColor: palette.soft,
+      edgeColor: palette.edge,
       degree,
     });
   });
   data.edges.forEach((edge, index) => {
     if (!graph.hasNode(edge.source) || !graph.hasNode(edge.target)) return;
     graph.addDirectedEdgeWithKey(`${edge.id}-${index}`, edge.source, edge.target, {
-      color: '#d4d4d4',
-      size: 0.8,
+      color: graph.getNodeAttribute(edge.source, 'edgeColor'),
+      size: 0.9,
     });
   });
   if (graph.order > 1) {
@@ -123,6 +127,7 @@ function GraphControls() {
 }
 
 export default function LightRagGraphCanvas({ graph, activeId, onNodeSelect }: Props) {
+  const entityTypes = useMemo(() => [...new Set(graph.nodes.map(graphEntityType))].sort(), [graph.nodes]);
   const neighbors = useMemo(() => {
     if (!activeId) return new Set<string>();
     const result = new Set([activeId]);
@@ -138,18 +143,19 @@ export default function LightRagGraphCanvas({ graph, activeId, onNodeSelect }: P
   ])), [graph.edges]);
 
   return <SigmaContainer
-    className="size-full bg-white"
+    className="size-full bg-[#f8fafc]"
     settings={{
       allowInvalidContainer: true,
       hideEdgesOnMove: true,
       labelRenderedSizeThreshold: 7,
       labelDensity: 0.8,
-      defaultNodeColor: '#8b8b8b',
-      defaultEdgeColor: '#d4d4d4',
+      defaultNodeColor: '#2563eb',
+      defaultEdgeColor: '#cbd5e1',
       renderEdgeLabels: false,
       nodeReducer: (node, attributes) => activeId ? {
         ...attributes,
-        color: node === activeId ? '#111111' : neighbors.has(node) ? '#686868' : '#dddddd',
+        color: neighbors.has(node) ? attributes.color : attributes.mutedColor,
+        size: node === activeId ? attributes.size + 2 : attributes.size,
         highlighted: node === activeId,
         zIndex: neighbors.has(node) ? 1 : 0,
       } : attributes,
@@ -157,10 +163,14 @@ export default function LightRagGraphCanvas({ graph, activeId, onNodeSelect }: P
         if (!activeId) return attributes;
         const [source, target] = edgeEndpoints.get(edge) ?? ['', ''];
         const connected = source === activeId || target === activeId;
-        return { ...attributes, color: connected ? '#777777' : '#eeeeee', size: connected ? 1.5 : 0.5, zIndex: connected ? 1 : 0 };
+        return { ...attributes, color: connected ? attributes.color : '#e2e8f0', size: connected ? 1.6 : 0.5, zIndex: connected ? 1 : 0 };
       },
     }}
   >
+    <div role="list" aria-label="实体类型图例" className="pointer-events-none absolute left-4 top-3 z-10 flex max-w-[calc(100%-2rem)] flex-wrap gap-x-3 gap-y-1">
+      {entityTypes.slice(0, 8).map((type) => <span role="listitem" key={type} className="flex items-center gap-1 text-[8px] font-medium text-slate-600"><span aria-hidden="true" className="size-2 rounded-full" style={{ backgroundColor: graphPaletteForType(type).node }} />{type}</span>)}
+      {entityTypes.length > 8 ? <span className="text-[8px] text-slate-500">+{entityTypes.length - 8}</span> : null}
+    </div>
     <GraphController data={graph} activeId={activeId} onNodeSelect={onNodeSelect} />
     <GraphControls />
   </SigmaContainer>;

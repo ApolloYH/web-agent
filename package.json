@@ -13,7 +13,7 @@
     "build:server": "tsc -p tsconfig.server.json",
     "build:extension": "tsc -p browser-extension/tsconfig.json && vite build --config browser-extension/vite.config.ts --mode extension-content && vite build --config browser-extension/vite.config.ts --mode extension-background",
     "backup": "node scripts/backup-production.mjs",
-    "test": "pnpm build:server && node --test server-dist/server/*.test.js scripts/*.test.mjs",
+    "test": "pnpm exec tsx --test src/lib/graphPalette.test.ts && pnpm build:server && node --test server-dist/server/*.test.js scripts/*.test.mjs",
     "test:concurrency": "pnpm build:server && node --test server-dist/server/concurrency.test.js",
     "start": "node server-dist/server/production.js",
     "preview": "vite preview --host 127.0.0.1",
@@ -55,6 +55,7 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
     "tailwindcss": "^4.1.18",
+    "tsx": "^4.23.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.2"
   }
