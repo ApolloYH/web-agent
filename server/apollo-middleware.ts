@@ -661,7 +661,24 @@ export function createApolloMiddleware({ workspaceRoot, envPath, registrationInv
           SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS "runningRuns"
         FROM agent_runs
       `).get(since) as Record<string, unknown>;
-      return json(res, 200, { stats: { ...stats, ...runs }, users, registrationEnabled: Boolean(registrationInvite) });
+      const inviteCode = registrationInviteCode(database, registrationInvite);
+      return json(res, 200, { stats: { ...stats, ...runs }, users, registrationEnabled: Boolean(inviteCode), inviteCode });
+    }
+
+    if (apiPath === '/apollo-api/admin/registration') {
+      if (!user.admin) return jsonError(res, 403, '只有管理员可以管理注册邀请码');
+      if (req.method !== 'PUT') return jsonError(res, 405, 'Method not allowed');
+      try {
+        const body = JSON.parse(await readBody(req, 1_024)) as { inviteCode?: unknown };
+        if (typeof body.inviteCode !== 'string') throw new Error('注册码无效');
+        const inviteCode = body.inviteCode.trim();
+        if (inviteCode && (inviteCode.length < 8 || inviteCode.length > 128)) throw new Error('注册码长度应为 8–128 位');
+        if (/[\u0000-\u001f\u007f]/.test(inviteCode)) throw new Error('注册码不能包含控制字符');
+        database.prepare("INSERT INTO app_meta (key, value) VALUES ('registration_invite', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(inviteCode);
+        return json(res, 200, { registrationEnabled: Boolean(inviteCode), inviteCode });
+      } catch (error) {
+        return jsonError(res, 400, error instanceof Error ? error.message : String(error));
+      }
     }
 
     const managedUser = apiPath.match(/^\/apollo-api\/admin\/users\/([^/]+)$/);
@@ -1837,8 +1854,9 @@ async function enforceTenantSafeConfig(configPath: string): Promise<void> {
 
 async function handleAuth(req: IncomingMessage, res: ServerResponse, database: DatabaseSync, workspaceRoot: string, registrationInvite: string, adminUsername: string, rateLimits: Map<string, RateLimitWindow>): Promise<void> {
   const route = req.url!.split('?', 1)[0];
+  const activeRegistrationInvite = registrationInviteCode(database, registrationInvite);
   if (route === '/apollo-api/auth/me' && req.method === 'GET') {
-    return json(res, 200, { user: authenticatedUser(req, database), hasUsers: Boolean(database.prepare('SELECT 1 FROM users LIMIT 1').get()), registrationEnabled: Boolean(registrationInvite) });
+    return json(res, 200, { user: authenticatedUser(req, database), hasUsers: Boolean(database.prepare('SELECT 1 FROM users LIMIT 1').get()), registrationEnabled: Boolean(activeRegistrationInvite) });
   }
   if (route === '/apollo-api/auth/logout' && req.method === 'POST') {
     const token = cookieValue(req, 'apollo_session');
@@ -1860,8 +1878,8 @@ async function handleAuth(req: IncomingMessage, res: ServerResponse, database: D
     }
     let user: AuthUser;
     if (route.endsWith('/register')) {
-      if (!registrationInvite) return jsonError(res, 403, '当前部署已关闭注册');
-      if (typeof body.inviteCode !== 'string' || !secureTextEqual(body.inviteCode, registrationInvite)) return jsonError(res, 403, '邀请码无效');
+      if (!activeRegistrationInvite) return jsonError(res, 403, '当前部署已关闭注册');
+      if (typeof body.inviteCode !== 'string' || !secureTextEqual(body.inviteCode, activeRegistrationInvite)) return jsonError(res, 403, '邀请码无效');
       const firstUser = !database.prepare('SELECT 1 FROM users LIMIT 1').get();
       if (firstUser && (!adminUsername || username.toLowerCase() !== adminUsername.toLowerCase())) return jsonError(res, 403, '首个账号必须使用 WEB_ADMIN_USERNAME 指定的管理员用户名');
       const admin = Boolean(adminUsername) && username.toLowerCase() === adminUsername.toLowerCase();
@@ -1914,6 +1932,11 @@ function secureTextEqual(left: string, right: string): boolean {
   const a = Buffer.from(left);
   const b = Buffer.from(right);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function registrationInviteCode(database: DatabaseSync, fallback: string): string {
+  const saved = database.prepare("SELECT value FROM app_meta WHERE key = 'registration_invite'").get() as { value: string } | undefined;
+  return saved?.value ?? fallback;
 }
 
 function cookieValue(req: IncomingMessage, name: string): string | undefined {
@@ -2466,7 +2489,7 @@ async function readBytes(req: IncomingMessage, maxBytes: number): Promise<Buffer
 }
 
 function json(res: ServerResponse, status: number, body: object): void {
-  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'private, no-store' });
   res.end(JSON.stringify(body));
 }
 

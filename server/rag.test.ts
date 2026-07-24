@@ -6,6 +6,7 @@ import { getLightRagDocumentStatus, getWeKnoraDocumentStatus, insertWeKnoraText 
 import {
   assertMinerUDownloadUrl,
   createRagCollection,
+  createRagTools,
   ensureRagSchema,
   estimateTokenCount,
   getRagCollectionStats,
@@ -208,7 +209,22 @@ test('RAG uploads, queries and exposes the LightRAG graph', async () => {
     const result = await searchRagDetailed(database, 'user-a', '作业审批责任', collection.id, 6, services);
     assert.deepEqual(new Set(result.hits.map((hit) => hit.engine)), new Set(['weknora', 'lightrag']));
     assert.deepEqual(result.graphContexts[0]?.keywords, { highLevel: ['审批制度'], lowLevel: ['作业', '审批'] });
+    assert.deepEqual(result.graphContexts[0]?.ontology, { entityTypes: ['人物', '组织', '流程'], relationRules: '重点提取责任关系' });
     assert.deepEqual(result.graphContexts[0]?.relationships[0], { source: '作业', target: '审批', description: '作业前必须完成审批', keywords: '前置条件', weight: 0.9, documentName: 'rules.txt', referenceId: 'ref-relation' });
+    assert.deepEqual(result.graphContexts[0]?.paths[0], { source: '作业', relation: '前置条件', target: '审批', description: '作业前必须完成审批', weight: 0.9, documentName: 'rules.txt', referenceId: 'ref-relation' });
+    assert.equal(result.hits.find((hit) => hit.engine === 'weknora')?.fields?.kind, 'passage');
+    assert.equal(result.hits.find((hit) => hit.fields?.kind === 'relationship')?.fields?.referenceId, 'ref-relation');
+    const ragTool = createRagTools(database, 'user-a', services)[0]!;
+    const toolResult = await ragTool.execute(
+      { query: '作业审批责任', collectionId: collection.id },
+      { workspaceRoot: '.', emit: () => undefined, requestApproval: async () => true },
+    );
+    assert.match(toolResult.content, /本体与知识图谱/);
+    assert.match(toolResult.content, /作业 --\[前置条件\]--> 审批/);
+    assert.match(toolResult.content, /命中字段：kind=passage/);
+    assert.match(toolResult.content, /匹配原文段落/);
+    assert.doesNotMatch(toolResult.content, /基于资料的回答/);
+    assert.equal(requests.some((item) => item.path.endsWith('/chat/completions')), false);
     await searchRagDetailed(database, 'user-a', '你好', collection.id, 6, services);
     assert.throws(() => updateRagCollection(database, 'user-a', collection.id, { chunkSize: 800 }), /已有文档/);
     assert.equal(updateRagCollection(database, 'user-a', collection.id, { finalCount: 3 }).finalCount, 3);

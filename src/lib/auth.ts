@@ -33,6 +33,7 @@ export interface AdminOverview {
   };
   users: ManagedUser[];
   registrationEnabled: boolean;
+  inviteCode: string;
 }
 
 export async function getCurrentUser(): Promise<{ user: AuthUser | null; hasUsers: boolean; registrationEnabled: boolean }> {
@@ -67,6 +68,12 @@ export async function getAdminOverview(): Promise<AdminOverview> {
 export async function updateManagedUser(id: string, patch: { admin?: boolean; disabled?: boolean }): Promise<void> {
   await requestJson(`/apollo-api/admin/users/${encodeURIComponent(id)}`, {
     method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+  });
+}
+
+export async function updateRegistrationInvite(inviteCode: string): Promise<{ registrationEnabled: boolean; inviteCode: string }> {
+  return requestJson('/apollo-api/admin/registration', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ inviteCode }),
   });
 }
 

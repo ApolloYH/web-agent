@@ -14,6 +14,7 @@ export type ExternalEngineHit = {
   position: number;
   content: string;
   score?: number;
+  fields?: Record<string, string | number | boolean>;
 };
 
 export type LightRagSearchContext = {
@@ -266,6 +267,10 @@ export async function searchWeKnora(
     position: item.chunk_index ?? index,
     content: item.content!,
     score: item.score,
+    fields: {
+      kind: 'passage', chunkId: item.id || `weknora-${index}`, knowledgeId: item.knowledge_id || '',
+      chunkIndex: item.chunk_index ?? index, fileName: item.knowledge_filename || item.knowledge_title || '',
+    },
   }));
 }
 
@@ -413,6 +418,7 @@ export async function searchLightRag(
     documentName: chunk.file_path || 'LightRAG 文档',
     position: hits.length,
     content: chunk.content,
+    fields: { kind: 'passage', chunkId: chunk.chunk_id || '', referenceId: chunk.reference_id || '', filePath: chunk.file_path || '' },
   });
   for (const relation of response.data.relationships || []) if (relation.description) hits.push({
     id: `lightrag-relation-${relation.reference_id || hits.length}`,
@@ -420,12 +426,20 @@ export async function searchLightRag(
     position: hits.length,
     content: `关系：${relation.src_id || '未知实体'} → ${relation.tgt_id || '未知实体'}\n${relation.description}`,
     score: relation.weight,
+    fields: {
+      kind: 'relationship', referenceId: relation.reference_id || '', source: relation.src_id || '',
+      target: relation.tgt_id || '', relation: relation.keywords || '', filePath: relation.file_path || '',
+    },
   });
   for (const entity of response.data.entities || []) if (entity.description) hits.push({
     id: `lightrag-entity-${entity.reference_id || hits.length}`,
     documentName: entity.file_path || 'LightRAG 图谱',
     position: hits.length,
     content: `实体：${entity.entity_name || '未知实体'}${entity.entity_type ? `（${entity.entity_type}）` : ''}\n${entity.description}`,
+    fields: {
+      kind: 'entity', referenceId: entity.reference_id || '', entityName: entity.entity_name || '',
+      entityType: entity.entity_type || '', filePath: entity.file_path || '',
+    },
   });
   return {
     hits: hits.slice(0, Math.max(limit * 3, limit)),

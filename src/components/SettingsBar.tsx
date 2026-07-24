@@ -55,14 +55,14 @@ export function UserCenterDialog({ userId, username, admin, permissionMode, brow
   ];
   return (
     <div className="app-overlay-motion fixed inset-0 z-[70] flex items-center justify-center bg-black/25 p-2 sm:p-4" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section role="dialog" aria-modal="true" aria-labelledby="user-center-title" className="app-dialog-motion flex h-[min(780px,calc(100dvh-1rem))] w-full max-w-5xl flex-col overflow-hidden border border-black/[0.1] bg-white shadow-[0_28px_90px_rgba(0,0,0,0.2)] sm:h-[min(780px,calc(100dvh-2rem))]">
+      <section role="dialog" aria-modal="true" aria-labelledby="user-center-title" className="app-dialog-motion flex h-[min(780px,calc(100dvh-1rem))] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-black/[0.1] bg-white shadow-[0_28px_90px_rgba(0,0,0,0.2)] sm:h-[min(780px,calc(100dvh-2rem))]">
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-black/[0.07] px-4 sm:px-5">
           <div className="flex min-w-0 items-center gap-3"><span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[#ededed] text-[11px] font-semibold text-[#555]">{username.slice(0, 1).toUpperCase()}</span><div className="min-w-0"><h2 id="user-center-title" className="truncate text-[13px] font-semibold text-[#171717]">{username}</h2><p className="mt-0.5 text-[9px] text-[#888]">{admin ? '管理员账号' : '个人账号'}</p></div></div>
-          <button autoFocus type="button" onClick={onClose} aria-label="关闭用户中心" className="flex size-8 cursor-pointer items-center justify-center text-xl text-[#888] transition-colors hover:bg-[#f2f2f2] hover:text-[#222] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#171717]">×</button>
+          <button autoFocus type="button" onClick={onClose} aria-label="关闭用户中心" className="flex size-8 cursor-pointer items-center justify-center rounded-lg text-xl text-[#888] transition-colors hover:bg-[#f2f2f2] hover:text-[#222] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#171717]">×</button>
         </header>
         <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
           <nav className="flex shrink-0 gap-1 overflow-x-auto border-b border-black/[0.07] bg-[#fafafa] p-2 sm:w-48 sm:flex-col sm:overflow-visible sm:border-b-0 sm:border-r sm:p-3" aria-label="用户中心导航">
-            {sections.map(({ value, label, description }) => <button key={value} type="button" onClick={() => setSection(value)} aria-current={section === value ? 'page' : undefined} className={`min-w-fit cursor-pointer px-3 py-2 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#171717] sm:w-full ${section === value ? 'bg-[#eaeaea] text-[#171717]' : 'text-[#666] hover:bg-[#f0f0f0] hover:text-[#222]'}`}><span className="block text-[10px] font-medium">{label}</span><span className="mt-0.5 hidden text-[8px] text-[#999] sm:block">{description}</span></button>)}
+            {sections.map(({ value, label, description }) => <button key={value} type="button" onClick={() => setSection(value)} aria-current={section === value ? 'page' : undefined} className={`min-w-fit cursor-pointer rounded-xl px-3 py-2 text-left transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#171717] sm:w-full ${section === value ? 'bg-[#eaeaea] text-[#171717]' : 'text-[#666] hover:bg-[#f0f0f0] hover:text-[#222]'}`}><span className="block text-[10px] font-medium">{label}</span><span className="mt-0.5 hidden text-[8px] text-[#999] sm:block">{description}</span></button>)}
           </nav>
           <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">
             <div key={section} className="app-state-motion mx-auto max-w-3xl">
@@ -371,9 +371,9 @@ function LightRagRuntimePanel() {
   return <section className="border-b border-black/[0.07] pb-4">
     <div className="flex items-end gap-3">
       <label htmlFor="lightrag-max-async" className="min-w-0 flex-1 font-medium text-gray-600">LightRAG 并发数（MAX_ASYNC）
-        <input id="lightrag-max-async" type="number" min={1} max={16} value={maxAsync} disabled={state === 'loading'} onChange={(event) => { setMaxAsync(Number(event.target.value)); setState('idle'); }} className="mt-1.5 h-9 w-full border border-gray-300 bg-white px-2.5 text-[11px] text-gray-800 outline-none focus:border-gray-600" />
+        <input id="lightrag-max-async" type="number" min={1} max={16} value={maxAsync} disabled={state === 'loading'} onChange={(event) => { setMaxAsync(Number(event.target.value)); setState('idle'); }} className="mt-1.5 h-9 w-full rounded-lg border border-gray-300 bg-white px-2.5 text-[11px] text-gray-800 outline-none focus:border-gray-600" />
       </label>
-      <button type="button" onClick={save} disabled={state === 'loading' || state === 'saving' || !Number.isInteger(maxAsync) || maxAsync < 1 || maxAsync > 16} className="h-9 shrink-0 bg-gray-900 px-3 font-medium text-white transition-colors hover:bg-gray-700 disabled:cursor-default disabled:bg-gray-300">{state === 'saving' ? '保存中…' : '应用'}</button>
+      <button type="button" onClick={save} disabled={state === 'loading' || state === 'saving' || !Number.isInteger(maxAsync) || maxAsync < 1 || maxAsync > 16} className="h-9 shrink-0 rounded-lg bg-gray-900 px-3 font-medium text-white transition-colors hover:bg-gray-700 disabled:cursor-default disabled:bg-gray-300">{state === 'saving' ? '保存中…' : '应用'}</button>
     </div>
     <p className="mt-1.5 text-[10px] leading-4 text-gray-400">范围 1–16。新启动的 LightRAG 工作进程使用新值；当前 {activeWorkspaces} 个进程不会被中断。</p>
     {state === 'saved' && <p className="mt-1 text-emerald-600">已保存，无需修改配置文件。</p>}

@@ -157,11 +157,35 @@ test('account security and admin user controls enforce permissions', async () =>
     assert.equal(oldLogin.status, 400);
 
     const overview = await fetch(`${base}/apollo-api/admin`, { headers: { Cookie: adminCookie } });
-    const overviewBody = await overview.json() as { users: Array<{ id: string; username: string }>; stats: { totalUsers: number } };
+    const overviewBody = await overview.json() as { users: Array<{ id: string; username: string }>; stats: { totalUsers: number }; registrationEnabled: boolean; inviteCode: string };
     assert.equal(overview.status, 200);
+    assert.equal(overview.headers.get('cache-control'), 'private, no-store');
     assert.equal(overviewBody.stats.totalUsers, 2);
+    assert.equal(overviewBody.registrationEnabled, true);
+    assert.equal(overviewBody.inviteCode, 'test-invite');
     const memberId = overviewBody.users.find((user) => user.username === 'member')!.id;
     const adminId = overviewBody.users.find((user) => user.username === 'admin')!.id;
+
+    const deniedInviteUpdate = await fetch(`${base}/apollo-api/admin/registration`, {
+      method: 'PUT', headers: { Cookie: memberCookie, 'Content-Type': 'application/json', Origin: base },
+      body: JSON.stringify({ inviteCode: 'member-cannot-change-this' }),
+    });
+    assert.equal(deniedInviteUpdate.status, 403);
+    const inviteUpdate = await fetch(`${base}/apollo-api/admin/registration`, {
+      method: 'PUT', headers: { Cookie: adminCookie, 'Content-Type': 'application/json', Origin: base },
+      body: JSON.stringify({ inviteCode: 'new-test-invite' }),
+    });
+    assert.deepEqual(await inviteUpdate.json(), { registrationEnabled: true, inviteCode: 'new-test-invite' });
+    const oldInviteRegistration = await fetch(`${base}/apollo-api/auth/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base },
+      body: JSON.stringify({ username: 'guest', password: 'secure-password', inviteCode: 'test-invite' }),
+    });
+    assert.equal(oldInviteRegistration.status, 403);
+    const newInviteRegistration = await fetch(`${base}/apollo-api/auth/register`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base },
+      body: JSON.stringify({ username: 'guest', password: 'secure-password', inviteCode: 'new-test-invite' }),
+    });
+    assert.equal(newInviteRegistration.status, 200);
     const promoted = await fetch(`${base}/apollo-api/admin/users/${memberId}`, {
       method: 'PATCH', headers: { Cookie: adminCookie, 'Content-Type': 'application/json', Origin: base },
       body: JSON.stringify({ admin: true }),
@@ -184,6 +208,14 @@ test('account security and admin user controls enforce permissions', async () =>
       body: JSON.stringify({ disabled: true }),
     });
     assert.equal(selfDisable.status, 400);
+
+    const registrationDisabled = await fetch(`${base}/apollo-api/admin/registration`, {
+      method: 'PUT', headers: { Cookie: adminCookie, 'Content-Type': 'application/json', Origin: base },
+      body: JSON.stringify({ inviteCode: '' }),
+    });
+    assert.deepEqual(await registrationDisabled.json(), { registrationEnabled: false, inviteCode: '' });
+    const authState = await fetch(`${base}/apollo-api/auth/me`, { headers: { Cookie: adminCookie } });
+    assert.equal((await authState.json() as { registrationEnabled: boolean }).registrationEnabled, false);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await middleware.close();

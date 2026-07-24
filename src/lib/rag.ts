@@ -87,6 +87,7 @@ export type RagHit = {
   content: string;
   engine?: 'weknora' | 'lightrag';
   score?: number;
+  fields?: Record<string, string | number | boolean>;
 };
 
 export type RagEngineReport = {
@@ -97,7 +98,17 @@ export type RagEngineReport = {
   error?: string;
 };
 
-export type RagSearchResult = { hits: RagHit[]; engines: RagEngineReport[] };
+export type RagGraphContext = {
+  collectionId: string;
+  collectionName: string;
+  keywords: { highLevel: string[]; lowLevel: string[] };
+  ontology: { entityTypes: string[]; relationRules: string };
+  entities: Array<{ name: string; type: string; description: string; documentName: string; referenceId: string }>;
+  relationships: Array<{ source: string; target: string; description: string; keywords: string; weight?: number; documentName: string; referenceId: string }>;
+  paths: Array<{ source: string; relation: string; target: string; description: string; documentName: string; referenceId: string; weight?: number }>;
+};
+
+export type RagSearchResult = { hits: RagHit[]; engines: RagEngineReport[]; graphContexts: RagGraphContext[] };
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);

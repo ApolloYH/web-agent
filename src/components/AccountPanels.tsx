@@ -4,6 +4,7 @@ import {
   getAccountProfile,
   getAdminOverview,
   updateManagedUser,
+  updateRegistrationInvite,
   type AccountProfile,
   type AdminOverview,
   type ManagedUser,
@@ -38,11 +39,11 @@ export function AccountOverview({ username, admin, browserStatus, onRefreshBrows
           </div>
           <p className="mt-1 text-[10px] text-[#777]">{profile ? `加入于 ${formatDate(profile.createdAt)} · ${profile.lastActiveAt ? `最近活动 ${formatRelative(profile.lastActiveAt)}` : '尚未运行任务'} · ${profile.sessionCount} 个有效登录` : '正在读取账号信息…'}</p>
         </div>
-        <button type="button" onClick={onLogout} className="h-8 cursor-pointer self-start border border-red-200 px-3 text-[10px] font-medium text-red-600 transition-colors hover:bg-red-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500 sm:self-auto">退出登录</button>
+        <button type="button" onClick={onLogout} className="h-8 cursor-pointer self-start rounded-lg border border-red-200 px-3 text-[10px] font-medium text-red-600 transition-colors hover:bg-red-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500 sm:self-auto">退出登录</button>
       </section>
 
       {error ? <Notice tone="error">{error}</Notice> : (
-        <div className="grid grid-cols-2 border border-black/[0.08] sm:grid-cols-4">
+        <div className="grid grid-cols-2 overflow-hidden rounded-xl border border-black/[0.08] sm:grid-cols-4">
           <Stat label="对话" value={profile?.conversationCount} />
           <Stat label="任务" value={profile?.runCount} />
           <Stat label="已完成" value={profile?.successfulRuns} />
@@ -52,8 +53,8 @@ export function AccountOverview({ username, admin, browserStatus, onRefreshBrows
 
       <section>
         <SectionTitle title="存储空间" description={profile?.storageQuotaBytes ? `${formatBytes(profile.storageUsedBytes)} / ${formatBytes(profile.storageQuotaBytes)}` : `${formatBytes(profile?.storageUsedBytes ?? 0)} · 不限额`} />
-        <div className="mt-2 h-1.5 overflow-hidden bg-[#ededed]" aria-label={`存储空间已使用 ${quotaPercent}%`}>
-          <div className="h-full bg-[#2563eb] transition-[width] duration-300" style={{ width: `${profile?.storageQuotaBytes ? Math.max(2, quotaPercent) : 0}%` }} />
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[#ededed]" aria-label={`存储空间已使用 ${quotaPercent}%`}>
+          <div className="h-full rounded-full bg-[#2563eb] transition-[width] duration-300" style={{ width: `${profile?.storageQuotaBytes ? Math.max(2, quotaPercent) : 0}%` }} />
         </div>
       </section>
 
@@ -66,7 +67,7 @@ export function AccountOverview({ username, admin, browserStatus, onRefreshBrows
               <p className="text-[11px] font-medium text-[#333]">{browserStatus.connected ? '扩展已连接' : '扩展未连接'}</p>
               <p className="mt-0.5 truncate text-[9px] text-[#888]" title={browserStatus.tab?.url ?? browserStatus.error}>{browserStatus.tab?.title || browserStatus.error || '安装扩展后可授权当前标签页'}</p>
             </div>
-            <button type="button" onClick={onRefreshBrowser} className="h-8 cursor-pointer px-2 text-[10px] text-[#555] transition-colors hover:bg-[#f3f3f3] hover:text-[#111] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#171717]">重新检测</button>
+            <button type="button" onClick={onRefreshBrowser} className="h-8 cursor-pointer rounded-lg px-2 text-[10px] text-[#555] transition-colors hover:bg-[#f3f3f3] hover:text-[#111] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[#171717]">重新检测</button>
           </div>
         </section>
         <PasswordPanel />
@@ -79,8 +80,12 @@ export function AdminPanel({ currentUserId }: { currentUserId: string }) {
   const [data, setData] = useState<AdminOverview>();
   const [query, setQuery] = useState('');
   const [busyId, setBusyId] = useState('');
+  const [inviteCode, setInviteCode] = useState('');
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [showInvite, setShowInvite] = useState(false);
+  const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
-  const load = () => getAdminOverview().then(setData).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
+  const load = () => getAdminOverview().then((overview) => { setData(overview); setInviteCode(overview.inviteCode); }).catch((reason) => setError(reason instanceof Error ? reason.message : String(reason)));
   useEffect(() => { void load(); }, []);
   const users = useMemo(() => data?.users.filter((user) => user.username.toLowerCase().includes(query.trim().toLowerCase())) ?? [], [data, query]);
 
@@ -97,28 +102,78 @@ export function AdminPanel({ currentUserId }: { currentUserId: string }) {
     }
   };
 
+  const saveInvite = async (nextCode = inviteCode) => {
+    setInviteBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const saved = await updateRegistrationInvite(nextCode);
+      setInviteCode(saved.inviteCode);
+      setData((current) => current ? { ...current, ...saved } : current);
+      setNotice(saved.registrationEnabled ? '注册码已更新' : '注册已关闭');
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setInviteBusy(false);
+    }
+  };
+
+  const generateInvite = () => {
+    setInviteCode(`AP-${crypto.randomUUID().replaceAll('-', '').slice(0, 20)}`);
+    setNotice('新注册码尚未保存');
+  };
+
+  const copyInvite = async () => {
+    if (!inviteCode) return;
+    try {
+      await navigator.clipboard.writeText(inviteCode);
+      setNotice('已复制注册码');
+    } catch {
+      setError('复制失败，请手动选择注册码');
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
         <div><h3 className="text-[15px] font-semibold text-[#171717]">运行概览</h3><p className="mt-1 text-[10px] text-[#777]">用户、任务与访问权限集中管理</p></div>
         <span className={`inline-flex w-fit items-center gap-1.5 text-[10px] ${data?.registrationEnabled ? 'text-emerald-700' : 'text-[#777]'}`}><span className={`size-1.5 rounded-full ${data?.registrationEnabled ? 'bg-emerald-500' : 'bg-[#bbb]'}`} />{data?.registrationEnabled ? '邀请注册已开启' : '注册已关闭'}</span>
       </div>
-      <div className="grid grid-cols-2 border border-black/[0.08] lg:grid-cols-4">
+      <div className="grid grid-cols-2 overflow-hidden rounded-xl border border-black/[0.08] lg:grid-cols-4">
         <Stat label="全部用户" value={number(data?.stats.totalUsers)} />
         <Stat label="可用账号" value={number(data?.stats.enabledUsers)} />
         <Stat label="24 小时任务" value={number(data?.stats.runs24h)} />
         <Stat label="正在运行" value={number(data?.stats.runningRuns)} last />
       </div>
+      <section className="rounded-2xl border border-black/[0.08] bg-[#fafafa] p-4">
+        <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-start">
+          <div><h3 className="text-[12px] font-semibold text-[#222]">注册邀请码</h3><p className="mt-1 text-[9px] leading-4 text-[#777]">注册新账号时必须填写。更新后旧注册码立即失效，关闭后停止新用户注册。</p></div>
+          <span className={`inline-flex w-fit items-center gap-1.5 text-[9px] ${data?.registrationEnabled ? 'text-emerald-700' : 'text-[#777]'}`}><span className={`size-1.5 rounded-full ${data?.registrationEnabled ? 'bg-emerald-500' : 'bg-[#bbb]'}`} />{data?.registrationEnabled ? '已启用' : '已关闭'}</span>
+        </div>
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+          <div className="relative min-w-0 flex-1">
+            <input type={showInvite ? 'text' : 'password'} value={inviteCode} onChange={(event) => { setInviteCode(event.target.value); setNotice(''); }} maxLength={128} placeholder="输入 8–128 位注册码" aria-label="注册邀请码" className="h-9 w-full rounded-xl border border-black/[0.12] bg-white px-3 pr-14 font-mono text-[10px] outline-none transition-colors placeholder:font-sans placeholder:text-[#aaa] focus:border-[#777]" />
+            <button type="button" onClick={() => setShowInvite((value) => !value)} className="absolute right-1 top-1 h-7 cursor-pointer rounded-lg px-2 text-[9px] text-[#666] hover:bg-[#f1f1f1]">{showInvite ? '隐藏' : '显示'}</button>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <ActionButton disabled={inviteBusy} onClick={generateInvite}>生成</ActionButton>
+            <ActionButton disabled={inviteBusy || !inviteCode} onClick={() => void copyInvite()}>复制</ActionButton>
+            <ActionButton disabled={inviteBusy || inviteCode.trim().length < 8} onClick={() => void saveInvite()}>{inviteBusy ? '保存中' : '保存'}</ActionButton>
+            <ActionButton danger disabled={inviteBusy || !data?.registrationEnabled} onClick={() => { if (window.confirm('关闭注册后，新用户将无法创建账号。确定继续吗？')) void saveInvite(''); }}>关闭注册</ActionButton>
+          </div>
+        </div>
+        {notice && <p role="status" className="mt-2 text-[9px] text-emerald-700">{notice}</p>}
+      </section>
+      {error && <Notice tone="error">{error}</Notice>}
       <section>
         <div className="flex flex-col justify-between gap-3 border-b border-black/[0.08] pb-3 sm:flex-row sm:items-center">
           <div><h3 className="text-[12px] font-semibold text-[#222]">用户管理</h3><p className="mt-0.5 text-[9px] text-[#888]">停用账号会立即撤销其登录会话</p></div>
           <label className="relative block sm:w-56">
             <span className="sr-only">搜索用户</span>
             <SearchIcon />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索用户名" className="h-8 w-full border border-black/[0.12] bg-white pl-8 pr-2 text-[10px] outline-none transition-colors placeholder:text-[#aaa] focus:border-[#777]" />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索用户名" className="h-8 w-full rounded-lg border border-black/[0.12] bg-white pl-8 pr-2 text-[10px] outline-none transition-colors placeholder:text-[#aaa] focus:border-[#777]" />
           </label>
         </div>
-        {error && <div className="mt-3"><Notice tone="error">{error}</Notice></div>}
         <div className="overflow-x-auto">
           <table className="w-full min-w-[680px] border-collapse text-left">
             <thead><tr className="border-b border-black/[0.07] text-[9px] font-medium uppercase tracking-[0.08em] text-[#888]"><th className="px-2 py-2.5">用户</th><th className="px-2 py-2.5">状态</th><th className="px-2 py-2.5">使用情况</th><th className="px-2 py-2.5">最近活动</th><th className="px-2 py-2.5 text-right">操作</th></tr></thead>
@@ -165,10 +220,10 @@ function PasswordPanel() {
     <SectionTitle title="登录安全" description="修改密码后，其他设备会退出登录" />
     <form onSubmit={(event) => void submit(event)} className="mt-3 grid grid-cols-[1fr_auto] gap-2">
       <div className="space-y-2">
-        <input type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => { setCurrentPassword(event.target.value); setState('idle'); }} placeholder="当前密码" aria-label="当前密码" className="h-8 w-full border border-black/[0.12] px-2.5 text-[10px] outline-none focus:border-[#777]" />
-        <input type="password" autoComplete="new-password" value={newPassword} onChange={(event) => { setNewPassword(event.target.value); setState('idle'); }} placeholder="新密码（至少 8 位）" aria-label="新密码" className="h-8 w-full border border-black/[0.12] px-2.5 text-[10px] outline-none focus:border-[#777]" />
+        <input type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => { setCurrentPassword(event.target.value); setState('idle'); }} placeholder="当前密码" aria-label="当前密码" className="h-8 w-full rounded-lg border border-black/[0.12] px-2.5 text-[10px] outline-none focus:border-[#777]" />
+        <input type="password" autoComplete="new-password" value={newPassword} onChange={(event) => { setNewPassword(event.target.value); setState('idle'); }} placeholder="新密码（至少 8 位）" aria-label="新密码" className="h-8 w-full rounded-lg border border-black/[0.12] px-2.5 text-[10px] outline-none focus:border-[#777]" />
       </div>
-      <button type="submit" disabled={state === 'saving' || !currentPassword || newPassword.length < 8} className="h-full min-h-8 cursor-pointer bg-[#171717] px-3 text-[10px] font-medium text-white transition-colors hover:bg-[#333] disabled:cursor-default disabled:bg-[#ccc]">{state === 'saving' ? '保存中' : '更新'}</button>
+      <button type="submit" disabled={state === 'saving' || !currentPassword || newPassword.length < 8} className="h-full min-h-8 cursor-pointer rounded-lg bg-[#171717] px-3 text-[10px] font-medium text-white transition-colors hover:bg-[#333] disabled:cursor-default disabled:bg-[#ccc]">{state === 'saving' ? '保存中' : '更新'}</button>
     </form>
     {state === 'saved' && <p className="mt-2 text-[9px] text-emerald-700">密码已更新，其他设备已退出。</p>}
     {state === 'error' && <p className="mt-2 text-[9px] text-red-600">{error}</p>}
@@ -179,8 +234,8 @@ function Stat({ label, value, last = false }: { label: string; value?: number; l
   return <div className={`px-3 py-3.5 ${last ? '' : 'border-r border-black/[0.07]'} [&:nth-child(2)]:border-r-0 sm:[&:nth-child(2)]:border-r`}><p className="text-[18px] font-semibold tabular-nums tracking-[-0.03em] text-[#18181b]">{value ?? '—'}</p><p className="mt-1 text-[9px] text-[#888]">{label}</p></div>;
 }
 function SectionTitle({ title, description }: { title: string; description: string }) { return <div className="flex items-baseline justify-between gap-3"><h3 className="text-[11px] font-semibold text-[#333]">{title}</h3><p className="truncate text-right text-[9px] text-[#888]">{description}</p></div>; }
-function Notice({ children, tone }: { children: string; tone: 'error' }) { return <p role="alert" className={tone === 'error' ? 'border-l-2 border-red-400 bg-red-50 px-3 py-2 text-[10px] text-red-700' : ''}>{children}</p>; }
-function ActionButton({ children, onClick, disabled, danger = false }: { children: string; onClick: () => void; disabled: boolean; danger?: boolean }) { return <button type="button" disabled={disabled} onClick={onClick} className={`h-7 cursor-pointer border px-2 text-[9px] transition-colors disabled:cursor-default disabled:opacity-35 ${danger ? 'border-red-200 text-red-600 hover:bg-red-50' : 'border-black/[0.1] text-[#555] hover:bg-[#f1f1f1]'}`}>{children}</button>; }
+function Notice({ children, tone }: { children: string; tone: 'error' }) { return <p role="alert" className={tone === 'error' ? 'rounded-lg border-l-2 border-red-400 bg-red-50 px-3 py-2 text-[10px] text-red-700' : ''}>{children}</p>; }
+function ActionButton({ children, onClick, disabled, danger = false }: { children: string; onClick: () => void; disabled: boolean; danger?: boolean }) { return <button type="button" disabled={disabled} onClick={onClick} className={`h-7 cursor-pointer rounded-lg border px-2 text-[9px] transition-colors disabled:cursor-default disabled:opacity-35 ${danger ? 'border-red-200 text-red-600 hover:bg-red-50' : 'border-black/[0.1] text-[#555] hover:bg-[#f1f1f1]'}`}>{children}</button>; }
 function SearchIcon() { return <svg viewBox="0 0 20 20" width="13" height="13" fill="none" className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[#888]" aria-hidden="true"><circle cx="9" cy="9" r="5" stroke="currentColor" strokeWidth="1.5" /><path d="m13 13 3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>; }
 function formatDate(value: string): string { return new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(value)); }
 function formatRelative(value: string): string { const ms = Date.now() - Date.parse(value); const minutes = Math.max(0, Math.round(ms / 60_000)); return minutes < 1 ? '刚刚' : minutes < 60 ? `${minutes} 分钟前` : minutes < 1440 ? `${Math.round(minutes / 60)} 小时前` : `${Math.round(minutes / 1440)} 天前`; }
